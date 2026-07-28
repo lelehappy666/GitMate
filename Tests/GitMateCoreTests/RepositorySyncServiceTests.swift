@@ -57,7 +57,8 @@ let repositorySyncServiceTests = [
                     RepositorySyncPreference(repositoryID: 1, mode: .automatic),
                     RepositorySyncPreference(repositoryID: 2, mode: .never)
                 ],
-                destination: destination
+                destination: destination,
+                accessToken: "private-token"
             )
         )
 
@@ -66,6 +67,15 @@ let repositorySyncServiceTests = [
         try expect(
             !executor.commands[0].contains(syncRepositoryTwo.cloneURL.absoluteString),
             "不同步仓库的地址不应进入命令"
+        )
+        try expect(
+            !executor.commands[0].contains("private-token"),
+            "访问令牌不得出现在 Git 命令参数"
+        )
+        try expectEqual(
+            executor.environments[0]["GIT_CONFIG_VALUE_0"],
+            "Authorization: Bearer private-token",
+            "私有仓库令牌应通过临时 Git 环境传入"
         )
         try expect(events.contains(.finished), "选中仓库完成后应结束同步")
     },
@@ -89,7 +99,8 @@ let repositorySyncServiceTests = [
                 preferences: [
                     RepositorySyncPreference(repositoryID: 1, mode: .manual)
                 ],
-                destination: destination
+                destination: destination,
+                accessToken: nil
             )
         )
 
@@ -119,7 +130,8 @@ let repositorySyncServiceTests = [
                     RepositorySyncPreference(repositoryID: 1, mode: .automatic),
                     RepositorySyncPreference(repositoryID: 2, mode: .automatic)
                 ],
-                destination: destination
+                destination: destination,
+                accessToken: nil
             )
         )
 

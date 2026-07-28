@@ -146,6 +146,32 @@ public final class OnboardingViewModel {
         await runSync(repositories: repositories, preferences: preferences)
     }
 
+    public func retry(repositoryID: Int64) async {
+        guard let repository = state.repositories.first(
+            where: { $0.id == repositoryID }
+        ) else {
+            return
+        }
+        state.failedRepositoryIDs.removeAll { $0 == repositoryID }
+        state.errorMessage = nil
+        state.route = .syncProgress
+        await runSync(
+            repositories: [repository],
+            preferences: [
+                RepositorySyncPreference(
+                    repositoryID: repositoryID,
+                    mode: .manual
+                )
+            ]
+        )
+    }
+
+    public func skipFailedRepositories() {
+        state.failedRepositoryIDs.removeAll()
+        state.errorMessage = nil
+        state.transition(.syncFinished)
+    }
+
     public func resumeAfterNetwork() async {
         state.transition(.networkRestored)
         await runSync(
@@ -189,6 +215,9 @@ public final class OnboardingViewModel {
                 guard let self else { return }
                 if status == .disconnected, state.route == .syncProgress {
                     state.transition(.networkLost)
+                } else if status == .connected,
+                          state.route == .networkInterrupted {
+                    await resumeAfterNetwork()
                 }
             }
         }
@@ -258,10 +287,19 @@ public final class OnboardingViewModel {
         defer { isWorking = false }
 
         do {
+            let accessToken: String?
+            if let account = state.account {
+                accessToken = try dependencies.credentialStore.token(
+                    accountID: account.id
+                )
+            } else {
+                accessToken = nil
+            }
             let stream = dependencies.syncService.sync(
                 repositories: repositories,
                 preferences: preferences,
-                destination: dependencies.syncDestination
+                destination: dependencies.syncDestination,
+                accessToken: accessToken
             )
             for try await event in stream {
                 guard handle(syncEvent: event) else {

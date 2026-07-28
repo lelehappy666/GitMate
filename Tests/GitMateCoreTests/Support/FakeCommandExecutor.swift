@@ -10,6 +10,7 @@ final class FakeCommandExecutor: CommandExecuting, @unchecked Sendable {
     private let lock = NSLock()
     private var queuedResults: [Result]
     private var recordedCommands: [[String]] = []
+    private var recordedEnvironments: [[String: String]] = []
 
     init(results: [Result] = [.success([])]) {
         queuedResults = results
@@ -21,9 +22,19 @@ final class FakeCommandExecutor: CommandExecuting, @unchecked Sendable {
         return recordedCommands
     }
 
-    func execute(arguments: [String]) -> AsyncThrowingStream<CommandOutput, Error> {
+    var environments: [[String: String]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedEnvironments
+    }
+
+    func execute(
+        arguments: [String],
+        environment: [String: String]
+    ) -> AsyncThrowingStream<CommandOutput, Error> {
         lock.lock()
         recordedCommands.append(arguments)
+        recordedEnvironments.append(environment)
         let result = queuedResults.count > 1
             ? queuedResults.removeFirst()
             : queuedResults[0]

@@ -30,6 +30,7 @@ public protocol RepositorySyncService: Sendable {
     func sync(
         repositories: [Repository],
         preferences: [RepositorySyncPreference],
-        destination: URL
+        destination: URL,
+        accessToken: String?
     ) -> AsyncThrowingStream<SyncEvent, Error>
 }

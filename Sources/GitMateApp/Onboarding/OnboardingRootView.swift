@@ -25,13 +25,13 @@ struct OnboardingRootView: View {
                     case .repositorySync:
                         RepositorySyncSetupView(viewModel: viewModel)
                     case .syncProgress:
-                        OnboardingPendingView(title: "正在准备同步")
+                        SyncProgressView(viewModel: viewModel)
                     case .syncError:
-                        OnboardingPendingView(title: "同步遇到问题")
+                        SyncErrorView(viewModel: viewModel)
                     case .networkInterrupted:
-                        OnboardingPendingView(title: "网络连接已中断")
+                        NetworkInterruptedView(viewModel: viewModel)
                     case .authorizationExpired:
-                        OnboardingPendingView(title: "GitHub 授权已失效")
+                        AuthorizationExpiredView(viewModel: viewModel)
                     case .complete:
                         completionView
                     }
@@ -98,15 +98,5 @@ struct OnboardingRootView: View {
         }
         .frame(maxWidth: 520)
         .gitMateCard(padding: 40)
-    }
-}
-
-private struct OnboardingPendingView: View {
-    let title: String
-
-    var body: some View {
-        Text(title)
-            .font(.system(size: 24, weight: .bold))
-            .gitMateCard(padding: 32)
     }
 }

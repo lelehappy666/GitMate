@@ -15,7 +15,8 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
     public func sync(
         repositories: [Repository],
         preferences: [RepositorySyncPreference],
-        destination: URL
+        destination: URL,
+        accessToken: String?
     ) -> AsyncThrowingStream<SyncEvent, Error> {
         let selectedIDs = Set(
             preferences
@@ -44,7 +45,8 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
                         do {
                             try await runGit(
                                 for: repository,
-                                at: repositoryDirectory
+                                at: repositoryDirectory,
+                                accessToken: accessToken
                             )
                             try Task.checkCancellation()
                             for file in files(in: repositoryDirectory) {
@@ -123,7 +125,11 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
         return .commandFailed(message)
     }
 
-    private func runGit(for repository: Repository, at directory: URL) async throws {
+    private func runGit(
+        for repository: Repository,
+        at directory: URL,
+        accessToken: String?
+    ) async throws {
         let gitDirectory = directory.appending(path: ".git", directoryHint: .isDirectory)
         let arguments: [String]
         if fileManager.fileExists(atPath: gitDirectory.path) {
@@ -145,7 +151,18 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
         }
 
         do {
-            for try await _ in executor.execute(arguments: arguments) {
+            var environment: [String: String] = [:]
+            if let accessToken, !accessToken.isEmpty {
+                environment = [
+                    "GIT_CONFIG_COUNT": "1",
+                    "GIT_CONFIG_KEY_0": "http.extraHeader",
+                    "GIT_CONFIG_VALUE_0": "Authorization: Bearer \(accessToken)"
+                ]
+            }
+            for try await _ in executor.execute(
+                arguments: arguments,
+                environment: environment
+            ) {
                 try Task.checkCancellation()
             }
         } catch let CommandExecutionError.exitStatus(_, message) {

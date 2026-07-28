@@ -3,7 +3,10 @@
 public final class ProcessCommandExecutor: CommandExecuting, @unchecked Sendable {
     public init() {}
 
-    public func execute(arguments: [String]) -> AsyncThrowingStream<CommandOutput, Error> {
+    public func execute(
+        arguments: [String],
+        environment: [String: String]
+    ) -> AsyncThrowingStream<CommandOutput, Error> {
         AsyncThrowingStream { continuation in
             let process = Process()
             let standardOutput = Pipe()
@@ -13,6 +16,8 @@ public final class ProcessCommandExecutor: CommandExecuting, @unchecked Sendable
 
             process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
             process.arguments = arguments
+            process.environment = ProcessInfo.processInfo.environment
+                .merging(environment) { _, newValue in newValue }
             process.standardOutput = standardOutput
             process.standardError = standardError
 

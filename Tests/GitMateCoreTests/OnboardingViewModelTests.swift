@@ -80,7 +80,8 @@ private struct FixedSyncService: RepositorySyncService {
     func sync(
         repositories: [Repository],
         preferences: [RepositorySyncPreference],
-        destination: URL
+        destination: URL,
+        accessToken: String?
     ) -> AsyncThrowingStream<SyncEvent, Error> {
         AsyncThrowingStream(SyncEvent.self, bufferingPolicy: .unbounded) { continuation in
             for event in events {

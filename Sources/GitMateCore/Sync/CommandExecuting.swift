@@ -4,7 +4,10 @@ public enum CommandOutput: Equatable, Sendable {
 }
 
 public protocol CommandExecuting: Sendable {
-    func execute(arguments: [String]) -> AsyncThrowingStream<CommandOutput, Error>
+    func execute(
+        arguments: [String],
+        environment: [String: String]
+    ) -> AsyncThrowingStream<CommandOutput, Error>
 }
 
 public enum CommandExecutionError: Error, Equatable, Sendable {
