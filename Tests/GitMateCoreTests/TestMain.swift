@@ -7,6 +7,8 @@ struct GitMateCoreTestsMain {
             + onboardingStateTests
             + githubDeviceFlowTests
             + githubAPITests
+            + enterpriseConnectionTests
+            + credentialStoreTests
         var failedCount = 0
 
         for test in tests {

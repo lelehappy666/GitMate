@@ -13,7 +13,10 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "GitMateCore"
+            name: "GitMateCore",
+            linkerSettings: [
+                .linkedFramework("Security")
+            ]
         ),
         .executableTarget(
             name: "GitMateApp",

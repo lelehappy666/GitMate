@@ -87,8 +87,9 @@ public final class URLSessionGitHubAPI: GitHubAPI, @unchecked Sendable {
         token: String,
         queryItems: [URLQueryItem] = []
     ) throws -> URLRequest {
-        guard let url = URL(string: path, relativeTo: apiBaseURL)?.absoluteURL,
-              var components = URLComponents(url: url, resolvingAgainstBaseURL: true) else {
+        let relativePath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let url = apiBaseURL.appending(path: relativePath)
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             throw GitHubAPIError.invalidConfiguration("GitHub API 地址无效。")
         }
         if !queryItems.isEmpty {
