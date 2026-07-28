@@ -1,0 +1,276 @@
+<style>
+  .page-meta{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px}
+  .page-index{display:inline-flex;align-items:center;padding:6px 9px;border-radius:999px;color:var(--accent);background:color-mix(in srgb,var(--accent) 9%,var(--surface));font-size:11px;font-weight:700}
+  .page-status{color:var(--muted);font-size:11px}
+  .app-window{height:680px;overflow:hidden;border:1px solid #a5aab2;border-radius:15px;color:#172033;background:#f5f7fa;box-shadow:0 24px 68px rgba(21,27,38,.22)}
+  .app-window *{box-sizing:border-box}
+  .titlebar{position:relative;display:flex;height:42px;padding:0 14px;align-items:center;justify-content:space-between;border-bottom:1px solid #d8dde5;background:rgba(248,250,252,.96)}
+  .traffic{display:flex;gap:7px}.traffic i{width:11px;height:11px;border-radius:50%}.traffic i:nth-child(1){background:#ff5f57}.traffic i:nth-child(2){background:#febc2e}.traffic i:nth-child(3){background:#28c840}
+  .window-title{position:absolute;left:50%;transform:translateX(-50%);color:#687287;font-size:10px;font-weight:650}
+  .title-tools{display:flex;gap:7px;align-items:center}.icon-button{display:grid;width:25px;height:25px;place-items:center;border:1px solid #d5dbe4;border-radius:7px;color:#667188;background:#fff;font-size:10px}
+  .app-body{display:grid;height:calc(100% - 42px);grid-template-columns:176px minmax(0,1fr)}
+  .sidebar{display:flex;min-height:0;padding:13px 10px 11px;flex-direction:column;border-right:1px solid #d9dee6;background:#edf1f5}
+  .brand{display:flex;gap:9px;align-items:center;margin:0 6px 13px}.brand-mark{display:grid;width:27px;height:27px;place-items:center;border-radius:8px;color:#fff;background:linear-gradient(145deg,#3b8ee8,#2268be);font-size:9px;font-weight:800}.brand b{display:block;font-size:11px}.brand span{display:block;margin-top:1px;color:#7c8799;font-size:6px}
+  .workspace-switch{display:grid;height:35px;margin-bottom:12px;padding:0 8px;grid-template-columns:auto 1fr auto;gap:7px;align-items:center;border:1px solid #d4dae3;border-radius:8px;background:rgba(255,255,255,.72)}
+  .avatar{display:grid;width:20px;height:20px;place-items:center;border-radius:6px;color:#fff;background:#23385b;font-size:6px;font-weight:700}.workspace-switch b{font-size:7px}.workspace-switch small{display:block;margin-top:1px;color:#8a93a3;font-size:5px}.chevron{color:#8d96a5;font-size:8px}
+  .nav-group{margin-bottom:9px}.nav-label{margin:0 8px 5px;color:#9aa3b1;font-size:5px;font-weight:750;text-transform:uppercase;letter-spacing:.08em}
+  .nav-item{display:grid;height:29px;padding:0 8px;grid-template-columns:18px 1fr auto;gap:5px;align-items:center;border-radius:7px;color:#596579;font-size:7px;font-weight:600}.nav-item .nav-icon{color:#7d899b;font-size:9px}.nav-item.active{color:#195fa8;background:#dbe9f8}.nav-item.active .nav-icon{color:#2878ca}.badge{min-width:16px;padding:2px 4px;border-radius:999px;color:#687488;background:#dfe4ea;text-align:center;font-size:5px}.nav-item.active .badge{color:#1e65aa;background:#c7dcf2}
+  .sidebar-bottom{margin-top:auto}.sync-chip{display:flex;gap:6px;margin:0 5px 8px;padding:8px;align-items:center;border:1px solid #d7dde5;border-radius:8px;background:rgba(255,255,255,.58)}.sync-dot{width:7px;height:7px;border:2px solid #6ba867;border-radius:50%;box-shadow:0 0 0 2px #d9ebd7}.sync-chip b{display:block;font-size:6px}.sync-chip span{display:block;margin-top:2px;color:#8892a1;font-size:5px}
+  .dashboard-main{display:flex;min-width:0;min-height:0;padding:15px 16px 13px;flex-direction:column;background:#f8fafc}
+  .main-head{display:flex;height:42px;flex:0 0 auto;align-items:flex-start;justify-content:space-between}.main-title h1{margin:0 0 4px;color:#172033;font-size:17px;letter-spacing:-.03em}.main-title p{margin:0;color:#8791a1;font-size:6px}
+  .head-actions{display:flex;gap:7px;align-items:center}.scope{display:flex;height:29px;padding:0 9px;gap:7px;align-items:center;border:1px solid #d9dee6;border-radius:7px;color:#657187;background:#fff;font-size:6px}.primary-button{display:flex;height:29px;padding:0 10px;gap:6px;align-items:center;border-radius:7px;color:#fff;background:linear-gradient(180deg,#3184da,#236fc3);box-shadow:0 1px 2px rgba(31,83,137,.18);font-size:6px;font-weight:700}
+  .metrics{display:grid;height:66px;flex:0 0 auto;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:6px 0 10px}
+  .metric{display:grid;padding:10px;grid-template-columns:1fr auto;align-items:center;border:1px solid #e0e4ea;border-radius:9px;background:#fff;box-shadow:0 1px 2px rgba(30,43,62,.025)}.metric-label{color:#7a8596;font-size:6px}.metric-value{display:block;margin-top:3px;color:#1d2738;font-size:15px;font-weight:750}.metric-note{display:block;margin-top:2px;color:#9aa3b1;font-size:5px}.metric-icon{display:grid;width:28px;height:28px;place-items:center;border-radius:8px;color:#337ec5;background:#edf5fc;font-size:9px}.metric.warning .metric-icon{color:#c47a20;background:#fff5e7}.metric.danger .metric-icon{color:#c04e58;background:#fdf0f1}.metric.good .metric-icon{color:#418c55;background:#eef8f0}
+  .dashboard-grid{display:grid;min-height:0;flex:1;grid-template-columns:minmax(0,1.55fr) minmax(250px,.82fr);gap:10px}
+  .left-stack{display:grid;min-height:0;grid-template-rows:minmax(0,1fr) 122px;gap:10px}.panel{display:flex;min-height:0;flex-direction:column;border:1px solid #dfe4eb;border-radius:10px;background:#fff;overflow:hidden}.panel-head{display:flex;height:38px;flex:0 0 auto;padding:0 11px;align-items:center;justify-content:space-between;border-bottom:1px solid #e9edf2}.panel-head h2{margin:0;font-size:8px}.panel-head span{color:#8691a2;font-size:6px}.panel-filter{display:flex;gap:3px;padding:2px;border-radius:6px;background:#f1f4f7}.panel-filter i{padding:4px 6px;border-radius:5px;color:#8993a2;font-style:normal;font-size:5px}.panel-filter i.active{color:#426b98;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+  .activity-list{min-height:0;overflow:auto}.activity-row{display:grid;min-height:45px;padding:8px 11px;grid-template-columns:27px 1fr auto;gap:8px;align-items:center;border-bottom:1px solid #f0f2f5}.activity-row:last-child{border-bottom:0}.event-icon{display:grid;width:26px;height:26px;place-items:center;border-radius:8px;color:#377ec4;background:#edf5fc;font-size:8px}.event-icon.green{color:#408d55;background:#edf8f0}.event-icon.purple{color:#7957b5;background:#f3effa}.event-copy b{display:block;margin-bottom:3px;color:#2b3545;font-size:6px}.event-copy span{color:#8792a2;font-size:5px}.repo-name{color:#3d76ad}.event-time{color:#a0a8b5;font-size:5px}
+  .repo-health{display:grid;min-height:0;grid-template-columns:repeat(3,minmax(0,1fr))}.repo-card{display:flex;min-width:0;padding:10px;gap:7px;flex-direction:column;border-right:1px solid #edf0f4}.repo-card:last-child{border-right:0}.repo-card-top{display:flex;align-items:center;justify-content:space-between}.repo-card b{overflow:hidden;color:#2d3848;font-size:6px;text-overflow:ellipsis;white-space:nowrap}.health-dot{width:6px;height:6px;border-radius:50%;background:#63a770}.health-dot.warn{background:#e0a245}.repo-meta{display:flex;gap:7px;color:#8e98a7;font-size:5px}.branch-bar{display:grid;height:4px;margin-top:auto;grid-template-columns:3fr 1fr;border-radius:99px;overflow:hidden;background:#e9edf1}.branch-bar i:first-child{background:#4e94d7}.branch-bar i:last-child{background:#9ac4e9}.repo-foot{display:flex;justify-content:space-between;color:#97a0ad;font-size:5px}
+  .task-panel{min-height:0}.task-summary{display:grid;height:57px;flex:0 0 auto;padding:9px 10px;grid-template-columns:repeat(3,1fr);gap:6px;border-bottom:1px solid #e9edf2}.task-mini{padding:6px;border-radius:7px;background:#f5f7fa}.task-mini b{display:block;color:#2c3747;font-size:9px}.task-mini span{display:block;margin-top:2px;color:#8e97a6;font-size:5px}.task-list{min-height:0;overflow:auto}.task-row{display:grid;min-height:54px;padding:9px 10px;grid-template-columns:auto 1fr auto;gap:8px;align-items:start;border-bottom:1px solid #f0f2f5}.task-check{width:8px;height:8px;margin-top:2px;border:1.5px solid #b5beca;border-radius:50%}.task-copy b{display:block;margin-bottom:3px;color:#2d3747;font-size:6px;line-height:1.4}.task-copy span{display:block;color:#8b95a4;font-size:5px;line-height:1.45}.task-tag{padding:3px 5px;border-radius:5px;color:#a66222;background:#fff1df;font-size:5px}.task-tag.review{color:#306fa9;background:#eaf3fb}.task-tag.security{color:#ae4853;background:#fdecee}.task-footer{display:flex;height:31px;flex:0 0 auto;padding:0 10px;align-items:center;justify-content:space-between;color:#7c8797;background:#fafbfd;font-size:5px}.link{color:#3177b8;font-weight:700}
+  .specs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px;margin-top:14px}
+  .spec{padding:13px;border:1px solid var(--border);border-radius:11px;background:var(--surface)}
+  .spec span{display:block;margin-bottom:6px;color:var(--accent);font-size:10px;font-weight:800}.spec h3{margin:0 0 5px;font-size:12px}.spec p{margin:0;color:var(--muted);font-size:10px;line-height:1.5}
+  .decision{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:15px}.decision .option{margin:0}
+  @media(max-width:960px){.app-body{grid-template-columns:155px minmax(0,1fr)}.dashboard-grid{grid-template-columns:minmax(0,1.4fr) 230px}.metrics{grid-template-columns:repeat(2,1fr);height:122px}}
+
+  /* V2：统一前序页面的深海军蓝视觉，并使用明确网格行彻底避免卡片越界 */
+  .app-window{border-color:#26384d;color:#eaf2fb;background:#07162b;box-shadow:0 24px 68px rgba(2,8,17,.34)}
+  .titlebar{border-color:#203047;background:rgba(6,15,29,.97)}
+  .window-title{color:rgba(222,234,247,.58)}
+  .icon-button{border-color:#263a52;color:#9eb3ca;background:#0c1c30}
+  .app-body{background:#07162b}
+  .sidebar{border-color:#203249;background:#0a192c}
+  .brand b{color:#f0f6fc}.brand span{color:#6f849a}
+  .brand-mark{background:linear-gradient(145deg,#459cf0,#2269c2);box-shadow:0 8px 18px rgba(22,94,167,.22)}
+  .workspace-switch{border-color:#243a52;background:#0d2036}
+  .workspace-switch b{color:#e9f2fb}.workspace-switch small,.chevron{color:#6f859c}
+  .nav-label{color:#60758c}
+  .nav-item{color:#9eb0c3}.nav-item .nav-icon{color:#7389a0}
+  .nav-item.active{color:#d9ecff;background:rgba(48,132,219,.22)}
+  .nav-item.active .nav-icon{color:#64adf1}
+  .badge{color:#8fa5bb;background:#15283d}.nav-item.active .badge{color:#bfe0ff;background:#214b76}
+  .sync-chip{border-color:#22374e;background:#0d2035}.sync-chip b{color:#dfeaf5}.sync-chip span{color:#6f849a}
+  .sync-dot{border-color:#67b579;box-shadow:0 0 0 2px rgba(103,181,121,.14)}
+  .dashboard-main{display:grid;min-width:0;min-height:0;padding:15px 16px 13px;grid-template-rows:42px 78px minmax(0,1fr);gap:10px;background:#071528}
+  .main-head{height:auto;min-height:0}.main-title h1{color:#f3f7fc}.main-title p{color:#71869b}
+  .scope{border-color:#263a51;color:#9eb2c7;background:#0d1e32}
+  .primary-button{background:linear-gradient(180deg,#3b8ee5,#2874ca);box-shadow:0 6px 16px rgba(31,103,179,.2)}
+  .metrics{height:auto;min-height:0;margin:0;gap:10px}
+  .metric{height:100%;min-height:0;padding:10px 11px;border-color:#22364d;background:#0d1e33;box-shadow:inset 0 1px 0 rgba(255,255,255,.025)}
+  .metric-label{color:#7f94aa}.metric-value{color:#f1f6fc}.metric-note{color:#62778d}
+  .metric-icon{color:#72b7f3;background:rgba(54,139,218,.13)}
+  .metric.warning .metric-icon{color:#e3aa59;background:rgba(218,147,48,.12)}
+  .metric.danger .metric-icon{color:#ea858d;background:rgba(208,69,78,.12)}
+  .metric.good .metric-icon{color:#7bca8c;background:rgba(73,164,91,.12)}
+  .dashboard-grid{height:auto;min-height:0;gap:10px}
+  .panel{border-color:#21354c;background:#0b1b2f;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}
+  .panel-head{border-color:#1e3146;background:#0c1d31}.panel-head h2{color:#e7f0f9}.panel-head span{color:#70859c}
+  .panel-filter{background:#071528}.panel-filter i{color:#6f8398}.panel-filter i.active{color:#b9dcfb;background:#173654;box-shadow:none}
+  .activity-row{border-color:#172a3e}.event-copy b{color:#dce7f2}.event-copy span,.event-time{color:#698096}.repo-name{color:#68aaf0}
+  .event-icon{color:#70b4f0;background:rgba(55,140,220,.12)}.event-icon.green{color:#79c38a;background:rgba(68,159,87,.12)}.event-icon.purple{color:#aa8ce2;background:rgba(128,86,190,.14)}
+  .repo-card{border-color:#1b2e42}.repo-card b{color:#d8e4ef}.repo-meta,.repo-foot{color:#6e8499}
+  .branch-bar{background:#1b3045}.branch-bar i:first-child{background:#438bd1}.branch-bar i:last-child{background:#27547d}
+  .task-summary{border-color:#1e3146}.task-mini{background:#0f2238}.task-mini b{color:#eaf2fa}.task-mini span{color:#70859b}
+  .task-row{border-color:#182b3f}.task-check{border-color:#6e849b}.task-copy b{color:#dbe6f1}.task-copy span{color:#6f8499}
+  .task-tag{color:#e0a052;background:rgba(203,128,40,.13)}.task-tag.review{color:#76b8ef;background:rgba(53,132,204,.13)}.task-tag.security{color:#eb8c94;background:rgba(202,71,80,.13)}
+  .task-footer{color:#697f95;background:#0a192c}.link{color:#67aaf0}
+  @media(max-width:960px){.dashboard-main{grid-template-rows:42px 140px minmax(0,1fr)}.metrics{height:auto}}
+
+  /* V3：全局白色主色调，用一张不对称焦点卡建立首屏视觉中心 */
+  .app-window{border-color:#c8ced7;color:#172033;background:#fff;box-shadow:0 24px 68px rgba(32,42,58,.20)}
+  .titlebar{border-color:#dfe4ea;background:rgba(255,255,255,.97)}
+  .window-title{color:#6c7788}
+  .icon-button{border-color:#d9dfe7;color:#647187;background:#fff}
+  .app-body{background:#fff}
+  .sidebar{border-color:#dfe4ea;background:#f1f4f7}
+  .brand b{color:#1d2737}.brand span{color:#7d8999}
+  .brand-mark{background:linear-gradient(145deg,#459cf0,#286fc8);box-shadow:0 7px 16px rgba(39,111,198,.20)}
+  .workspace-switch{border-color:#d8dee6;background:#fff;box-shadow:0 1px 2px rgba(30,43,62,.03)}
+  .workspace-switch b{color:#253044}.workspace-switch small,.chevron{color:#8a94a3}
+  .nav-label{color:#9aa4b1}
+  .nav-item{color:#5f6c7e}.nav-item .nav-icon{color:#7e8999}
+  .nav-item.active{color:#195fa8;background:#dceafa}
+  .nav-item.active .nav-icon{color:#2879ca}
+  .badge{color:#687588;background:#dfe4ea}.nav-item.active .badge{color:#1f66aa;background:#c7ddf3}
+  .sync-chip{border-color:#d9dfe6;background:rgba(255,255,255,.78)}.sync-chip b{color:#334052}.sync-chip span{color:#8993a2}
+  .sync-dot{border-color:#67aa70;box-shadow:0 0 0 2px #dceedd}
+  .dashboard-main{grid-template-rows:42px 104px minmax(0,1fr);gap:10px;background:#f7f9fb}
+  .main-title h1{color:#182234}.main-title p{color:#8792a1}
+  .scope{border-color:#d8dee6;color:#657287;background:#fff}
+  .primary-button{background:linear-gradient(180deg,#3789df,#2873c8);box-shadow:0 5px 13px rgba(36,108,185,.18)}
+  .focus-card{position:relative;display:grid;min-width:0;min-height:0;padding:12px 13px 12px 17px;grid-template-columns:54px minmax(230px,1fr) auto;gap:12px;align-items:center;overflow:hidden;border:1px solid #cbdff3;border-radius:11px;background:linear-gradient(105deg,#ffffff 0%,#ffffff 48%,#f1f7fd 100%);box-shadow:0 9px 24px rgba(46,101,158,.10)}
+  .focus-card:before{position:absolute;inset:12px auto 12px 0;width:4px;border-radius:0 5px 5px 0;background:#2f7fd2;content:""}
+  .focus-number{display:grid;width:52px;height:52px;place-items:center;border:1px solid #c9dff5;border-radius:13px;color:#216ab3;background:#eaf4fe;font-size:22px;font-weight:780;letter-spacing:-.05em}
+  .focus-copy{min-width:0}.focus-kicker{display:flex;gap:6px;align-items:center;margin-bottom:4px;color:#6b7b8d;font-size:5px;font-weight:700}.focus-kicker i{width:5px;height:5px;border-radius:50%;background:#e3a33d;box-shadow:0 0 0 3px #fff2db}
+  .focus-copy h2{margin:0 0 4px;color:#18263a;font-size:12px;letter-spacing:-.02em}.focus-copy p{margin:0;color:#7d8998;font-size:5px;line-height:1.45}
+  .focus-side{display:flex;gap:10px;align-items:center}.focus-stats{display:grid;grid-template-columns:repeat(3,56px);gap:5px}.focus-stat{padding:7px 6px;border-left:1px solid #dde6ef}.focus-stat:first-child{border-left:0}.focus-stat b{display:block;color:#243247;font-size:10px}.focus-stat span{display:block;margin-top:2px;color:#8792a1;font-size:5px}.focus-stat.danger b{color:#bd4e59}
+  .focus-action{display:grid;height:31px;padding:0 11px;place-items:center;border-radius:7px;color:#fff;background:#2d7dcc;box-shadow:0 5px 12px rgba(40,112,185,.19);font-size:6px;font-weight:750;white-space:nowrap}
+  .panel{border-color:#dfe4ea;background:#fff;box-shadow:0 2px 7px rgba(33,47,66,.035)}
+  .panel-head{border-color:#e8ecf1;background:#fff}.panel-head h2{color:#263145}.panel-head span{color:#8691a1}
+  .panel-filter{background:#f1f4f7}.panel-filter i{color:#8792a1}.panel-filter i.active{color:#3a6e9f;background:#fff;box-shadow:0 1px 3px rgba(31,45,63,.08)}
+  .activity-row{border-color:#eef1f4}.event-copy b{color:#2d3748}.event-copy span,.event-time{color:#8893a2}.repo-name{color:#3e78b0}
+  .event-icon{color:#3b82c6;background:#edf5fc}.event-icon.green{color:#468f58;background:#edf8f0}.event-icon.purple{color:#795bb2;background:#f3effa}
+  .repo-card{border-color:#edf0f3}.repo-card b{color:#303b4c}.repo-meta,.repo-foot{color:#8d97a5}
+  .branch-bar{background:#e8edf2}.branch-bar i:first-child{background:#4a91d5}.branch-bar i:last-child{background:#a5cbe9}
+  .task-summary{border-color:#e8ecf1}.task-mini{background:#f4f6f9}.task-mini b{color:#2d3849}.task-mini span{color:#8a94a3}
+  .task-row{border-color:#eef1f4}.task-check{border-color:#b4bdc8}.task-copy b{color:#303a4a}.task-copy span{color:#8a94a3}
+  .task-tag{color:#a66323;background:#fff1df}.task-tag.review{color:#326fa8;background:#eaf3fb}.task-tag.security{color:#ae4a54;background:#fdecee}
+  .task-footer{color:#7b8696;background:#fafbfd}.link{color:#3177b8}
+  @media(max-width:960px){.dashboard-main{grid-template-rows:42px 120px minmax(0,1fr)}.focus-card{grid-template-columns:48px 1fr}.focus-side{grid-column:2}.focus-stats{display:none}}
+
+  /* V4：提升白色界面中的文字对比度与最小可读字号 */
+  .window-title{color:#465366;font-weight:700}
+  .brand span{color:#536174;font-size:7px;font-weight:600}
+  .workspace-switch b{color:#182234;font-size:8px}.workspace-switch small,.chevron{color:#536174;font-size:6px;font-weight:550}
+  .nav-label{color:#657386;font-size:6px;font-weight:800}
+  .nav-item{color:#344054;font-size:8px;font-weight:650}.nav-item .nav-icon{color:#526174}
+  .badge{color:#445166;font-size:6px;font-weight:750}
+  .sync-chip b{color:#273447;font-size:7px}.sync-chip span{color:#536174;font-size:6px}
+  .main-title p{color:#536174;font-size:7px;font-weight:550}
+  .scope{color:#344054;font-size:7px;font-weight:650}
+  .primary-button{font-size:7px}
+  .focus-kicker{color:#46576a;font-size:6px}
+  .focus-copy h2{color:#111c2e;font-size:13px}.focus-copy p{color:#536174;font-size:6px;font-weight:550}
+  .focus-stat b{color:#172337;font-size:11px}.focus-stat span{color:#536174;font-size:6px;font-weight:550}
+  .focus-action{font-size:7px}
+  .panel-head h2{color:#172337;font-size:9px}.panel-head span{color:#536174;font-size:7px;font-weight:550}
+  .panel-filter i{color:#526174;font-size:6px;font-weight:650}
+  .event-copy b{color:#1f2b3c;font-size:7px}.event-copy span{color:#526174;font-size:6px;font-weight:550}.event-time{color:#5c697a;font-size:6px}
+  .repo-card b{color:#243043;font-size:7px}.repo-meta,.repo-foot{color:#566476;font-size:6px;font-weight:550}
+  .task-mini b{color:#1f2a3c;font-size:10px}.task-mini span{color:#566476;font-size:6px;font-weight:550}
+  .task-copy b{color:#202c3d;font-size:7px}.task-copy span{color:#536174;font-size:6px;font-weight:550}
+  .task-tag{font-size:6px;font-weight:650}
+  .task-footer{color:#536174;font-size:6px;font-weight:550}
+
+  /* V5：顶部身份区改为用户头像，移除容易被误认为文字的 GM 缩写 */
+  .brand-avatar{position:relative;display:grid;width:29px;height:29px;flex:0 0 29px;place-items:center;border:2px solid #fff;border-radius:50%;background:linear-gradient(145deg,#4c98df,#245fa6);box-shadow:0 0 0 1px #cdd9e5,0 5px 12px rgba(37,93,151,.18)}
+  .brand-avatar i{position:relative;display:block;width:15px;height:15px}
+  .brand-avatar i:before{position:absolute;top:0;left:4.5px;width:6px;height:6px;border-radius:50%;background:#fff;content:""}
+  .brand-avatar i:after{position:absolute;bottom:0;left:0;width:15px;height:7px;border-radius:8px 8px 4px 4px;background:#fff;content:""}
+  .brand-avatar:after{position:absolute;right:-1px;bottom:-1px;width:6px;height:6px;border:1.5px solid #f1f4f7;border-radius:50%;background:#38a75a;content:""}
+</style>
+
+<div class="page-meta">
+  <span class="page-index">页面 10 / 全局工作区 · 综合工作台</span>
+  <span class="page-status">设计稿 V6 · 个人使用模式 · 移除收件箱</span>
+</div>
+
+<div class="app-window">
+  <div class="titlebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="window-title">GitMate · 综合工作台</div>
+    <div class="title-tools"><span class="icon-button">⌕</span><span class="icon-button">⌘</span><span class="icon-button">?</span></div>
+  </div>
+
+  <div class="app-body">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-avatar" aria-label="当前用户头像"><i></i></span><div><b>GitMate</b><span>全局工作区</span></div></div>
+      <div class="workspace-switch"><span class="avatar">L</span><div><b>所有账户</b><small>2 个 GitHub · 18 个仓库</small></div><span class="chevron">⌄</span></div>
+
+      <div class="nav-group">
+        <div class="nav-label">工作空间</div>
+        <div class="nav-item active"><span class="nav-icon">⌂</span><span>综合工作台</span></div>
+        <div class="nav-item"><span class="nav-icon">▦</span><span>仓库</span><span class="badge">18</span></div>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-label">GitHub</div>
+        <div class="nav-item"><span class="nav-icon">◌</span><span>议题</span><span class="badge">8</span></div>
+        <div class="nav-item"><span class="nav-icon">⑂</span><span>拉取请求</span><span class="badge">7</span></div>
+        
+        <div class="nav-item"><span class="nav-icon">◇</span><span>组织</span></div>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-label">运行与安全</div>
+        <div class="nav-item"><span class="nav-icon">▶</span><span>自动化</span><span class="badge">2</span></div>
+        <div class="nav-item"><span class="nav-icon">⌾</span><span>安全中心</span><span class="badge">3</span></div>
+      </div>
+
+      <div class="sidebar-bottom">
+        <div class="sync-chip"><span class="sync-dot"></span><div><b>数据已同步</b><span>刚刚 · 18 个仓库</span></div></div>
+        <div class="nav-item"><span class="nav-icon">⚙</span><span>设置</span></div>
+      </div>
+    </aside>
+
+    <main class="dashboard-main">
+      <header class="main-head">
+        <div class="main-title"><h1>综合工作台</h1><p>2026年7月28日，星期二 · 汇总所有已连接账户</p></div>
+        <div class="head-actions"><div class="scope">所有账户 <span>⌄</span></div><div class="primary-button"><span>＋</span><span>新建</span></div></div>
+      </header>
+
+      <section class="focus-card">
+        <div class="focus-number">7</div>
+        <div class="focus-copy">
+          <div class="focus-kicker"><i></i><span>今日焦点 · 建议优先处理</span></div>
+          <h2>7 个拉取请求正在等待你的审查</h2>
+          <p>其中 3 项今天更新，GitMate/core 的 #214 同时阻塞了下一次版本发布。</p>
+        </div>
+        <div class="focus-side">
+          <div class="focus-stats">
+            <div class="focus-stat"><b>8</b><span>关注议题</span></div>
+            <div class="focus-stat danger"><b>2</b><span>自动化失败</span></div>
+            <div class="focus-stat"><b>17/18</b><span>仓库正常</span></div>
+          </div>
+          <div class="focus-action">开始处理</div>
+        </div>
+      </section>
+
+      <section class="dashboard-grid">
+        <div class="left-stack">
+          <section class="panel">
+            <div class="panel-head"><h2>跨仓库动态</h2><div class="panel-filter"><i class="active">全部</i><i>参与</i><i>关注</i></div></div>
+            <div class="activity-list">
+              <div class="activity-row"><span class="event-icon green">✓</span><div class="event-copy"><b>构建已通过 · <span class="repo-name">GitMate/mac-client</span></b><span>main · fix: 修复仓库索引异常 · lele</span></div><span class="event-time">2 分钟前</span></div>
+              <div class="activity-row"><span class="event-icon purple">⑂</span><div class="event-copy"><b>请求你审查拉取请求 #128</b><span><span class="repo-name">dafone/design-system</span> · 优化暗色模式变量</span></div><span class="event-time">18 分钟前</span></div>
+              <div class="activity-row"><span class="event-icon">◌</span><div class="event-copy"><b>议题 #86 新增了 3 条评论</b><span><span class="repo-name">studio/asset-console</span> · 批量上传时进度异常</span></div><span class="event-time">42 分钟前</span></div>
+              <div class="activity-row"><span class="event-icon green">↥</span><div class="event-copy"><b>本地分支已推送至远端</b><span><span class="repo-name">GitMate/core</span> · feature/sync-recovery</span></div><span class="event-time">1 小时前</span></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head"><h2>仓库健康度</h2><span>按最近活跃排序 · 查看全部 18 个</span></div>
+            <div class="repo-health">
+              <div class="repo-card"><div class="repo-card-top"><b>GitMate/mac-client</b><span class="health-dot"></span></div><div class="repo-meta"><span>Swift</span><span>2.4 GB</span><span>main</span></div><div class="branch-bar"><i></i><i></i></div><div class="repo-foot"><span>已同步</span><span>1 分钟前</span></div></div>
+              <div class="repo-card"><div class="repo-card-top"><b>dafone/design-system</b><span class="health-dot"></span></div><div class="repo-meta"><span>TypeScript</span><span>684 MB</span><span>develop</span></div><div class="branch-bar"><i></i><i></i></div><div class="repo-foot"><span>已同步</span><span>12 分钟前</span></div></div>
+              <div class="repo-card"><div class="repo-card-top"><b>studio/asset-console</b><span class="health-dot warn"></span></div><div class="repo-meta"><span>Vue</span><span>1.1 GB</span><span>main</span></div><div class="branch-bar"><i></i><i></i></div><div class="repo-foot"><span>有 3 个未推送提交</span><span>1 小时前</span></div></div>
+            </div>
+          </section>
+        </div>
+
+        <aside class="panel task-panel">
+          <div class="panel-head"><h2>需要我处理</h2><span class="link">查看全部</span></div>
+          <div class="task-summary">
+            <div class="task-mini"><b>7</b><span>审查</span></div>
+            <div class="task-mini"><b>5</b><span>提及</span></div>
+            <div class="task-mini"><b>3</b><span>安全</span></div>
+          </div>
+          <div class="task-list">
+            <div class="task-row"><span class="task-check"></span><div class="task-copy"><b>审查：优化增量同步算法</b><span>GitMate/core · PR #214<br>更新于 12 分钟前</span></div><span class="task-tag review">审查</span></div>
+            <div class="task-row"><span class="task-check"></span><div class="task-copy"><b>处理 macOS 15 权限提示</b><span>GitMate/mac-client · Issue #91<br>由你负责</span></div><span class="task-tag">议题</span></div>
+            <div class="task-row"><span class="task-check"></span><div class="task-copy"><b>Dependabot：升级 openssl</b><span>studio/asset-console<br>高危依赖提醒</span></div><span class="task-tag security">安全</span></div>
+            <div class="task-row"><span class="task-check"></span><div class="task-copy"><b>Workflow「Release」失败</b><span>dafone/design-system<br>失败于打包步骤</span></div><span class="task-tag security">失败</span></div>
+          </div>
+          <div class="task-footer"><span>按优先级与更新时间排序</span><span class="link">管理显示规则</span></div>
+        </aside>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div class="specs">
+  <div class="spec"><span>01 · 双重上下文</span><h3>全局工作区入口</h3><p>左侧固定导航展示跨账户内容，进入仓库后再切换到仓库工作区。</p></div>
+  <div class="spec"><span>02 · 视觉中心</span><h3>今日焦点只突出一件事</h3><p>用不对称焦点卡、蓝色侧线和唯一主按钮建立清晰的首屏视线落点。</p></div>
+  <div class="spec"><span>03 · 状态汇总</span><h3>远端与本地共同呈现</h3><p>GitHub 动态、Actions、安全提醒与本地同步状态在同一个工作台汇总。</p></div>
+  <div class="spec"><span>04 · 高度受控</span><h3>面板内部滚动</h3><p>窗口、导航、指标和主要操作始终可见，动态与待办列表独立滚动。</p></div>
+</div>
+
+<div class="decision options">
+  <div class="option" data-choice="approve-page-10-v6" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>确认第 10 页</h3><p>锁定综合工作台布局与信息优先级。</p></div>
+  </div>
+  <div class="option" data-choice="revise-page-10-v6" onclick="toggleSelect(this)">
+    <div class="letter">↻</div>
+    <div class="content"><h3>修改第 10 页</h3><p>选择后告诉我希望调整的区域。</p></div>
+  </div>
+</div>

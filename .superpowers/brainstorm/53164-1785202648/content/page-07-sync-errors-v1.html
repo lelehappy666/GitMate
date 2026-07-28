@@ -1,0 +1,481 @@
+<style>
+  .page-meta {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+    margin-bottom:14px;
+  }
+  .page-index {
+    display:inline-flex;
+    align-items:center;
+    padding:6px 9px;
+    border-radius:999px;
+    color:var(--accent);
+    background:color-mix(in srgb,var(--accent) 9%,var(--surface));
+    font-size:11px;
+    font-weight:700;
+  }
+  .page-status { color:var(--muted); font-size:11px; }
+  .app-window {
+    position:relative;
+    height:680px;
+    overflow:hidden;
+    border:1px solid #9fa5af;
+    border-radius:15px;
+    color:#fff;
+    background:#07162b;
+    box-shadow:0 24px 68px rgba(21,27,38,.24);
+  }
+  .app-window * { box-sizing:border-box; }
+  .artwork {
+    position:absolute;
+    inset:0;
+    filter:saturate(.42) brightness(.25);
+    transform:scale(1.03);
+    background-image:
+      linear-gradient(90deg,rgba(5,17,36,.82),rgba(5,17,36,.64)),
+      url('/files/page-01-welcome-bg-v1.png');
+    background-position:center;
+    background-size:cover;
+  }
+  .titlebar {
+    position:relative;
+    z-index:2;
+    display:flex;
+    height:42px;
+    padding:0 15px;
+    align-items:center;
+    justify-content:space-between;
+    background:rgba(5,14,30,.62);
+    border-bottom:1px solid rgba(255,255,255,.08);
+    backdrop-filter:blur(20px);
+  }
+  .traffic { display:flex; gap:7px; }
+  .traffic i { width:11px; height:11px; border-radius:50%; }
+  .traffic i:nth-child(1){background:#ff5f57}
+  .traffic i:nth-child(2){background:#febc2e}
+  .traffic i:nth-child(3){background:#28c840}
+  .window-title {
+    position:absolute;
+    left:50%;
+    transform:translateX(-50%);
+    color:rgba(241,247,253,.62);
+    font-size:10px;
+    font-weight:620;
+  }
+  .close-action { color:rgba(235,243,252,.64); font-size:9px; }
+  .stage {
+    position:relative;
+    z-index:1;
+    display:grid;
+    height:calc(100% - 42px);
+    padding:20px 4.5%;
+    place-items:center;
+  }
+  .error-card {
+    display:grid;
+    width:930px;
+    height:552px;
+    padding:20px;
+    grid-template-rows:auto minmax(0,1fr) auto;
+    border:1px solid rgba(255,255,255,.15);
+    border-radius:18px;
+    background:rgba(12,27,49,.87);
+    box-shadow:0 28px 72px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.08);
+    backdrop-filter:blur(28px) saturate(1.04);
+  }
+  .error-head {
+    padding-bottom:15px;
+    border-bottom:1px solid rgba(255,255,255,.08);
+  }
+  .head-row {
+    display:grid;
+    grid-template-columns:auto 1fr auto;
+    gap:13px;
+    align-items:center;
+  }
+  .alert-icon {
+    display:grid;
+    width:42px;
+    height:42px;
+    place-items:center;
+    border:1px solid rgba(244,166,85,.25);
+    border-radius:12px;
+    color:#f4b36b;
+    background:rgba(214,124,47,.11);
+    font-size:18px;
+    font-weight:750;
+  }
+  .headline h1 { margin:0 0 5px; font-size:19px; letter-spacing:-.02em; }
+  .headline p { margin:0; color:rgba(225,237,249,.42); font-size:9px; }
+  .problem-count {
+    display:flex;
+    gap:6px;
+    align-items:center;
+    padding:6px 8px;
+    border-radius:999px;
+    color:#f0b774;
+    background:rgba(215,131,51,.11);
+    font-size:8px;
+  }
+  .progress-line {
+    display:grid;
+    grid-template-columns:auto 1fr auto;
+    gap:10px;
+    align-items:center;
+    margin-top:13px;
+  }
+  .progress-line b { color:rgba(233,243,252,.67); font-size:8px; }
+  .track {
+    height:6px;
+    overflow:hidden;
+    border-radius:999px;
+    background:rgba(255,255,255,.075);
+  }
+  .track i { display:block; width:72%; height:100%; border-radius:999px; background:linear-gradient(90deg,#397fc9,#58a6eb); }
+  .progress-line span { color:rgba(225,237,249,.37); font-size:7px; }
+  .error-content {
+    display:grid;
+    min-height:0;
+    padding:14px 0;
+    grid-template-columns:1.08fr .92fr;
+    gap:13px;
+  }
+  .panel {
+    display:grid;
+    min-height:0;
+    overflow:hidden;
+    grid-template-rows:38px minmax(0,1fr);
+    border:1px solid rgba(255,255,255,.08);
+    border-radius:11px;
+    background:rgba(5,18,37,.42);
+  }
+  .panel-head {
+    display:flex;
+    padding:0 12px;
+    align-items:center;
+    justify-content:space-between;
+    border-bottom:1px solid rgba(255,255,255,.07);
+  }
+  .panel-head h3 { margin:0; font-size:9px; }
+  .filters {
+    display:flex;
+    gap:8px;
+    color:rgba(225,237,249,.32);
+    font-size:7px;
+  }
+  .filters .active { color:#f1bc7c; }
+  .error-list {
+    position:relative;
+    min-height:0;
+    overflow:hidden;
+    padding:0 9px;
+  }
+  .error-list::after {
+    position:absolute;
+    top:8px;
+    right:3px;
+    width:3px;
+    height:48px;
+    content:"";
+    border-radius:999px;
+    background:rgba(255,255,255,.15);
+  }
+  .error-row {
+    display:grid;
+    min-height:67px;
+    padding:8px 3px;
+    grid-template-columns:auto minmax(0,1fr) auto;
+    gap:9px;
+    align-items:center;
+    border-bottom:1px solid rgba(255,255,255,.06);
+  }
+  .error-row:last-child { border:0; }
+  .error-row.selected {
+    margin:4px -2px;
+    padding:7px 5px;
+    border:1px solid rgba(238,165,91,.19);
+    border-radius:8px;
+    background:rgba(225,134,51,.07);
+  }
+  .severity {
+    display:grid;
+    width:26px;
+    height:26px;
+    place-items:center;
+    border-radius:8px;
+    color:#f2aa61;
+    background:rgba(218,126,44,.11);
+    font-size:10px;
+    font-weight:750;
+  }
+  .severity.blocked { color:#ee7c7c; background:rgba(210,70,70,.11); }
+  .severity.wait { color:#e9c46e; background:rgba(191,153,54,.11); }
+  .error-copy { min-width:0; }
+  .error-copy b {
+    display:block;
+    margin-bottom:4px;
+    overflow:hidden;
+    font-size:8px;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .error-copy span {
+    display:block;
+    overflow:hidden;
+    color:rgba(225,237,249,.34);
+    font-size:7px;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .error-copy code {
+    display:block;
+    margin-top:4px;
+    overflow:hidden;
+    color:rgba(246,181,116,.63);
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:6px;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .row-action {
+    padding:4px 6px;
+    border:1px solid rgba(255,255,255,.09);
+    border-radius:6px;
+    color:rgba(203,228,248,.61);
+    background:rgba(255,255,255,.035);
+    font-size:7px;
+    white-space:nowrap;
+  }
+  .details {
+    min-height:0;
+    overflow:hidden;
+    padding:13px;
+  }
+  .detail-type {
+    display:flex;
+    gap:7px;
+    align-items:center;
+    margin-bottom:13px;
+    color:#f0b16e;
+    font-size:8px;
+    font-weight:700;
+  }
+  .detail-type i { width:6px; height:6px; border-radius:50%; background:#ec9e50; }
+  .details h2 { margin:0 0 7px; font-size:14px; letter-spacing:-.015em; }
+  .details > p { margin:0 0 13px; color:rgba(225,237,249,.43); font-size:8px; line-height:1.55; }
+  .impact {
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:7px;
+    margin-bottom:12px;
+  }
+  .impact div {
+    padding:8px;
+    border-radius:8px;
+    background:rgba(255,255,255,.035);
+  }
+  .impact b { display:block; margin-bottom:3px; font-size:7px; }
+  .impact span { color:rgba(225,237,249,.34); font-size:7px; }
+  .technical {
+    margin-bottom:12px;
+    padding:9px;
+    border:1px solid rgba(255,255,255,.07);
+    border-radius:8px;
+    color:rgba(209,227,243,.47);
+    background:rgba(0,0,0,.10);
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:6px;
+    line-height:1.55;
+  }
+  .detail-actions {
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:7px;
+  }
+  .detail-button {
+    display:grid;
+    min-height:31px;
+    place-items:center;
+    border:1px solid rgba(255,255,255,.09);
+    border-radius:7px;
+    color:rgba(205,229,249,.65);
+    background:rgba(255,255,255,.035);
+    font-size:7px;
+    font-weight:650;
+  }
+  .detail-button.primary { color:#fff; border-color:#3b83c9; background:#2b74ba; }
+  .detail-footer {
+    margin-top:10px;
+    color:rgba(225,237,249,.27);
+    font-size:6px;
+    line-height:1.4;
+  }
+  .footer {
+    display:grid;
+    grid-template-columns:1fr auto auto auto;
+    gap:8px;
+    align-items:center;
+    padding-top:13px;
+    border-top:1px solid rgba(255,255,255,.08);
+  }
+  .footer-note { color:rgba(225,237,249,.36); font-size:7px; }
+  .button {
+    display:grid;
+    min-height:34px;
+    padding:0 12px;
+    place-items:center;
+    border:1px solid rgba(255,255,255,.10);
+    border-radius:8px;
+    color:rgba(204,228,249,.66);
+    background:rgba(255,255,255,.04);
+    font-size:8px;
+    font-weight:650;
+  }
+  .button.warn { color:#f5c488; border-color:rgba(224,156,80,.24); background:rgba(204,123,43,.08); }
+  .button.primary { border-color:#3a89da; color:#fff; background:linear-gradient(180deg,#3b8de5,#2874cc); }
+  .specs {
+    display:grid;
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:11px;
+    margin-top:14px;
+  }
+  .spec {
+    padding:13px;
+    border:1px solid var(--border);
+    border-radius:11px;
+    background:var(--surface);
+  }
+  .spec span { display:block; margin-bottom:6px; color:var(--accent); font-size:10px; font-weight:800; }
+  .spec h3 { margin:0 0 5px; font-size:12px; }
+  .spec p { margin:0; color:var(--muted); font-size:10px; line-height:1.5; }
+  .states {
+    display:grid;
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:9px;
+    margin-top:11px;
+  }
+  .state {
+    padding:11px;
+    border:1px dashed var(--border);
+    border-radius:10px;
+    color:var(--muted);
+    font-size:10px;
+    line-height:1.45;
+  }
+  .state b { display:block; margin-bottom:4px; color:var(--text); }
+  .decision {
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:12px;
+    margin-top:15px;
+  }
+  .decision .option { margin:0; }
+  @media(max-width:1020px){
+    .error-card{width:100%;}
+    .error-content{grid-template-columns:1fr .88fr;}
+    .specs,.states{grid-template-columns:repeat(2,1fr);}
+  }
+</style>
+
+<div class="page-meta">
+  <span class="page-index">页面 07 / 进入与账户 · 同步错误与恢复</span>
+  <span class="page-status">设计稿 V1 · 1180×720 高度规范</span>
+</div>
+
+<div class="app-window">
+  <div class="artwork"></div>
+  <div class="titlebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="window-title">同步遇到问题</div>
+    <div class="close-action">稍后处理</div>
+  </div>
+
+  <div class="stage">
+    <section class="error-card">
+      <div class="error-head">
+        <div class="head-row">
+          <div class="alert-icon">!</div>
+          <div class="headline"><h1>3 个同步问题需要处理</h1><p>已完成的数据仍然可用。修复失败项，或先进入工作台稍后继续。</p></div>
+          <div class="problem-count"><span>●</span><span>同步已暂停</span></div>
+        </div>
+        <div class="progress-line"><b>整体进度 72%</b><div class="track"><i></i></div><span>486 MB / 674 MB</span></div>
+      </div>
+
+      <div class="error-content">
+        <section class="panel">
+          <div class="panel-head"><h3>失败与等待项目</h3><div class="filters"><span class="active">全部 3</span><span>可重试 1</span><span>需处理 2</span></div></div>
+          <div class="error-list">
+            <div class="error-row selected">
+              <span class="severity blocked">!</span>
+              <div class="error-copy"><b>DesignKit 组织权限已失效</b><span>dafeng-digital / DesignKit · 代码与 PR</span><code>HTTP 403 · SSO_AUTHORIZATION_REQUIRED</code></div>
+              <span class="row-action">处理</span>
+            </div>
+            <div class="error-row">
+              <span class="severity">!</span>
+              <div class="error-copy"><b>本地可用空间不足</b><span>lele-dev / GitMate · 剩余 312 MB</span><code>DISK_SPACE_LOW · required 846 MB</code></div>
+              <span class="row-action">管理空间</span>
+            </div>
+            <div class="error-row">
+              <span class="severity wait">◷</span>
+              <div class="error-copy"><b>GitHub API 暂时受限</b><span>通知与 Projects · 自动等待</span><code>RATE_LIMITED · reset 10:58</code></div>
+              <span class="row-action">详情</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h3>问题详情</h3><div class="filters"><span>复制诊断</span></div></div>
+          <div class="details">
+            <div class="detail-type"><i></i><span>需要重新授权</span></div>
+            <h2>组织 SSO 授权已过期</h2>
+            <p>GitMate 无法继续读取 DesignKit 的私有内容。重新完成该组织的 SSO 授权后，会从中断位置继续同步。</p>
+            <div class="impact">
+              <div><b>影响范围</b><span>1 个仓库 · 328 个对象</span></div>
+              <div><b>已保留数据</b><span>426 MB · 可离线浏览</span></div>
+            </div>
+            <div class="technical">Request ID: 7D23:E820:9A42<br>Resource: dafeng-digital/DesignKit<br>Last success: 2026-07-28 10:42:16</div>
+            <div class="detail-actions">
+              <div class="detail-button">跳过此仓库</div>
+              <div class="detail-button primary">重新授权</div>
+            </div>
+            <div class="detail-footer">重新授权会在默认浏览器中打开 GitHub。成功后无需重新下载已完成内容。</div>
+          </div>
+        </section>
+      </div>
+
+      <div class="footer">
+        <div class="footer-note">错误记录会保留在全局操作中心，可随时重试或导出诊断。</div>
+        <div class="button">导出诊断</div>
+        <div class="button warn">重试可恢复项目</div>
+        <div class="button primary">进入工作台</div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="specs">
+  <div class="spec"><span>01 · 集中处理</span><h3>所有错误统一汇总</h3><p>按可重试、需授权、需设置和等待恢复分类，不让错误散落在不同弹窗。</p></div>
+  <div class="spec"><span>02 · 说明影响</span><h3>明确失败带来的后果</h3><p>显示受影响仓库、对象数量以及已经安全保留的数据。</p></div>
+  <div class="spec"><span>03 · 逐项恢复</span><h3>每种错误给出对应动作</h3><p>重试、重新授权、管理空间、检查证书、等待或跳过，不使用笼统“失败”。</p></div>
+  <div class="spec"><span>04 · 不阻塞工作</span><h3>允许带错误进入工作台</h3><p>除非账户完全不可用，已同步内容始终可以继续查看和操作。</p></div>
+</div>
+
+<div class="states">
+  <div class="state"><b>自动可恢复</b>网络抖动和服务暂时错误自动退避重试，不要求用户立即干预。</div>
+  <div class="state"><b>需要用户处理</b>权限、证书、代理和存储问题突出显示对应修复入口。</div>
+  <div class="state"><b>企业策略阻止</b>说明策略名称、管理员和受影响功能，不提供绕过操作。</div>
+  <div class="state"><b>重复失败</b>超过重试上限后停止自动重试，避免循环消耗网络与 API 配额。</div>
+</div>
+
+<div class="decision options">
+  <div class="option" data-choice="approve-page-07-v1" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>确认第 07 页</h3><p>锁定同步错误与恢复页。</p></div>
+  </div>
+  <div class="option" data-choice="revise-page-07-v1" onclick="toggleSelect(this)">
+    <div class="letter">↻</div>
+    <div class="content"><h3>修改第 07 页</h3><p>选择后告诉我需要调整的内容。</p></div>
+  </div>
+</div>

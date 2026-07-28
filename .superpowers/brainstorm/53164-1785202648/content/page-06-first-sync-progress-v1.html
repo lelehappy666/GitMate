@@ -1,0 +1,387 @@
+<style>
+  .page-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+  }
+  .page-index {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 9px;
+    border-radius: 999px;
+    color: var(--accent);
+    background: color-mix(in srgb,var(--accent) 9%,var(--surface));
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .page-status { color:var(--muted); font-size:11px; }
+  .app-window {
+    position: relative;
+    height: 680px;
+    overflow: hidden;
+    border: 1px solid #9fa5af;
+    border-radius: 15px;
+    color: #fff;
+    background: #07162b;
+    box-shadow: 0 24px 68px rgba(21,27,38,.24);
+  }
+  .app-window * { box-sizing:border-box; }
+  .artwork {
+    position:absolute;
+    inset:0;
+    filter:saturate(.52) brightness(.31);
+    transform:scale(1.03);
+    background-image:
+      linear-gradient(90deg,rgba(5,17,36,.76),rgba(5,17,36,.54)),
+      url('/files/page-01-welcome-bg-v1.png');
+    background-position:center;
+    background-size:cover;
+  }
+  .titlebar {
+    position:relative;
+    z-index:2;
+    display:flex;
+    height:42px;
+    padding:0 15px;
+    align-items:center;
+    justify-content:space-between;
+    background:rgba(5,14,30,.58);
+    border-bottom:1px solid rgba(255,255,255,.08);
+    backdrop-filter:blur(20px);
+  }
+  .traffic { display:flex; gap:7px; }
+  .traffic i { width:11px; height:11px; border-radius:50%; }
+  .traffic i:nth-child(1){background:#ff5f57}
+  .traffic i:nth-child(2){background:#febc2e}
+  .traffic i:nth-child(3){background:#28c840}
+  .window-title {
+    position:absolute;
+    left:50%;
+    transform:translateX(-50%);
+    color:rgba(241,247,253,.62);
+    font-size:10px;
+    font-weight:620;
+  }
+  .account { color:rgba(235,243,252,.64); font-size:9px; }
+  .stage {
+    position:relative;
+    z-index:1;
+    display:grid;
+    height:calc(100% - 42px);
+    padding:24px 7%;
+    place-items:center;
+  }
+  .progress-card {
+    display:grid;
+    width:810px;
+    height:530px;
+    padding:24px;
+    grid-template-rows:auto minmax(0,1fr) auto;
+    border:1px solid rgba(255,255,255,.15);
+    border-radius:18px;
+    background:rgba(12,27,49,.84);
+    box-shadow:0 28px 72px rgba(0,0,0,.34),inset 0 1px 0 rgba(255,255,255,.08);
+    backdrop-filter:blur(28px) saturate(1.06);
+  }
+  .progress-head {
+    display:grid;
+    grid-template-columns:auto 1fr auto;
+    gap:16px;
+    align-items:center;
+    padding-bottom:18px;
+    border-bottom:1px solid rgba(255,255,255,.08);
+  }
+  .ring {
+    position:relative;
+    display:grid;
+    width:72px;
+    height:72px;
+    place-items:center;
+    border-radius:50%;
+    background:conic-gradient(#55a3eb 0 72%,rgba(255,255,255,.08) 72% 100%);
+  }
+  .ring::before {
+    position:absolute;
+    inset:7px;
+    content:"";
+    border-radius:50%;
+    background:#102743;
+  }
+  .ring b {
+    position:relative;
+    z-index:1;
+    font-size:14px;
+    font-variant-numeric:tabular-nums;
+  }
+  .headline h1 { margin:0 0 6px; font-size:20px; letter-spacing:-.02em; }
+  .headline p { margin:0; color:rgba(225,237,249,.44); font-size:9px; line-height:1.45; }
+  .sync-state {
+    display:flex;
+    gap:6px;
+    align-items:center;
+    padding:6px 8px;
+    border-radius:999px;
+    color:#8ed6b2;
+    background:rgba(50,165,109,.11);
+    font-size:8px;
+  }
+  .sync-state i { width:6px; height:6px; border-radius:50%; background:#55cf91; }
+  .sync-content {
+    display:grid;
+    min-height:0;
+    padding:17px 0;
+    grid-template-columns:1fr 230px;
+    gap:16px;
+  }
+  .task-list {
+    min-height:0;
+    overflow:hidden;
+    border:1px solid rgba(255,255,255,.08);
+    border-radius:11px;
+    background:rgba(5,18,37,.38);
+  }
+  .task {
+    display:grid;
+    min-height:58px;
+    padding:0 12px;
+    grid-template-columns:auto 1fr auto;
+    gap:10px;
+    align-items:center;
+    border-bottom:1px solid rgba(255,255,255,.065);
+  }
+  .task:last-child { border:0; }
+  .task-icon {
+    display:grid;
+    width:27px;
+    height:27px;
+    place-items:center;
+    border-radius:8px;
+    color:#a9d7ff;
+    background:rgba(69,146,219,.12);
+    font-size:10px;
+  }
+  .task-icon.done { color:#86d8af; background:rgba(47,169,106,.11); }
+  .task-copy b { display:block; margin-bottom:4px; font-size:9px; }
+  .task-copy span { color:rgba(225,237,249,.35); font-size:7px; }
+  .task-value {
+    color:rgba(231,242,252,.61);
+    font-size:8px;
+    font-variant-numeric:tabular-nums;
+    text-align:right;
+  }
+  .task-value.done { color:#82d1a9; }
+  .mini-progress {
+    width:66px;
+    height:4px;
+    margin-top:5px;
+    overflow:hidden;
+    border-radius:99px;
+    background:rgba(255,255,255,.08);
+  }
+  .mini-progress i { display:block; height:100%; width:72%; border-radius:99px; background:#4c98df; }
+  .activity {
+    display:flex;
+    padding:13px;
+    flex-direction:column;
+    border:1px solid rgba(255,255,255,.08);
+    border-radius:11px;
+    background:rgba(5,18,37,.38);
+  }
+  .activity h3 { margin:0 0 12px; font-size:9px; }
+  .activity-row {
+    display:grid;
+    grid-template-columns:auto 1fr;
+    gap:8px;
+    padding:8px 0;
+    border-bottom:1px solid rgba(255,255,255,.06);
+  }
+  .activity-row:last-of-type { border:0; }
+  .activity-row i {
+    width:6px;
+    height:6px;
+    margin-top:3px;
+    border-radius:50%;
+    background:#4e9ce3;
+  }
+  .activity-row b { display:block; margin-bottom:3px; font-size:8px; }
+  .activity-row span { color:rgba(225,237,249,.32); font-size:7px; line-height:1.35; }
+  .network {
+    margin-top:auto;
+    padding:9px;
+    border-radius:8px;
+    color:rgba(225,237,249,.40);
+    background:rgba(255,255,255,.035);
+    font-size:7px;
+    line-height:1.5;
+  }
+  .network b { color:rgba(224,240,253,.69); }
+  .footer {
+    display:grid;
+    grid-template-columns:1fr auto auto;
+    gap:8px;
+    align-items:center;
+    padding-top:14px;
+    border-top:1px solid rgba(255,255,255,.08);
+  }
+  .footer-note { color:rgba(225,237,249,.38); font-size:7px; }
+  .button {
+    display:grid;
+    min-height:35px;
+    padding:0 13px;
+    place-items:center;
+    border:1px solid rgba(255,255,255,.10);
+    border-radius:8px;
+    color:rgba(204,228,249,.66);
+    background:rgba(255,255,255,.04);
+    font-size:8px;
+    font-weight:650;
+  }
+  .button.primary {
+    border-color:#3a89da;
+    color:#fff;
+    background:linear-gradient(180deg,#3b8de5,#2874cc);
+  }
+  .specs {
+    display:grid;
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:11px;
+    margin-top:14px;
+  }
+  .spec {
+    padding:13px;
+    border:1px solid var(--border);
+    border-radius:11px;
+    background:var(--surface);
+  }
+  .spec span {
+    display:block;
+    margin-bottom:6px;
+    color:var(--accent);
+    font-size:10px;
+    font-weight:800;
+  }
+  .spec h3 { margin:0 0 5px; font-size:12px; }
+  .spec p { margin:0; color:var(--muted); font-size:10px; line-height:1.5; }
+  .states {
+    display:grid;
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:9px;
+    margin-top:11px;
+  }
+  .state {
+    padding:11px;
+    border:1px dashed var(--border);
+    border-radius:10px;
+    color:var(--muted);
+    font-size:10px;
+    line-height:1.45;
+  }
+  .state b { display:block; margin-bottom:4px; color:var(--text); }
+  .decision {
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:12px;
+    margin-top:15px;
+  }
+  .decision .option { margin:0; }
+  @media(max-width:980px){
+    .progress-card{width:100%;}
+    .sync-content{grid-template-columns:1fr 190px;}
+    .specs,.states{grid-template-columns:repeat(2,1fr);}
+  }
+</style>
+
+<div class="page-meta">
+  <span class="page-index">页面 06 / 进入与账户 · 首次同步进度</span>
+  <span class="page-status">设计稿 V1 · 1180×720 高度规范</span>
+</div>
+
+<div class="app-window">
+  <div class="artwork"></div>
+  <div class="titlebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="window-title">正在准备 GitMate</div>
+    <div class="account">lele-dev · GitHub.com</div>
+  </div>
+
+  <div class="stage">
+    <section class="progress-card">
+      <div class="progress-head">
+        <div class="ring"><b>72%</b></div>
+        <div class="headline"><h1>正在同步你的工作区</h1><p>基础数据已就绪，可以提前进入工作台，其余内容将在后台继续同步。</p></div>
+        <div class="sync-state"><i></i><span>同步正常</span></div>
+      </div>
+
+      <div class="sync-content">
+        <section class="task-list">
+          <div class="task">
+            <span class="task-icon done">✓</span>
+            <div class="task-copy"><b>账户与组织</b><span>账户资料、组织、团队和权限状态</span></div>
+            <span class="task-value done">已完成</span>
+          </div>
+          <div class="task">
+            <span class="task-icon done">✓</span>
+            <div class="task-copy"><b>仓库轻量索引</b><span>名称、状态、通知、活动和大小</span></div>
+            <span class="task-value done">128 / 128</span>
+          </div>
+          <div class="task">
+            <span class="task-icon">◇</span>
+            <div class="task-copy"><b>自动与离线仓库</b><span>Issue、PR、代码和运行结果<div class="mini-progress"><i></i></div></span></div>
+            <span class="task-value">2 / 3</span>
+          </div>
+          <div class="task">
+            <span class="task-icon">◉</span>
+            <div class="task-copy"><b>通知与项目</b><span>通知线程、Projects 和近期活动<div class="mini-progress"><i style="width:61%"></i></div></span></div>
+            <span class="task-value">61%</span>
+          </div>
+          <div class="task">
+            <span class="task-icon">⌁</span>
+            <div class="task-copy"><b>搜索索引</b><span>建立跨仓库本地搜索能力<div class="mini-progress"><i style="width:38%"></i></div></span></div>
+            <span class="task-value">38%</span>
+          </div>
+        </section>
+
+        <aside class="activity">
+          <h3>当前活动</h3>
+          <div class="activity-row"><i></i><div><b>同步 GitMate</b><span>Pull Request 与 Actions</span></div></div>
+          <div class="activity-row"><i></i><div><b>同步 DesignKit</b><span>代码与 Issue 历史</span></div></div>
+          <div class="activity-row"><i></i><div><b>建立搜索索引</b><span>已处理 8,421 个对象</span></div></div>
+          <div class="network"><b>网络与空间</b><br>12.4 MB/s · 已下载 486 MB<br>预计剩余 2 分钟</div>
+        </aside>
+      </div>
+
+      <div class="footer">
+        <div class="footer-note">关闭窗口不会停止同步，可在操作中心查看进度。</div>
+        <div class="button">暂停同步</div>
+        <div class="button primary">进入工作台</div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="specs">
+  <div class="spec"><span>01 · 非阻塞</span><h3>基础数据完成即可进入</h3><p>完整缓存不阻塞首次使用，未完成内容继续在后台处理。</p></div>
+  <div class="spec"><span>02 · 分层进度</span><h3>总进度与任务同时展示</h3><p>总进度说明整体状态，任务列表帮助定位具体耗时环节。</p></div>
+  <div class="spec"><span>03 · 可控制</span><h3>允许暂停和恢复</h3><p>暂停保留已下载内容，稍后可从全局操作中心继续。</p></div>
+  <div class="spec"><span>04 · 高度策略</span><h3>任务列表局部滚动</h3><p>任务增多时只滚动中间列表，页头、状态和底部操作固定。</p></div>
+</div>
+
+<div class="states">
+  <div class="state"><b>全部完成</b>进度环变为勾选，主按钮改为“打开工作台”。</div>
+  <div class="state"><b>网络中断</b>自动暂停远程任务，本地索引继续；联网后自动恢复。</div>
+  <div class="state"><b>速率限制</b>显示恢复时间，先处理不消耗 API 配额的本地任务。</div>
+  <div class="state"><b>部分失败</b>不阻塞进入工作台；失败任务可单独重试并查看原因。</div>
+</div>
+
+<div class="decision options">
+  <div class="option" data-choice="approve-page-06-v1" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>确认第 06 页</h3><p>锁定首次同步进度页。</p></div>
+  </div>
+  <div class="option" data-choice="revise-page-06-v1" onclick="toggleSelect(this)">
+    <div class="letter">↻</div>
+    <div class="content"><h3>修改第 06 页</h3><p>选择后告诉我需要调整的内容。</p></div>
+  </div>
+</div>

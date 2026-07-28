@@ -1,0 +1,151 @@
+<style>
+  .page-meta{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px}
+  .page-index{display:inline-flex;align-items:center;padding:6px 9px;border-radius:999px;color:var(--accent);background:color-mix(in srgb,var(--accent) 9%,var(--surface));font-size:11px;font-weight:700}
+  .page-status{color:var(--muted);font-size:11px}
+  .app-window{height:680px;overflow:hidden;border:1px solid #a5aab2;border-radius:15px;color:#172033;background:#f5f7fa;box-shadow:0 24px 68px rgba(21,27,38,.22)}
+  .app-window *{box-sizing:border-box}
+  .titlebar{position:relative;display:flex;height:42px;padding:0 14px;align-items:center;justify-content:space-between;border-bottom:1px solid #d8dde5;background:rgba(248,250,252,.96)}
+  .traffic{display:flex;gap:7px}.traffic i{width:11px;height:11px;border-radius:50%}.traffic i:nth-child(1){background:#ff5f57}.traffic i:nth-child(2){background:#febc2e}.traffic i:nth-child(3){background:#28c840}
+  .window-title{position:absolute;left:50%;transform:translateX(-50%);color:#687287;font-size:10px;font-weight:650}
+  .title-tools{display:flex;gap:7px;align-items:center}.icon-button{display:grid;width:25px;height:25px;place-items:center;border:1px solid #d5dbe4;border-radius:7px;color:#667188;background:#fff;font-size:10px}
+  .app-body{display:grid;height:calc(100% - 42px);grid-template-columns:176px minmax(0,1fr)}
+  .sidebar{display:flex;min-height:0;padding:13px 10px 11px;flex-direction:column;border-right:1px solid #d9dee6;background:#edf1f5}
+  .brand{display:flex;gap:9px;align-items:center;margin:0 6px 13px}.brand-mark{display:grid;width:27px;height:27px;place-items:center;border-radius:8px;color:#fff;background:linear-gradient(145deg,#3b8ee8,#2268be);font-size:9px;font-weight:800}.brand b{display:block;font-size:11px}.brand span{display:block;margin-top:1px;color:#7c8799;font-size:6px}
+  .workspace-switch{display:grid;height:35px;margin-bottom:12px;padding:0 8px;grid-template-columns:auto 1fr auto;gap:7px;align-items:center;border:1px solid #d4dae3;border-radius:8px;background:rgba(255,255,255,.72)}
+  .avatar{display:grid;width:20px;height:20px;place-items:center;border-radius:6px;color:#fff;background:#23385b;font-size:6px;font-weight:700}.workspace-switch b{font-size:7px}.workspace-switch small{display:block;margin-top:1px;color:#8a93a3;font-size:5px}.chevron{color:#8d96a5;font-size:8px}
+  .nav-group{margin-bottom:9px}.nav-label{margin:0 8px 5px;color:#9aa3b1;font-size:5px;font-weight:750;text-transform:uppercase;letter-spacing:.08em}
+  .nav-item{display:grid;height:29px;padding:0 8px;grid-template-columns:18px 1fr auto;gap:5px;align-items:center;border-radius:7px;color:#596579;font-size:7px;font-weight:600}.nav-item .nav-icon{color:#7d899b;font-size:9px}.nav-item.active{color:#195fa8;background:#dbe9f8}.nav-item.active .nav-icon{color:#2878ca}.badge{min-width:16px;padding:2px 4px;border-radius:999px;color:#687488;background:#dfe4ea;text-align:center;font-size:5px}.nav-item.active .badge{color:#1e65aa;background:#c7dcf2}
+  .sidebar-bottom{margin-top:auto}.sync-chip{display:flex;gap:6px;margin:0 5px 8px;padding:8px;align-items:center;border:1px solid #d7dde5;border-radius:8px;background:rgba(255,255,255,.58)}.sync-dot{width:7px;height:7px;border:2px solid #6ba867;border-radius:50%;box-shadow:0 0 0 2px #d9ebd7}.sync-chip b{display:block;font-size:6px}.sync-chip span{display:block;margin-top:2px;color:#8892a1;font-size:5px}
+  .main{display:flex;min-width:0;min-height:0;padding:15px 16px 13px;flex-direction:column;background:#f8fafc}
+  .main-head{display:flex;height:42px;flex:0 0 auto;align-items:flex-start;justify-content:space-between}.main-title h1{margin:0 0 4px;color:#172033;font-size:17px;letter-spacing:-.03em}.main-title p{margin:0;color:#8791a1;font-size:6px}
+  .head-actions{display:flex;gap:7px;align-items:center}.scope{display:flex;height:29px;padding:0 9px;gap:7px;align-items:center;border:1px solid #d9dee6;border-radius:7px;color:#657187;background:#fff;font-size:6px}.primary-button{display:flex;height:29px;padding:0 10px;gap:6px;align-items:center;border-radius:7px;color:#fff;background:linear-gradient(180deg,#3184da,#236fc3);box-shadow:0 1px 2px rgba(31,83,137,.18);font-size:6px;font-weight:700}
+  .metrics{display:grid;height:66px;flex:0 0 auto;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:6px 0 10px}
+  .metric{display:grid;padding:10px;grid-template-columns:1fr auto;align-items:center;border:1px solid #e0e4ea;border-radius:9px;background:#fff;box-shadow:0 1px 2px rgba(30,43,62,.025)}.metric-label{color:#7a8596;font-size:6px}.metric-value{display:block;margin-top:3px;color:#1d2738;font-size:15px;font-weight:750}.metric-note{display:block;margin-top:2px;color:#9aa3b1;font-size:5px}.metric-icon{display:grid;width:28px;height:28px;place-items:center;border-radius:8px;color:#337ec5;background:#edf5fc;font-size:9px}.metric.warning .metric-icon{color:#c47a20;background:#fff5e7}.metric.danger .metric-icon{color:#c04e58;background:#fdf0f1}.metric.good .metric-icon{color:#418c55;background:#eef8f0}
+  .dashboard-grid{display:grid;min-height:0;flex:1;grid-template-columns:minmax(0,1.55fr) minmax(250px,.82fr);gap:10px}
+  .left-stack{display:grid;min-height:0;grid-template-rows:minmax(0,1fr) 122px;gap:10px}.panel{display:flex;min-height:0;flex-direction:column;border:1px solid #dfe4eb;border-radius:10px;background:#fff;overflow:hidden}.panel-head{display:flex;height:38px;flex:0 0 auto;padding:0 11px;align-items:center;justify-content:space-between;border-bottom:1px solid #e9edf2}.panel-head h2{margin:0;font-size:8px}.panel-head span{color:#8691a2;font-size:6px}.panel-filter{display:flex;gap:3px;padding:2px;border-radius:6px;background:#f1f4f7}.panel-filter i{padding:4px 6px;border-radius:5px;color:#8993a2;font-style:normal;font-size:5px}.panel-filter i.active{color:#426b98;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+  .activity-list{min-height:0;overflow:auto}.activity-row{display:grid;min-height:45px;padding:8px 11px;grid-template-columns:27px 1fr auto;gap:8px;align-items:center;border-bottom:1px solid #f0f2f5}.activity-row:last-child{border-bottom:0}.event-icon{display:grid;width:26px;height:26px;place-items:center;border-radius:8px;color:#377ec4;background:#edf5fc;font-size:8px}.event-icon.green{color:#408d55;background:#edf8f0}.event-icon.purple{color:#7957b5;background:#f3effa}.event-copy b{display:block;margin-bottom:3px;color:#2b3545;font-size:6px}.event-copy span{color:#8792a2;font-size:5px}.repo-name{color:#3d76ad}.event-time{color:#a0a8b5;font-size:5px}
+  .repo-health{display:grid;min-height:0;grid-template-columns:repeat(3,minmax(0,1fr))}.repo-card{display:flex;min-width:0;padding:10px;gap:7px;flex-direction:column;border-right:1px solid #edf0f4}.repo-card:last-child{border-right:0}.repo-card-top{display:flex;align-items:center;justify-content:space-between}.repo-card b{overflow:hidden;color:#2d3848;font-size:6px;text-overflow:ellipsis;white-space:nowrap}.health-dot{width:6px;height:6px;border-radius:50%;background:#63a770}.health-dot.warn{background:#e0a245}.repo-meta{display:flex;gap:7px;color:#8e98a7;font-size:5px}.branch-bar{display:grid;height:4px;margin-top:auto;grid-template-columns:3fr 1fr;border-radius:99px;overflow:hidden;background:#e9edf1}.branch-bar i:first-child{background:#4e94d7}.branch-bar i:last-child{background:#9ac4e9}.repo-foot{display:flex;justify-content:space-between;color:#97a0ad;font-size:5px}
+  .task-panel{min-height:0}.task-summary{display:grid;height:57px;flex:0 0 auto;padding:9px 10px;grid-template-columns:repeat(3,1fr);gap:6px;border-bottom:1px solid #e9edf2}.task-mini{padding:6px;border-radius:7px;background:#f5f7fa}.task-mini b{display:block;color:#2c3747;font-size:9px}.task-mini span{display:block;margin-top:2px;color:#8e97a6;font-size:5px}.task-list{min-height:0;overflow:auto}.task-row{display:grid;min-height:54px;padding:9px 10px;grid-template-columns:auto 1fr auto;gap:8px;align-items:start;border-bottom:1px solid #f0f2f5}.task-check{width:8px;height:8px;margin-top:2px;border:1.5px solid #b5beca;border-radius:50%}.task-copy b{display:block;margin-bottom:3px;color:#2d3747;font-size:6px;line-height:1.4}.task-copy span{display:block;color:#8b95a4;font-size:5px;line-height:1.45}.task-tag{padding:3px 5px;border-radius:5px;color:#a66222;background:#fff1df;font-size:5px}.task-tag.review{color:#306fa9;background:#eaf3fb}.task-tag.security{color:#ae4853;background:#fdecee}.task-footer{display:flex;height:31px;flex:0 0 auto;padding:0 10px;align-items:center;justify-content:space-between;color:#7c8797;background:#fafbfd;font-size:5px}.link{color:#3177b8;font-weight:700}
+  .specs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px;margin-top:14px}
+  .spec{padding:13px;border:1px solid var(--border);border-radius:11px;background:var(--surface)}
+  .spec span{display:block;margin-bottom:6px;color:var(--accent);font-size:10px;font-weight:800}.spec h3{margin:0 0 5px;font-size:12px}.spec p{margin:0;color:var(--muted);font-size:10px;line-height:1.5}
+  .decision{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:15px}.decision .option{margin:0}
+  @media(max-width:960px){.app-body{grid-template-columns:155px minmax(0,1fr)}.dashboard-grid{grid-template-columns:minmax(0,1.4fr) 230px}.metrics{grid-template-columns:repeat(2,1fr);height:122px}}
+</style>
+
+<div class="page-meta">
+  <span class="page-index">页面 10 / 全局工作区 · 综合工作台</span>
+  <span class="page-status">设计稿 V1 · 1180×720 高度规范</span>
+</div>
+
+<div class="app-window">
+  <div class="titlebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="window-title">GitMate · 综合工作台</div>
+    <div class="title-tools"><span class="icon-button">⌕</span><span class="icon-button">⌘</span><span class="icon-button">?</span></div>
+  </div>
+
+  <div class="app-body">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">GM</span><div><b>GitMate</b><span>全局工作区</span></div></div>
+      <div class="workspace-switch"><span class="avatar">L</span><div><b>所有账户</b><small>2 个 GitHub · 18 个仓库</small></div><span class="chevron">⌄</span></div>
+
+      <div class="nav-group">
+        <div class="nav-label">工作空间</div>
+        <div class="nav-item active"><span class="nav-icon">⌂</span><span>综合工作台</span></div>
+        <div class="nav-item"><span class="nav-icon">◉</span><span>收件箱</span><span class="badge">12</span></div>
+        <div class="nav-item"><span class="nav-icon">▦</span><span>仓库</span><span class="badge">18</span></div>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-label">GitHub</div>
+        <div class="nav-item"><span class="nav-icon">◌</span><span>议题</span><span class="badge">8</span></div>
+        <div class="nav-item"><span class="nav-icon">⑂</span><span>拉取请求</span><span class="badge">7</span></div>
+        <div class="nav-item"><span class="nav-icon">▣</span><span>项目</span></div>
+        <div class="nav-item"><span class="nav-icon">◇</span><span>组织</span></div>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-label">运行与安全</div>
+        <div class="nav-item"><span class="nav-icon">▶</span><span>自动化</span><span class="badge">2</span></div>
+        <div class="nav-item"><span class="nav-icon">⌾</span><span>安全中心</span><span class="badge">3</span></div>
+      </div>
+
+      <div class="sidebar-bottom">
+        <div class="sync-chip"><span class="sync-dot"></span><div><b>数据已同步</b><span>刚刚 · 18 个仓库</span></div></div>
+        <div class="nav-item"><span class="nav-icon">⚙</span><span>设置</span></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="main-head">
+        <div class="main-title"><h1>综合工作台</h1><p>2026年7月28日，星期二 · 汇总所有已连接账户</p></div>
+        <div class="head-actions"><div class="scope">所有账户 <span>⌄</span></div><div class="primary-button"><span>＋</span><span>新建</span></div></div>
+      </header>
+
+      <section class="metrics">
+        <div class="metric"><div><span class="metric-label">等待我的审查</span><b class="metric-value">7</b><span class="metric-note">3 项今天更新</span></div><span class="metric-icon">⑂</span></div>
+        <div class="metric warning"><div><span class="metric-label">需要关注的议题</span><b class="metric-value">8</b><span class="metric-note">2 项即将逾期</span></div><span class="metric-icon">◌</span></div>
+        <div class="metric danger"><div><span class="metric-label">自动化失败</span><b class="metric-value">2</b><span class="metric-note">来自 2 个仓库</span></div><span class="metric-icon">!</span></div>
+        <div class="metric good"><div><span class="metric-label">本地仓库正常</span><b class="metric-value">17/18</b><span class="metric-note">1 个存在未推送提交</span></div><span class="metric-icon">✓</span></div>
+      </section>
+
+      <section class="dashboard-grid">
+        <div class="left-stack">
+          <section class="panel">
+            <div class="panel-head"><h2>跨仓库动态</h2><div class="panel-filter"><i class="active">全部</i><i>参与</i><i>关注</i></div></div>
+            <div class="activity-list">
+              <div class="activity-row"><span class="event-icon green">✓</span><div class="event-copy"><b>构建已通过 · <span class="repo-name">GitMate/mac-client</span></b><span>main · fix: 修复仓库索引异常 · lele</span></div><span class="event-time">2 分钟前</span></div>
+              <div class="activity-row"><span class="event-icon purple">⑂</span><div class="event-copy"><b>请求你审查拉取请求 #128</b><span><span class="repo-name">dafone/design-system</span> · 优化暗色模式变量</span></div><span class="event-time">18 分钟前</span></div>
+              <div class="activity-row"><span class="event-icon">◌</span><div class="event-copy"><b>议题 #86 新增了 3 条评论</b><span><span class="repo-name">studio/asset-console</span> · 批量上传时进度异常</span></div><span class="event-time">42 分钟前</span></div>
+              <div class="activity-row"><span class="event-icon green">↥</span><div class="event-copy"><b>本地分支已推送至远端</b><span><span class="repo-name">GitMate/core</span> · feature/sync-recovery</span></div><span class="event-time">1 小时前</span></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head"><h2>仓库健康度</h2><span>按最近活跃排序 · 查看全部 18 个</span></div>
+            <div class="repo-health">
+              <div class="repo-card"><div class="repo-card-top"><b>GitMate/mac-client</b><span class="health-dot"></span></div><div class="repo-meta"><span>Swift</span><span>2.4 GB</span><span>main</span></div><div class="branch-bar"><i></i><i></i></div><div class="repo-foot"><span>已同步</span><span>1 分钟前</span></div></div>
+              <div class="repo-card"><div class="repo-card-top"><b>dafone/design-system</b><span class="health-dot"></span></div><div class="repo-meta"><span>TypeScript</span><span>684 MB</span><span>develop</span></div><div class="branch-bar"><i></i><i></i></div><div class="repo-foot"><span>已同步</span><span>12 分钟前</span></div></div>
+              <div class="repo-card"><div class="repo-card-top"><b>studio/asset-console</b><span class="health-dot warn"></span></div><div class="repo-meta"><span>Vue</span><span>1.1 GB</span><span>main</span></div><div class="branch-bar"><i></i><i></i></div><div class="repo-foot"><span>有 3 个未推送提交</span><span>1 小时前</span></div></div>
+            </div>
+          </section>
+        </div>
+
+        <aside class="panel task-panel">
+          <div class="panel-head"><h2>需要我处理</h2><span class="link">进入收件箱</span></div>
+          <div class="task-summary">
+            <div class="task-mini"><b>7</b><span>审查</span></div>
+            <div class="task-mini"><b>5</b><span>提及</span></div>
+            <div class="task-mini"><b>3</b><span>安全</span></div>
+          </div>
+          <div class="task-list">
+            <div class="task-row"><span class="task-check"></span><div class="task-copy"><b>审查：优化增量同步算法</b><span>GitMate/core · PR #214<br>更新于 12 分钟前</span></div><span class="task-tag review">审查</span></div>
+            <div class="task-row"><span class="task-check"></span><div class="task-copy"><b>处理 macOS 15 权限提示</b><span>GitMate/mac-client · Issue #91<br>由你负责</span></div><span class="task-tag">议题</span></div>
+            <div class="task-row"><span class="task-check"></span><div class="task-copy"><b>Dependabot：升级 openssl</b><span>studio/asset-console<br>高危依赖提醒</span></div><span class="task-tag security">安全</span></div>
+            <div class="task-row"><span class="task-check"></span><div class="task-copy"><b>Workflow「Release」失败</b><span>dafone/design-system<br>失败于打包步骤</span></div><span class="task-tag security">失败</span></div>
+          </div>
+          <div class="task-footer"><span>按优先级与更新时间排序</span><span class="link">全部标记已读</span></div>
+        </aside>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div class="specs">
+  <div class="spec"><span>01 · 双重上下文</span><h3>全局工作区入口</h3><p>左侧固定导航展示跨账户内容，进入仓库后再切换到仓库工作区。</p></div>
+  <div class="spec"><span>02 · 行动优先</span><h3>先看到需要处理的事</h3><p>审查、议题、失败任务和安全提醒直接进入首屏，不要求逐仓库查找。</p></div>
+  <div class="spec"><span>03 · 状态汇总</span><h3>远端与本地共同呈现</h3><p>GitHub 动态、Actions、安全提醒与本地同步状态在同一个工作台汇总。</p></div>
+  <div class="spec"><span>04 · 高度受控</span><h3>面板内部滚动</h3><p>窗口、导航、指标和主要操作始终可见，动态与待办列表独立滚动。</p></div>
+</div>
+
+<div class="decision options">
+  <div class="option" data-choice="approve-page-10-v1" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>确认第 10 页</h3><p>锁定综合工作台布局与信息优先级。</p></div>
+  </div>
+  <div class="option" data-choice="revise-page-10-v1" onclick="toggleSelect(this)">
+    <div class="letter">↻</div>
+    <div class="content"><h3>修改第 10 页</h3><p>选择后告诉我希望调整的区域。</p></div>
+  </div>
+</div>

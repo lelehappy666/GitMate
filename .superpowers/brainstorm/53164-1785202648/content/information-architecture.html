@@ -1,0 +1,287 @@
+<style>
+  .architectures {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+    margin-top: 24px;
+  }
+  .architecture {
+    cursor: pointer;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--surface);
+    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+  }
+  .architecture:hover {
+    transform: translateY(-3px);
+    border-color: var(--accent);
+    box-shadow: 0 14px 34px rgba(0,0,0,.12);
+  }
+  .architecture.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .map {
+    min-height: 350px;
+    margin: 12px;
+    padding: 16px;
+    border-radius: 12px;
+    background: #eef0f3;
+    color: #35383d;
+    font-size: 10px;
+  }
+  .map-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 13px;
+    font-weight: 700;
+    font-size: 11px;
+  }
+  .map-title span {
+    padding: 3px 6px;
+    border-radius: 999px;
+    color: #1769d2;
+    background: #dbeafe;
+    font-weight: 600;
+    font-size: 8px;
+  }
+  .level {
+    position: relative;
+    margin-bottom: 12px;
+    padding: 11px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #fff;
+  }
+  .level::after {
+    position: absolute;
+    left: 50%;
+    bottom: -13px;
+    width: 1px;
+    height: 12px;
+    content: "";
+    background: #aeb4bd;
+  }
+  .level:last-child::after { display: none; }
+  .level-label {
+    margin-bottom: 8px;
+    color: #737983;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .nodes {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+  }
+  .node {
+    padding: 5px 6px;
+    border: 1px solid #d9dde3;
+    border-radius: 5px;
+    background: #f8f9fa;
+    white-space: nowrap;
+  }
+  .node.primary {
+    color: #1769d2;
+    border-color: #b8d4f8;
+    background: #eaf3ff;
+    font-weight: 700;
+  }
+  .columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .column {
+    padding: 9px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #fff;
+  }
+  .column h4 {
+    margin: 0 0 7px;
+    color: #737983;
+    font-size: 8px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .stack {
+    display: grid;
+    gap: 5px;
+  }
+  .stack .node { white-space: normal; }
+  .flow {
+    display: grid;
+    gap: 8px;
+  }
+  .flow-step {
+    display: grid;
+    grid-template-columns: 23px 1fr;
+    gap: 8px;
+    align-items: center;
+    padding: 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #fff;
+  }
+  .flow-step b {
+    display: grid;
+    width: 23px;
+    height: 23px;
+    place-items: center;
+    border-radius: 7px;
+    color: white;
+    background: #2977d5;
+  }
+  .flow-step span { color: #6c727c; }
+  .architecture-copy { padding: 8px 18px 18px; }
+  .architecture-copy h3 {
+    display: flex;
+    gap: 9px;
+    align-items: center;
+    margin: 0 0 8px;
+  }
+  .badge {
+    display: inline-grid;
+    width: 27px;
+    height: 27px;
+    place-items: center;
+    border-radius: 8px;
+    color: #fff;
+    background: var(--accent);
+    font-size: 13px;
+  }
+  .architecture-copy p {
+    min-height: 70px;
+    margin: 0;
+    color: var(--muted);
+    line-height: 1.55;
+  }
+  .tradeoffs {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+  }
+  .tradeoffs span {
+    padding: 4px 7px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .recommendation {
+    margin-top: 22px;
+    padding: 14px 16px;
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+    color: var(--muted);
+  }
+  @media (max-width: 980px) {
+    .architectures { grid-template-columns: 1fr; }
+    .architecture-copy p { min-height: 0; }
+  }
+</style>
+
+<h2>全部功能应该按什么逻辑组织？</h2>
+<p class="subtitle">这不是视觉风格选择，而是整套产品的信息架构。它会决定侧栏、页面层级、跨仓库入口和用户的学习方式。</p>
+
+<div class="architectures">
+  <div class="architecture" data-choice="a" onclick="toggleSelect(this)">
+    <div class="map">
+      <div class="map-title">双层上下文架构 <span>推荐</span></div>
+      <div class="level">
+        <div class="level-label">全局层 · 跨账户与仓库</div>
+        <div class="nodes">
+          <div class="node primary">工作台</div><div class="node">收件箱</div><div class="node">搜索</div>
+          <div class="node">PR</div><div class="node">Issue</div><div class="node">Projects</div><div class="node">组织</div>
+        </div>
+      </div>
+      <div class="level">
+        <div class="level-label">仓库上下文 · 本地与远程融合</div>
+        <div class="nodes">
+          <div class="node primary">概览</div><div class="node">工作区</div><div class="node">提交历史</div>
+          <div class="node">代码</div><div class="node">分支/标签</div><div class="node">PR</div><div class="node">Issue</div>
+          <div class="node">Actions</div><div class="node">安全</div><div class="node">设置</div>
+        </div>
+      </div>
+      <div class="level">
+        <div class="level-label">对象详情 · 可拆成独立窗口</div>
+        <div class="nodes">
+          <div class="node">提交</div><div class="node">差异</div><div class="node">PR 审查</div>
+          <div class="node">Issue</div><div class="node">运行日志</div><div class="node">发布</div>
+        </div>
+      </div>
+    </div>
+    <div class="architecture-copy">
+      <h3><span class="badge">A</span>双层上下文</h3>
+      <p>先处理跨账户的工作，再进入仓库完成本地 Git 与 GitHub 操作；既有全局视野，也保留清晰的仓库边界。</p>
+      <div class="tradeoffs"><span>扩展性最好</span><span>本地远程融合</span><span>导航层级适中</span></div>
+    </div>
+  </div>
+
+  <div class="architecture" data-choice="b" onclick="toggleSelect(this)">
+    <div class="map">
+      <div class="map-title">GitHub 镜像架构 <span>最熟悉</span></div>
+      <div class="columns">
+        <div class="column">
+          <h4>GitHub</h4>
+          <div class="stack">
+            <div class="node primary">主页 / Feed</div><div class="node">仓库</div><div class="node">Issue</div>
+            <div class="node">PR</div><div class="node">Projects</div><div class="node">组织</div>
+            <div class="node">Gist</div><div class="node">Marketplace</div><div class="node">设置</div>
+          </div>
+        </div>
+        <div class="column">
+          <h4>本地 Git</h4>
+          <div class="stack">
+            <div class="node primary">本地仓库</div><div class="node">更改</div><div class="node">提交历史</div>
+            <div class="node">分支</div><div class="node">标签</div><div class="node">暂存</div>
+            <div class="node">工作树</div><div class="node">远程</div><div class="node">设置</div>
+          </div>
+        </div>
+      </div>
+      <div class="level" style="margin-top:10px">
+        <div class="level-label">仓库页面沿用 GitHub 页签</div>
+        <div class="nodes">
+          <div class="node">Code</div><div class="node">Issues</div><div class="node">Pull requests</div>
+          <div class="node">Actions</div><div class="node">Projects</div><div class="node">Security</div>
+        </div>
+      </div>
+    </div>
+    <div class="architecture-copy">
+      <h3><span class="badge">B</span>GitHub 镜像</h3>
+      <p>远程部分尽量复刻 GitHub 的结构，本地 Git 单独成区；学习成本低，但相同对象可能在两个区域重复出现。</p>
+      <div class="tradeoffs"><span>迁移最容易</span><span>术语一致</span><span>本地远程割裂</span></div>
+    </div>
+  </div>
+
+  <div class="architecture" data-choice="c" onclick="toggleSelect(this)">
+    <div class="map">
+      <div class="map-title">任务流程架构 <span>最有个性</span></div>
+      <div class="flow">
+        <div class="flow-step"><b>1</b><div><strong>收集</strong><br><span>通知、提及、分配、警报</span></div></div>
+        <div class="flow-step"><b>2</b><div><strong>规划</strong><br><span>Issue、Projects、里程碑、讨论</span></div></div>
+        <div class="flow-step"><b>3</b><div><strong>开发</strong><br><span>工作区、分支、提交、工作树</span></div></div>
+        <div class="flow-step"><b>4</b><div><strong>审查</strong><br><span>PR、差异、检查、评论、批准</span></div></div>
+        <div class="flow-step"><b>5</b><div><strong>交付</strong><br><span>Actions、环境、Release、Packages</span></div></div>
+        <div class="flow-step"><b>6</b><div><strong>维护</strong><br><span>安全、依赖、Insights、设置</span></div></div>
+      </div>
+    </div>
+    <div class="architecture-copy">
+      <h3><span class="badge">C</span>任务流程</h3>
+      <p>按开发生命周期组织页面，用户围绕“下一步做什么”工作；效率突出，但与 GitHub 原有结构差异最大。</p>
+      <div class="tradeoffs"><span>目标导向</span><span>差异化强</span><span>学习成本较高</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="recommendation">
+  <strong>我的建议：A「双层上下文」。</strong>
+  GitMate 既要覆盖跨账户工作台，也要融合本地 Git 与仓库远程功能。双层架构能容纳完整 API 能力，同时避免照搬 GitHub 网页造成的本地/远程割裂。
+</div>

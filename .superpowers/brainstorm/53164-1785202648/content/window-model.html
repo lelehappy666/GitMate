@@ -1,0 +1,220 @@
+<style>
+  .models {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+    margin-top: 24px;
+  }
+  .model {
+    cursor: pointer;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--surface);
+    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+  }
+  .model:hover {
+    transform: translateY(-3px);
+    border-color: var(--accent);
+    box-shadow: 0 14px 34px rgba(0,0,0,.12);
+  }
+  .model.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .diagram {
+    position: relative;
+    height: 280px;
+    margin: 12px;
+    overflow: hidden;
+    border-radius: 12px;
+    background: linear-gradient(145deg, #e8e9ec, #d7d9dd);
+  }
+  .window {
+    position: absolute;
+    overflow: hidden;
+    border: 1px solid #adb1b8;
+    border-radius: 9px;
+    background: #fafafa;
+    box-shadow: 0 10px 24px rgba(31,35,40,.18);
+    color: #34373c;
+    font-size: 9px;
+  }
+  .bar {
+    display: flex;
+    height: 25px;
+    padding: 0 8px;
+    align-items: center;
+    gap: 5px;
+    background: #f0f0f2;
+    border-bottom: 1px solid #d6d7da;
+  }
+  .lights {
+    display: flex;
+    gap: 4px;
+    margin-right: 5px;
+  }
+  .lights i {
+    display: block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  .lights i:nth-child(1) { background: #ff5f57; }
+  .lights i:nth-child(2) { background: #febc2e; }
+  .lights i:nth-child(3) { background: #28c840; }
+  .tab {
+    padding: 4px 8px;
+    border-radius: 5px;
+    color: #6b6f76;
+  }
+  .tab.active { background: #fff; color: #24262a; box-shadow: 0 1px 2px rgba(0,0,0,.1); }
+  .appbody {
+    display: grid;
+    grid-template-columns: 64px 1fr;
+    height: calc(100% - 26px);
+  }
+  .side {
+    padding: 9px 6px;
+    background: #ececef;
+    border-right: 1px solid #d7d8db;
+  }
+  .side div { padding: 4px; margin-bottom: 3px; border-radius: 4px; }
+  .side div:first-child { color: #1769d2; background: #dce9fb; }
+  .content { padding: 11px; }
+  .content b { font-size: 11px; }
+  .line {
+    height: 8px;
+    margin-top: 8px;
+    border-radius: 4px;
+    background: #e2e4e7;
+  }
+  .line.short { width: 62%; }
+  .one .window { inset: 28px 20px 24px; }
+  .separate .window:first-child { width: 66%; height: 63%; top: 25px; left: 21px; z-index: 1; }
+  .separate .window:last-child { width: 66%; height: 63%; right: 21px; bottom: 22px; z-index: 2; }
+  .hybrid .window.main { width: 77%; height: 72%; top: 23px; left: 17px; }
+  .hybrid .window.detail { width: 53%; height: 50%; right: 15px; bottom: 18px; }
+  .hybrid .detail .appbody { display: block; padding: 11px; height: auto; }
+  .model-copy { padding: 8px 18px 19px; }
+  .model-copy h3 { display: flex; gap: 9px; align-items: center; margin: 0 0 8px; }
+  .badge {
+    display: inline-grid;
+    width: 27px;
+    height: 27px;
+    place-items: center;
+    border-radius: 8px;
+    color: white;
+    background: var(--accent);
+    font-size: 13px;
+  }
+  .model-copy p { margin: 0; color: var(--muted); line-height: 1.55; min-height: 66px; }
+  .fit {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+  }
+  .fit span {
+    padding: 4px 7px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .note {
+    margin-top: 22px;
+    padding: 14px 16px;
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+    color: var(--muted);
+  }
+  @media (max-width: 980px) {
+    .models { grid-template-columns: 1fr; }
+    .model-copy p { min-height: 0; }
+  }
+</style>
+
+<h2>多个仓库与任务应该怎样组织？</h2>
+<p class="subtitle">选择的是窗口工作模型，不影响之后页面内的具体功能。点击你偏好的方案。</p>
+
+<div class="models">
+  <div class="model" data-choice="a" onclick="toggleSelect(this)">
+    <div class="diagram one">
+      <div class="window">
+        <div class="bar">
+          <div class="lights"><i></i><i></i><i></i></div>
+          <span class="tab">工作台</span>
+          <span class="tab active">GitMate</span>
+          <span class="tab">DesignKit</span>
+          <span class="tab">＋</span>
+        </div>
+        <div class="appbody">
+          <div class="side"><div>更改</div><div>历史</div><div>分支</div><div>PR</div><div>议题</div></div>
+          <div class="content"><b>GitMate / 更改</b><div class="line"></div><div class="line"></div><div class="line short"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="model-copy">
+      <h3><span class="badge">A</span>单窗口＋仓库页签</h3>
+      <p>所有工作都在一个主窗口内，通过页签快速切换仓库和全局页面，桌面最整洁。</p>
+      <div class="fit"><span>集中处理</span><span>切换快速</span><span>空间节省</span></div>
+    </div>
+  </div>
+
+  <div class="model" data-choice="b" onclick="toggleSelect(this)">
+    <div class="diagram separate">
+      <div class="window">
+        <div class="bar"><div class="lights"><i></i><i></i><i></i></div><b>GitMate</b></div>
+        <div class="appbody">
+          <div class="side"><div>更改</div><div>历史</div><div>分支</div></div>
+          <div class="content"><b>GitMate / 历史</b><div class="line"></div><div class="line short"></div></div>
+        </div>
+      </div>
+      <div class="window">
+        <div class="bar"><div class="lights"><i></i><i></i><i></i></div><b>DesignKit</b></div>
+        <div class="appbody">
+          <div class="side"><div>更改</div><div>历史</div><div>分支</div></div>
+          <div class="content"><b>DesignKit / PR</b><div class="line"></div><div class="line"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="model-copy">
+      <h3><span class="badge">B</span>每个仓库独立窗口</h3>
+      <p>一个仓库对应一个窗口，适合分屏和多显示器，并与 Xcode、Finder 的心智模型接近。</p>
+      <div class="fit"><span>并行工作</span><span>多显示器</span><span>上下文清晰</span></div>
+    </div>
+  </div>
+
+  <div class="model" data-choice="c" onclick="toggleSelect(this)">
+    <div class="diagram hybrid">
+      <div class="window main">
+        <div class="bar">
+          <div class="lights"><i></i><i></i><i></i></div>
+          <span class="tab">工作台</span>
+          <span class="tab active">GitMate</span>
+          <span class="tab">DesignKit</span>
+        </div>
+        <div class="appbody">
+          <div class="side"><div>更改</div><div>历史</div><div>分支</div><div>PR</div></div>
+          <div class="content"><b>GitMate / PR #128</b><div class="line"></div><div class="line"></div><div class="line short"></div></div>
+        </div>
+      </div>
+      <div class="window detail">
+        <div class="bar"><div class="lights"><i></i><i></i><i></i></div><b>差异对比</b></div>
+        <div class="appbody"><b>auth/callback.swift</b><div class="line"></div><div class="line short"></div></div>
+      </div>
+    </div>
+    <div class="model-copy">
+      <h3><span class="badge">C</span>主窗口＋可拆分窗口</h3>
+      <p>默认使用页签集中管理，需要并行查看时可把仓库、PR 或差异页拖出为独立窗口。</p>
+      <div class="fit"><span>兼顾两者</span><span>灵活拆分</span><span>高级用户</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <strong>我的建议：C。</strong>
+  默认保持单窗口的轻量体验，同时允许维护者在审查 PR、对照差异或跨仓库操作时拆出窗口，更符合专业 Mac 工具的长期使用场景。
+</div>

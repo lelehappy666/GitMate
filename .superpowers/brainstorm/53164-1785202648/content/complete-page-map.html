@@ -1,0 +1,321 @@
+<style>
+  .scope-head {
+    display: grid;
+    grid-template-columns: 1.2fr .8fr;
+    gap: 18px;
+    align-items: stretch;
+    margin: 22px 0;
+  }
+  .scope-summary, .scope-rule {
+    padding: 18px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--surface);
+  }
+  .scope-summary strong {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 22px;
+  }
+  .scope-summary p, .scope-rule p {
+    margin: 0;
+    color: var(--muted);
+    line-height: 1.55;
+  }
+  .scope-rule {
+    border-left: 3px solid var(--accent);
+    background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  }
+  .scope-rule b { display: block; margin-bottom: 6px; }
+  .map-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .domain {
+    padding: 18px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--surface);
+  }
+  .domain-head {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    margin-bottom: 13px;
+  }
+  .number {
+    display: grid;
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    place-items: center;
+    border-radius: 9px;
+    color: #fff;
+    background: var(--accent);
+    font-weight: 700;
+    font-size: 12px;
+  }
+  .domain-head h3 { margin: 0 0 4px; font-size: 15px; }
+  .domain-head p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+  .page-group { margin-top: 12px; }
+  .group-label {
+    margin-bottom: 7px;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .chips {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .chip {
+    padding: 5px 7px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text);
+    background: color-mix(in srgb, var(--surface) 92%, var(--text));
+    font-size: 11px;
+    line-height: 1.25;
+  }
+  .chip.core {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+    background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+    font-weight: 700;
+  }
+  .coverage {
+    margin-top: 18px;
+    padding: 18px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--surface);
+  }
+  .coverage h3 { margin: 0 0 12px; }
+  .coverage-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .coverage-item {
+    padding: 11px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--surface) 90%, var(--text));
+  }
+  .coverage-item b { display: block; margin-bottom: 4px; font-size: 12px; }
+  .coverage-item span { color: var(--muted); font-size: 11px; line-height: 1.45; }
+  .decision {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 20px;
+  }
+  .decision .option { margin: 0; }
+  @media (max-width: 980px) {
+    .scope-head, .map-grid, .coverage-grid { grid-template-columns: 1fr; }
+  }
+</style>
+
+<h2>第 1 章：GitMate 完整页面地图</h2>
+<p class="subtitle">先确认产品没有漏掉任何功能域。确认后，我们再逐章进入每个页面的布局、内容、操作和状态。</p>
+
+<div class="scope-head">
+  <div class="scope-summary">
+    <strong>10 个页面域 · 双层上下文</strong>
+    <p>全局层用于跨账户处理工作；仓库层融合本地 Git 与 GitHub；对象详情可拆分为独立窗口。</p>
+  </div>
+  <div class="scope-rule">
+    <b>覆盖规则</b>
+    <p>API 支持的操作全部原生化；仅网页支持的低频能力进入安全网页兜底中心；不设计 AI 助手和 AI 内容生成。</p>
+  </div>
+</div>
+
+<div class="map-grid">
+  <section class="domain">
+    <div class="domain-head">
+      <span class="number">01</span>
+      <div><h3>进入与账户</h3><p>首次使用、认证、多账户、企业服务器和仓库导入。</p></div>
+    </div>
+    <div class="page-group"><div class="group-label">进入流程</div><div class="chips">
+      <span class="chip core">欢迎页</span><span class="chip">登录方式</span><span class="chip">GitHub 授权</span>
+      <span class="chip">企业服务器连接</span><span class="chip">证书校验</span><span class="chip">权限范围确认</span>
+    </div></div>
+    <div class="page-group"><div class="group-label">建立工作区</div><div class="chips">
+      <span class="chip">多账户管理</span><span class="chip">仓库发现</span><span class="chip">克隆仓库</span>
+      <span class="chip">添加本地仓库</span><span class="chip">创建仓库</span><span class="chip">首次同步</span><span class="chip">认证错误</span>
+    </div></div>
+  </section>
+
+  <section class="domain">
+    <div class="domain-head">
+      <span class="number">02</span>
+      <div><h3>全局工作区</h3><p>跨账户、跨服务器、跨仓库集中处理每日工作。</p></div>
+    </div>
+    <div class="page-group"><div class="group-label">主入口</div><div class="chips">
+      <span class="chip core">综合工作台</span><span class="chip core">统一收件箱</span><span class="chip">通知详情</span>
+      <span class="chip core">仓库库</span><span class="chip">最近与收藏</span><span class="chip">活动动态</span>
+    </div></div>
+    <div class="page-group"><div class="group-label">跨仓库对象</div><div class="chips">
+      <span class="chip">全局 PR</span><span class="chip">全局 Issue</span><span class="chip">全局 Projects</span>
+      <span class="chip">统一搜索</span><span class="chip">高级查询</span><span class="chip">人员资料</span><span class="chip">账户/企业切换</span>
+    </div></div>
+  </section>
+
+  <section class="domain">
+    <div class="domain-head">
+      <span class="number">03</span>
+      <div><h3>仓库与本地 Git</h3><p>把工作副本、历史、分支、代码与 GitHub 仓库放在同一上下文。</p></div>
+    </div>
+    <div class="page-group"><div class="group-label">日常开发</div><div class="chips">
+      <span class="chip core">仓库概览</span><span class="chip core">更改与暂存</span><span class="chip">提交表单</span>
+      <span class="chip core">差异查看器</span><span class="chip">历史图谱</span><span class="chip">提交详情</span>
+      <span class="chip">文件树/代码</span><span class="chip">Blame</span><span class="chip">比较</span>
+    </div></div>
+    <div class="page-group"><div class="group-label">高级 Git</div><div class="chips">
+      <span class="chip">分支</span><span class="chip">标签</span><span class="chip">远程</span><span class="chip">暂存栈</span>
+      <span class="chip">工作树</span><span class="chip">合并</span><span class="chip">变基</span><span class="chip">拣选/回退</span>
+      <span class="chip">冲突解决</span><span class="chip">子模块</span><span class="chip">Git LFS</span><span class="chip">本地仓库设置</span>
+    </div></div>
+  </section>
+
+  <section class="domain">
+    <div class="domain-head">
+      <span class="number">04</span>
+      <div><h3>协作与规划</h3><p>覆盖从需求、讨论、计划到代码审查的完整协作链路。</p></div>
+    </div>
+    <div class="page-group"><div class="group-label">Issue 与 Pull Request</div><div class="chips">
+      <span class="chip core">Issue 列表/详情/编辑</span><span class="chip">标签</span><span class="chip">里程碑</span>
+      <span class="chip">模板与类型</span><span class="chip">子议题/依赖</span><span class="chip core">PR 列表/创建/详情</span>
+      <span class="chip">提交</span><span class="chip">文件更改</span><span class="chip">检查</span><span class="chip">审查</span>
+      <span class="chip">合并队列/自动合并</span>
+    </div></div>
+    <div class="page-group"><div class="group-label">讨论与项目</div><div class="chips">
+      <span class="chip">Discussions 分类/列表/详情</span><span class="chip">投票/回答</span>
+      <span class="chip core">Projects 列表</span><span class="chip">表格/看板/路线图</span>
+      <span class="chip">条目详情</span><span class="chip">字段/迭代/视图</span><span class="chip">工作流/模板</span>
+    </div></div>
+  </section>
+
+  <section class="domain">
+    <div class="domain-head">
+      <span class="number">05</span>
+      <div><h3>自动化与交付</h3><p>CI/CD、运行环境、制品、发布和在线开发资源。</p></div>
+    </div>
+    <div class="page-group"><div class="group-label">Actions</div><div class="chips">
+      <span class="chip core">工作流</span><span class="chip core">运行/作业/日志</span><span class="chip">手动触发</span>
+      <span class="chip">重跑/取消/批准</span><span class="chip">Artifacts</span><span class="chip">缓存</span>
+      <span class="chip">Secrets/Variables</span><span class="chip">Runner/Runner Group</span><span class="chip">OIDC/权限</span>
+    </div></div>
+    <div class="page-group"><div class="group-label">交付资源</div><div class="chips">
+      <span class="chip">部署/环境/保护规则</span><span class="chip">Checks/状态</span><span class="chip core">Releases/Assets</span>
+      <span class="chip">Packages/版本</span><span class="chip">Pages/构建</span><span class="chip">Webhooks</span>
+      <span class="chip">Codespaces/机器/密钥</span>
+    </div></div>
+  </section>
+
+  <section class="domain">
+    <div class="domain-head">
+      <span class="number">06</span>
+      <div><h3>安全与质量</h3><p>仓库、组织和供应链的安全风险发现与处置。</p></div>
+    </div>
+    <div class="page-group"><div class="group-label">检测与处置</div><div class="chips">
+      <span class="chip core">安全总览</span><span class="chip">代码扫描警报/分析</span><span class="chip">秘密扫描/位置/绕过</span>
+      <span class="chip">Dependabot 警报/密钥</span><span class="chip">安全活动</span><span class="chip">组织安全管理</span>
+    </div></div>
+    <div class="page-group"><div class="group-label">供应链与规则</div><div class="chips">
+      <span class="chip">依赖图谱/快照/SBOM</span><span class="chip">依赖审查</span><span class="chip">安全公告/协作者/发布</span>
+      <span class="chip">安全活动 Campaigns</span><span class="chip">Artifact Attestations</span>
+      <span class="chip">Rulesets/分支保护</span><span class="chip">交互限制</span>
+    </div></div>
+  </section>
+
+  <section class="domain">
+    <div class="domain-head">
+      <span class="number">07</span>
+      <div><h3>组织与企业管理</h3><p>为拥有相应权限的个人维护者提供完整管理面板。</p></div>
+    </div>
+    <div class="page-group"><div class="group-label">组织</div><div class="chips">
+      <span class="chip core">组织概览</span><span class="chip">仓库/项目/包</span><span class="chip">成员/邀请/角色</span>
+      <span class="chip">团队</span><span class="chip">自定义属性/规则</span><span class="chip">审计日志</span>
+      <span class="chip">Webhook/Apps</span><span class="chip">账单/用量/预算</span><span class="chip">Copilot 管理</span>
+    </div></div>
+    <div class="page-group"><div class="group-label">企业</div><div class="chips">
+      <span class="chip">企业概览</span><span class="chip">组织/团队/人员</span><span class="chip">策略/凭据</span>
+      <span class="chip">企业 Runner</span><span class="chip">SCIM 配置</span><span class="chip">审计日志</span>
+      <span class="chip">账单/许可</span><span class="chip">迁移/导入/导出</span>
+    </div></div>
+  </section>
+
+  <section class="domain">
+    <div class="domain-head">
+      <span class="number">08</span>
+      <div><h3>个人资产与生态</h3><p>用户资料、Gist、关注关系、应用安装及 GitHub 公共资源。</p></div>
+    </div>
+    <div class="page-group"><div class="group-label">个人</div><div class="chips">
+      <span class="chip core">个人资料/活动</span><span class="chip">关注者/关注中/屏蔽</span><span class="chip">Star/Watch</span>
+      <span class="chip core">Gists 列表/详情/编辑</span><span class="chip">Gist 提交/分叉/评论</span>
+      <span class="chip">Sponsors/层级/赞助关系</span>
+    </div></div>
+    <div class="page-group"><div class="group-label">生态与参考</div><div class="chips">
+      <span class="chip">GitHub Apps</span><span class="chip">安装与授权请求</span><span class="chip">OAuth Apps</span>
+      <span class="chip">许可证</span><span class="chip">Code of Conduct</span><span class="chip">Gitignore 模板</span>
+      <span class="chip">Markdown 渲染</span><span class="chip">API 状态/速率</span>
+    </div></div>
+  </section>
+
+  <section class="domain">
+    <div class="domain-head">
+      <span class="number">09</span>
+      <div><h3>设置与偏好</h3><p>GitMate 自身设置和 API 可管理的 GitHub 账户设置。</p></div>
+    </div>
+    <div class="page-group"><div class="group-label">GitMate</div><div class="chips">
+      <span class="chip core">账户/服务器</span><span class="chip">同步/缓存/离线队列</span><span class="chip">Git 身份/签名</span>
+      <span class="chip">凭据/SSH/GPG/钥匙串</span><span class="chip">外部 IDE/终端</span><span class="chip">代理/证书</span>
+      <span class="chip">语言/外观/辅助功能</span><span class="chip">通知/菜单栏</span><span class="chip">快捷键</span>
+      <span class="chip">隐私/存储/更新/诊断</span>
+    </div></div>
+    <div class="page-group"><div class="group-label">GitHub 账户</div><div class="chips">
+      <span class="chip">资料/邮箱</span><span class="chip">SSH/GPG 密钥</span><span class="chip">Token/授权</span>
+      <span class="chip">通知订阅</span><span class="chip">仓库默认项</span><span class="chip">会话与安全入口</span>
+    </div></div>
+  </section>
+
+  <section class="domain">
+    <div class="domain-head">
+      <span class="number">10</span>
+      <div><h3>系统状态与网页兜底</h3><p>让错误、权限、离线与无法 API 化的操作仍然清楚可控。</p></div>
+    </div>
+    <div class="page-group"><div class="group-label">全局工具</div><div class="chips">
+      <span class="chip core">命令中心</span><span class="chip">快速打开</span><span class="chip">操作进度中心</span>
+      <span class="chip">撤销/恢复记录</span><span class="chip">同步冲突</span><span class="chip">权限升级</span>
+    </div></div>
+    <div class="page-group"><div class="group-label">状态与兜底</div><div class="chips">
+      <span class="chip">离线/超时/维护</span><span class="chip">速率限制</span><span class="chip">证书错误</span>
+      <span class="chip">空状态/无权限</span><span class="chip">高风险确认</span><span class="chip core">安全网页中心</span>
+      <span class="chip">帮助/更新日志/关于</span>
+    </div></div>
+  </section>
+</div>
+
+<section class="coverage">
+  <h3>覆盖边界说明</h3>
+  <div class="coverage-grid">
+    <div class="coverage-item"><b>原生覆盖</b><span>REST、GraphQL 和本地 Git 能执行的读取、创建、编辑、删除及管理操作。</span></div>
+    <div class="coverage-item"><b>网页兜底</b><span>付款方式、Marketplace 购买、部分身份验证和 GitHub 尚未开放 API 的页面。</span></div>
+    <div class="coverage-item"><b>明确排除</b><span>AI 助手、AI 生成内容和内置代码编辑器；Copilot 只保留席位、用量、账单等管理能力。</span></div>
+  </div>
+</section>
+
+<div class="decision options">
+  <div class="option" data-choice="approve-map" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>页面地图认可</h3><p>按这 10 个页面域继续逐章深化。</p></div>
+  </div>
+  <div class="option" data-choice="adjust-map" onclick="toggleSelect(this)">
+    <div class="letter">↻</div>
+    <div class="content"><h3>需要调整</h3><p>选择后在对话中告诉我需要增加、删除或移动的内容。</p></div>
+  </div>
+</div>

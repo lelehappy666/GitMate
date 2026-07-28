@@ -1,0 +1,35 @@
+<style>
+  .reload-state {
+    display: grid;
+    min-height: 68vh;
+    place-items: center;
+    color: var(--muted);
+    text-align: center;
+  }
+  .reload-state b {
+    display: block;
+    margin-bottom: 7px;
+    color: var(--text);
+  }
+</style>
+
+<div id="page-05-direct-mount" class="reload-state">
+  <div><b>正在重新载入第 05 页 V4…</b><span>使用同页面直接展示，不再嵌套 localhost。</span></div>
+</div>
+
+<script>
+  fetch('/files/page-05-first-sync-v4.html', { credentials: 'same-origin' })
+    .then(function (response) {
+      if (!response.ok) throw new Error('设计稿读取失败');
+      return response.text();
+    })
+    .then(function (markup) {
+      var template = document.createElement('template');
+      template.innerHTML = markup;
+      document.getElementById('page-05-direct-mount').replaceWith(template.content);
+    })
+    .catch(function () {
+      document.getElementById('page-05-direct-mount').innerHTML =
+        '<div><b>设计稿暂时无法载入</b><span>请刷新当前预览页；本地服务会自动重连。</span></div>';
+    });
+</script>

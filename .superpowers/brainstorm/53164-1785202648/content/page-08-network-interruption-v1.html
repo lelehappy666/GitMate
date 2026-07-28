@@ -1,0 +1,428 @@
+<style>
+  .page-meta {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+    margin-bottom:14px;
+  }
+  .page-index {
+    display:inline-flex;
+    align-items:center;
+    padding:6px 9px;
+    border-radius:999px;
+    color:var(--accent);
+    background:color-mix(in srgb,var(--accent) 9%,var(--surface));
+    font-size:11px;
+    font-weight:700;
+  }
+  .page-status { color:var(--muted); font-size:11px; }
+  .app-window {
+    position:relative;
+    height:680px;
+    overflow:hidden;
+    border:1px solid #9fa5af;
+    border-radius:15px;
+    color:#fff;
+    background:#07162b;
+    box-shadow:0 24px 68px rgba(21,27,38,.24);
+  }
+  .app-window * { box-sizing:border-box; }
+  .artwork {
+    position:absolute;
+    inset:0;
+    filter:saturate(.32) brightness(.21);
+    transform:scale(1.03);
+    background-image:
+      linear-gradient(90deg,rgba(5,17,36,.86),rgba(5,17,36,.68)),
+      url('/files/page-01-welcome-bg-v1.png');
+    background-position:center;
+    background-size:cover;
+  }
+  .titlebar {
+    position:relative;
+    z-index:2;
+    display:flex;
+    height:42px;
+    padding:0 15px;
+    align-items:center;
+    justify-content:space-between;
+    background:rgba(5,14,30,.65);
+    border-bottom:1px solid rgba(255,255,255,.08);
+    backdrop-filter:blur(20px);
+  }
+  .traffic { display:flex; gap:7px; }
+  .traffic i { width:11px; height:11px; border-radius:50%; }
+  .traffic i:nth-child(1){background:#ff5f57}
+  .traffic i:nth-child(2){background:#febc2e}
+  .traffic i:nth-child(3){background:#28c840}
+  .window-title {
+    position:absolute;
+    left:50%;
+    transform:translateX(-50%);
+    color:rgba(241,247,253,.62);
+    font-size:10px;
+    font-weight:620;
+  }
+  .close-action { color:rgba(235,243,252,.64); font-size:9px; }
+  .stage {
+    position:relative;
+    z-index:1;
+    display:grid;
+    height:calc(100% - 42px);
+    padding:21px 5%;
+    place-items:center;
+  }
+  .offline-card {
+    display:grid;
+    width:900px;
+    height:545px;
+    padding:21px;
+    grid-template-rows:auto minmax(0,1fr) auto;
+    border:1px solid rgba(255,255,255,.15);
+    border-radius:18px;
+    background:rgba(12,27,49,.88);
+    box-shadow:0 28px 72px rgba(0,0,0,.36),inset 0 1px 0 rgba(255,255,255,.08);
+    backdrop-filter:blur(28px) saturate(1.02);
+  }
+  .offline-head {
+    padding-bottom:15px;
+    border-bottom:1px solid rgba(255,255,255,.08);
+  }
+  .head-row {
+    display:grid;
+    grid-template-columns:auto 1fr auto;
+    gap:13px;
+    align-items:center;
+  }
+  .network-icon {
+    position:relative;
+    display:grid;
+    width:43px;
+    height:43px;
+    place-items:center;
+    border:1px solid rgba(242,177,95,.24);
+    border-radius:12px;
+    color:#f0b46b;
+    background:rgba(209,132,49,.10);
+    font-size:16px;
+  }
+  .network-icon::after {
+    position:absolute;
+    width:24px;
+    height:2px;
+    content:"";
+    background:#f0b46b;
+    transform:rotate(-45deg);
+    border-radius:2px;
+  }
+  .headline h1 { margin:0 0 5px; font-size:19px; letter-spacing:-.02em; }
+  .headline p { margin:0; color:rgba(225,237,249,.42); font-size:9px; }
+  .reconnect {
+    display:flex;
+    gap:6px;
+    align-items:center;
+    padding:6px 8px;
+    border-radius:999px;
+    color:#f0bd7f;
+    background:rgba(210,137,58,.11);
+    font-size:8px;
+  }
+  .reconnect i {
+    width:7px;
+    height:7px;
+    border:2px solid rgba(240,189,127,.30);
+    border-top-color:#f0bd7f;
+    border-radius:50%;
+  }
+  .progress-labels {
+    display:flex;
+    align-items:end;
+    justify-content:space-between;
+    margin:13px 0 6px;
+  }
+  .progress-labels b { font-size:10px; }
+  .progress-labels span { color:rgba(225,237,249,.38); font-size:7px; }
+  .track {
+    position:relative;
+    height:8px;
+    overflow:hidden;
+    border-radius:999px;
+    background:rgba(255,255,255,.075);
+  }
+  .track i {
+    display:block;
+    width:72%;
+    height:100%;
+    border-radius:999px;
+    background:linear-gradient(90deg,#3579bd,#568fbd);
+  }
+  .pause-marker {
+    position:absolute;
+    top:0;
+    bottom:0;
+    left:72%;
+    width:2px;
+    background:#f1b46d;
+    box-shadow:0 0 0 3px rgba(241,180,109,.10);
+  }
+  .offline-content {
+    display:grid;
+    min-height:0;
+    padding:14px 0;
+    grid-template-columns:1.02fr .98fr;
+    gap:13px;
+  }
+  .panel {
+    display:grid;
+    min-height:0;
+    overflow:hidden;
+    grid-template-rows:38px minmax(0,1fr);
+    border:1px solid rgba(255,255,255,.08);
+    border-radius:11px;
+    background:rgba(5,18,37,.43);
+  }
+  .panel-head {
+    display:flex;
+    padding:0 12px;
+    align-items:center;
+    justify-content:space-between;
+    border-bottom:1px solid rgba(255,255,255,.07);
+  }
+  .panel-head h3 { margin:0; font-size:9px; }
+  .panel-head span { color:rgba(225,237,249,.33); font-size:7px; }
+  .file-list,.diagnostics {
+    min-height:0;
+    overflow:hidden;
+    padding:0 10px;
+  }
+  .file {
+    display:grid;
+    min-height:50px;
+    grid-template-columns:auto minmax(0,1fr) auto;
+    gap:9px;
+    align-items:center;
+    border-bottom:1px solid rgba(255,255,255,.06);
+  }
+  .file:last-child { border:0; }
+  .file-icon {
+    display:grid;
+    width:25px;
+    height:25px;
+    place-items:center;
+    border-radius:7px;
+    color:#9fcdf3;
+    background:rgba(68,139,207,.11);
+    font-size:7px;
+    font-weight:700;
+  }
+  .file-icon.saved { color:#7fcfa6; background:rgba(47,169,106,.10); }
+  .file-icon.paused { color:#efb675; background:rgba(205,127,44,.10); }
+  .file-copy { min-width:0; }
+  .file-copy b {
+    display:block;
+    margin-bottom:3px;
+    overflow:hidden;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:7px;
+    font-weight:600;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .file-copy span {
+    display:block;
+    overflow:hidden;
+    color:rgba(225,237,249,.30);
+    font-size:6px;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .file-status { color:rgba(229,240,250,.44); font-size:7px; text-align:right; }
+  .file-status.saved { color:#7ecba4; }
+  .file-status.paused { color:#efb675; }
+  .diag-row {
+    display:grid;
+    grid-template-columns:auto 1fr auto;
+    gap:8px;
+    align-items:center;
+    min-height:47px;
+    border-bottom:1px solid rgba(255,255,255,.06);
+  }
+  .diag-row:last-child { border:0; }
+  .diag-icon {
+    display:grid;
+    width:24px;
+    height:24px;
+    place-items:center;
+    border-radius:7px;
+    color:#b1d6f5;
+    background:rgba(70,139,203,.10);
+    font-size:8px;
+  }
+  .diag-icon.fail { color:#efac69; background:rgba(205,126,45,.10); }
+  .diag-copy b { display:block; margin-bottom:3px; font-size:8px; }
+  .diag-copy span { color:rgba(225,237,249,.31); font-size:6px; }
+  .diag-value { color:rgba(224,239,251,.49); font-size:7px; text-align:right; }
+  .diag-value.fail { color:#efae6d; }
+  .attempts {
+    margin-top:9px;
+    padding:9px;
+    border-radius:8px;
+    color:rgba(225,237,249,.34);
+    background:rgba(255,255,255,.03);
+    font-size:6px;
+    line-height:1.55;
+  }
+  .attempts b { color:rgba(228,241,252,.63); }
+  .footer {
+    display:grid;
+    grid-template-columns:1fr auto auto auto;
+    gap:8px;
+    align-items:center;
+    padding-top:13px;
+    border-top:1px solid rgba(255,255,255,.08);
+  }
+  .footer-note { color:rgba(225,237,249,.36); font-size:7px; }
+  .button {
+    display:grid;
+    min-height:34px;
+    padding:0 12px;
+    place-items:center;
+    border:1px solid rgba(255,255,255,.10);
+    border-radius:8px;
+    color:rgba(204,228,249,.66);
+    background:rgba(255,255,255,.04);
+    font-size:8px;
+    font-weight:650;
+  }
+  .button.warn { color:#f0be82; border-color:rgba(224,156,80,.22); background:rgba(204,123,43,.07); }
+  .button.primary { border-color:#3a89da; color:#fff; background:linear-gradient(180deg,#3b8de5,#2874cc); }
+  .specs {
+    display:grid;
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:11px;
+    margin-top:14px;
+  }
+  .spec {
+    padding:13px;
+    border:1px solid var(--border);
+    border-radius:11px;
+    background:var(--surface);
+  }
+  .spec span { display:block; margin-bottom:6px; color:var(--accent); font-size:10px; font-weight:800; }
+  .spec h3 { margin:0 0 5px; font-size:12px; }
+  .spec p { margin:0; color:var(--muted); font-size:10px; line-height:1.5; }
+  .states {
+    display:grid;
+    grid-template-columns:repeat(5,minmax(0,1fr));
+    gap:9px;
+    margin-top:11px;
+  }
+  .state {
+    padding:11px;
+    border:1px dashed var(--border);
+    border-radius:10px;
+    color:var(--muted);
+    font-size:10px;
+    line-height:1.45;
+  }
+  .state b { display:block; margin-bottom:4px; color:var(--text); }
+  .decision {
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:12px;
+    margin-top:15px;
+  }
+  .decision .option { margin:0; }
+  @media(max-width:1000px){
+    .offline-card{width:100%;}
+    .offline-content{grid-template-columns:1fr .9fr;}
+    .specs{grid-template-columns:repeat(2,1fr);}
+    .states{grid-template-columns:repeat(2,1fr);}
+  }
+</style>
+
+<div class="page-meta">
+  <span class="page-index">页面 08 / 进入与账户 · 网络中断与续传</span>
+  <span class="page-status">设计稿 V1 · 1180×720 高度规范</span>
+</div>
+
+<div class="app-window">
+  <div class="artwork"></div>
+  <div class="titlebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="window-title">同步已暂停</div>
+    <div class="close-action">稍后处理</div>
+  </div>
+
+  <div class="stage">
+    <section class="offline-card">
+      <div class="offline-head">
+        <div class="head-row">
+          <div class="network-icon">⌁</div>
+          <div class="headline"><h1>网络连接已中断</h1><p>已下载内容和当前进度均已安全保存，恢复网络后将从中断位置继续。</p></div>
+          <div class="reconnect"><i></i><span>12 秒后自动重试</span></div>
+        </div>
+        <div class="progress-labels"><b>同步暂停在 72%</b><span>已安全保存 486 MB · 当前没有数据丢失</span></div>
+        <div class="track"><i></i><span class="pause-marker"></span></div>
+      </div>
+
+      <div class="offline-content">
+        <section class="panel">
+          <div class="panel-head"><h3>中断位置与文件状态</h3><span>最后更新 10:47:32</span></div>
+          <div class="file-list">
+            <div class="file"><span class="file-icon saved">SW</span><div class="file-copy"><b>Sources/GitMate/AppState.swift</b><span>lele-dev / GitMate</span></div><span class="file-status saved">✓ 已保存</span></div>
+            <div class="file"><span class="file-icon paused">SW</span><div class="file-copy"><b>Sources/GitMate/RepositoryStore.swift</b><span>lele-dev / GitMate · 28 KB / 42 KB</span></div><span class="file-status paused">暂停 68%</span></div>
+            <div class="file"><span class="file-icon">TS</span><div class="file-copy"><b>packages/tokens/src/colors.ts</b><span>dafeng-digital / DesignKit</span></div><span class="file-status">等待网络</span></div>
+            <div class="file"><span class="file-icon">MD</span><div class="file-copy"><b>docs/repository-sync.md</b><span>lele-dev / GitMate</span></div><span class="file-status">等待网络</span></div>
+            <div class="file"><span class="file-icon">YML</span><div class="file-copy"><b>.github/workflows/release.yml</b><span>lele-dev / GitMate</span></div><span class="file-status">等待网络</span></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h3>连接诊断</h3><span>自动检测</span></div>
+          <div class="diagnostics">
+            <div class="diag-row"><span class="diag-icon fail">⌁</span><div class="diag-copy"><b>互联网连接</b><span>无法访问公共网络</span></div><span class="diag-value fail">中断</span></div>
+            <div class="diag-row"><span class="diag-icon">GH</span><div class="diag-copy"><b>GitHub.com</b><span>等待网络后重新检测</span></div><span class="diag-value">等待</span></div>
+            <div class="diag-row"><span class="diag-icon">PX</span><div class="diag-copy"><b>代理与 VPN</b><span>使用 macOS 系统设置</span></div><span class="diag-value">未变化</span></div>
+            <div class="diag-row"><span class="diag-icon">↻</span><div class="diag-copy"><b>自动续传</b><span>指数退避，最多等待 5 分钟</span></div><span class="diag-value">已开启</span></div>
+            <div class="attempts"><b>重连记录</b><br>10:47:34 · 网络不可用<br>10:47:39 · 网络不可用<br>下一次尝试 · 10:47:51</div>
+          </div>
+        </section>
+      </div>
+
+      <div class="footer">
+        <div class="footer-note">进入离线工作台后，网络恢复时会自动续传并发送系统通知。</div>
+        <div class="button">网络设置</div>
+        <div class="button warn">立即重试</div>
+        <div class="button primary">离线进入工作台</div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="specs">
+  <div class="spec"><span>01 · 数据安全</span><h3>先说明是否丢失</h3><p>明确已保存数据、暂停文件和等待队列，避免用户因断网误以为需要重新开始。</p></div>
+  <div class="spec"><span>02 · 断点续传</span><h3>从已确认位置恢复</h3><p>文件、对象和分页任务均保存检查点，恢复后只继续未完成部分。</p></div>
+  <div class="spec"><span>03 · 自动重连</span><h3>退避但保持可控</h3><p>显示下一次尝试与历史记录，同时允许立即重试或关闭自动续传。</p></div>
+  <div class="spec"><span>04 · 离线可用</span><h3>不阻塞已完成工作</h3><p>用户可立即进入离线工作台，联网后后台续传并发送完成通知。</p></div>
+</div>
+
+<div class="states">
+  <div class="state"><b>本地网络断开</b>检测 Wi‑Fi、以太网和系统网络状态，优先提示恢复本机连接。</div>
+  <div class="state"><b>服务器不可达</b>本地网络正常但 GitHub 无响应时，显示服务端检测与状态入口。</div>
+  <div class="state"><b>代理/VPN 变化</b>重新读取系统配置，必要时提示重新验证企业证书。</div>
+  <div class="state"><b>门户认证</b>检测公共网络登录页，提供“打开网络登录页面”操作。</div>
+  <div class="state"><b>网络已恢复</b>顶部状态变绿，倒计时消失，自动从暂停文件继续并更新速度。</div>
+</div>
+
+<div class="decision options">
+  <div class="option" data-choice="approve-page-08-v1" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>确认第 08 页</h3><p>锁定网络中断与续传页。</p></div>
+  </div>
+  <div class="option" data-choice="revise-page-08-v1" onclick="toggleSelect(this)">
+    <div class="letter">↻</div>
+    <div class="content"><h3>修改第 08 页</h3><p>选择后告诉我需要调整的内容。</p></div>
+  </div>
+</div>
