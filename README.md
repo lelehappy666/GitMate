@@ -4,7 +4,7 @@ GitMate 是一款原生 macOS GitHub 管理工具。本阶段已实现第 01–0
 
 ## 当前功能
 
-- GitHub.com Device Flow 登录
+- GitHub.com Personal Access Token 登录
 - GitHub Enterprise Server 地址与 Personal Access Token 验证
 - 访问令牌存入 macOS 钥匙串
 - 读取真实用户头像与仓库列表
@@ -18,18 +18,13 @@ GitMate 是一款原生 macOS GitHub 管理工具。本阶段已实现第 01–0
 
 - macOS 14 或更高版本
 - Swift 6
-- 已创建支持 Device Flow 的 GitHub OAuth App
+- 已创建 GitHub Personal Access Token
 
-在环境变量中配置 OAuth App 客户端编号：
+GitHub.com 与 GitHub Enterprise 均使用 Personal Access Token 登录。Classic Token
+建议至少启用 `repo` 与 `read:user` 权限；如果需要管理 Actions，再增加
+`workflow` 权限。细粒度令牌需要为目标仓库授予对应的读取或写入权限。
 
-```bash
-export GITMATE_GITHUB_CLIENT_ID="你的客户端编号"
-swift run GitMate
-```
-
-如果未配置客户端编号，登录授权页会显示明确的配置错误；GitHub Enterprise 登录不依赖该变量。
-
-GitHub Enterprise 的 Personal Access Token 至少需要 `repo` 与 `read:user` 权限；如果需要管理 Actions，再增加 `workflow` 权限。
+令牌验证成功后只保存在 macOS 钥匙串，不会写入项目文件或明文配置。
 
 ## 页面预览
 

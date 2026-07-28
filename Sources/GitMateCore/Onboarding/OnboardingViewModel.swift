@@ -5,9 +5,7 @@ import Observation
 @Observable
 public final class OnboardingViewModel {
     public private(set) var state: OnboardingState
-    public private(set) var deviceCode: DeviceCode?
     public private(set) var isWorking = false
-    public private(set) var needsGitHubClientID = false
 
     @ObservationIgnored
     private let dependencies: OnboardingDependencies
@@ -29,7 +27,6 @@ public final class OnboardingViewModel {
 
     public func startGitHubLogin() async {
         state.transition(.loginRequested)
-        await authenticateGitHub(isReauthorization: false)
     }
 
     public func showEnterpriseConnection() {
@@ -38,21 +35,26 @@ public final class OnboardingViewModel {
 
     public func returnToWelcome() {
         state = OnboardingState()
-        deviceCode = nil
-        needsGitHubClientID = false
     }
 
-    public func configureGitHubClientIDAndRetry(_ clientID: String) async {
-        let normalizedClientID = clientID
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedClientID.isEmpty else {
-            needsGitHubClientID = true
-            state.errorMessage = "请输入 GitHub OAuth App 的 Client ID。"
-            return
-        }
+    public func connectGitHub(token: String) async {
+        await authenticateGitHub(
+            token: token,
+            isReauthorization: false
+        )
+    }
 
-        dependencies.saveGitHubClientID(normalizedClientID)
-        await startGitHubLogin()
+    public func reauthorizeGitHub(token: String) async {
+        await authenticateGitHub(
+            token: token,
+            isReauthorization: true
+        )
+    }
+
+    private func normalizedToken(_ token: String) -> String? {
+        let normalizedToken = token
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalizedToken.isEmpty ? nil : normalizedToken
     }
 
     public func returnToPermissionReview() {
@@ -195,10 +197,6 @@ public final class OnboardingViewModel {
         )
     }
 
-    public func reauthorize() async {
-        await authenticateGitHub(isReauthorization: true)
-    }
-
     public func reauthorizeEnterprise(token: String) async {
         guard let account = state.account else {
             state.errorMessage = "尚未连接企业 GitHub 账户。"
@@ -243,20 +241,20 @@ public final class OnboardingViewModel {
         networkTask = nil
     }
 
-    private func authenticateGitHub(isReauthorization: Bool) async {
+    private func authenticateGitHub(
+        token: String,
+        isReauthorization: Bool
+    ) async {
+        guard let token = normalizedToken(token) else {
+            state.errorMessage = "请输入 GitHub Personal Access Token。"
+            return
+        }
+
         isWorking = true
         state.errorMessage = nil
-        needsGitHubClientID = false
         defer { isWorking = false }
 
         do {
-            let code = try await dependencies.deviceAuthorizer.start()
-            deviceCode = code
-            let accessToken = try await dependencies.deviceAuthorizer.poll(
-                deviceCode: code.deviceCode,
-                interval: code.interval
-            )
-
             let temporaryAccount = GitHubAccount(
                 id: "github.com:pending",
                 login: "",
@@ -264,23 +262,12 @@ public final class OnboardingViewModel {
                 avatarURL: nil,
                 serverURL: URL(string: "https://github.com")!,
                 kind: .githubDotCom,
-                scopes: accessToken.scopes
+                scopes: []
             )
             let api = try dependencies.apiProvider.api(for: temporaryAccount)
-            var account = try await api.currentUser(token: accessToken.accessToken)
-            if account.scopes.isEmpty {
-                account = GitHubAccount(
-                    id: account.id,
-                    login: account.login,
-                    name: account.name,
-                    avatarURL: account.avatarURL,
-                    serverURL: account.serverURL,
-                    kind: account.kind,
-                    scopes: accessToken.scopes
-                )
-            }
+            let account = try await api.currentUser(token: token)
             try dependencies.credentialStore.save(
-                token: accessToken.accessToken,
+                token: token,
                 accountID: account.id
             )
 
@@ -289,11 +276,10 @@ public final class OnboardingViewModel {
             } else {
                 state.transition(.accountVerified(account))
             }
-        } catch GitHubAPIError.invalidConfiguration(let message) {
-            needsGitHubClientID = true
-            state.errorMessage = GitHubAPIError
-                .invalidConfiguration(message)
-                .localizedDescription
+        } catch GitHubAPIError.httpStatus(401, _) {
+            state.errorMessage = "令牌无效或已过期，请检查后重新输入。"
+        } catch GitHubAPIError.httpStatus(403, let message) {
+            state.errorMessage = message ?? "令牌权限不足，请检查仓库访问权限。"
         } catch {
             state.errorMessage = error.localizedDescription
         }

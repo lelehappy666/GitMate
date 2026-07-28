@@ -3,7 +3,7 @@ import SwiftUI
 
 struct AuthorizationExpiredView: View {
     let viewModel: OnboardingViewModel
-    @State private var enterpriseToken = ""
+    @State private var token = ""
 
     private var isEnterprise: Bool {
         viewModel.state.account?.kind == .enterprise
@@ -39,13 +39,12 @@ struct AuthorizationExpiredView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
 
-                if isEnterprise {
-                    SecureField("输入新的 Personal Access Token", text: $enterpriseToken)
-                        .textFieldStyle(.plain)
-                        .padding(13)
-                        .background(GitMateTheme.panel)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                }
+                SecureField("输入新的 Personal Access Token", text: $token)
+                    .textFieldStyle(.plain)
+                    .padding(13)
+                    .background(GitMateTheme.panel)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .accessibilityLabel("新的 GitHub Personal Access Token")
 
                 if let error = viewModel.state.errorMessage {
                     Text(error)
@@ -56,9 +55,9 @@ struct AuthorizationExpiredView: View {
                 Button {
                     Task {
                         if isEnterprise {
-                            await viewModel.reauthorizeEnterprise(token: enterpriseToken)
+                            await viewModel.reauthorizeEnterprise(token: token)
                         } else {
-                            await viewModel.reauthorize()
+                            await viewModel.reauthorizeGitHub(token: token)
                         }
                     }
                 } label: {
@@ -74,7 +73,10 @@ struct AuthorizationExpiredView: View {
                 }
                 .buttonStyle(GitMateButtonStyle(role: .primary, fillsWidth: true))
                 .accessibilityIdentifier("onboarding.authorization.reauthorize")
-                .disabled(viewModel.isWorking || (isEnterprise && enterpriseToken.isEmpty))
+                .disabled(
+                    viewModel.isWorking
+                        || token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
 
                 Button("切换其他账户") {
                     viewModel.returnToWelcome()

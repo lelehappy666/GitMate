@@ -1,41 +1,6 @@
 import Foundation
 import GitMateCore
 
-private final class FakeDeviceAuthorizer: GitHubDeviceAuthorizing, @unchecked Sendable {
-    let deviceCode: DeviceCode
-    let token: DeviceAccessToken
-
-    init() throws {
-        deviceCode = try JSONDecoder().decode(
-            DeviceCode.self,
-            from: Data(
-                """
-                {
-                  "device_code": "device",
-                  "user_code": "ABCD-EFGH",
-                  "verification_uri": "https://github.com/login/device",
-                  "expires_in": 900,
-                  "interval": 1
-                }
-                """.utf8
-            )
-        )
-        token = DeviceAccessToken(
-            accessToken: "secret",
-            tokenType: "bearer",
-            scopes: ["repo", "read:user"]
-        )
-    }
-
-    func start() async throws -> DeviceCode {
-        deviceCode
-    }
-
-    func poll(deviceCode: String, interval: Int) async throws -> DeviceAccessToken {
-        token
-    }
-}
-
 private final class FakeGitHubAPI: GitHubAPI, @unchecked Sendable {
     let account: GitHubAccount
     let repositoryList: [Repository]
@@ -129,7 +94,6 @@ private func makeViewModel(
         repositories: [viewModelRepository]
     )
     let dependencies = OnboardingDependencies(
-        deviceAuthorizer: try FakeDeviceAuthorizer(),
         apiProvider: FakeAPIProvider(api: api),
         enterpriseConnector: FakeEnterpriseConnector(account: viewModelAccount),
         credentialStore: credentialStore,
@@ -145,16 +109,17 @@ let onboardingViewModelTests = [
         let (viewModel, credentialStore) = try makeViewModel()
 
         await viewModel.startGitHubLogin()
+        await viewModel.connectGitHub(token: "secret")
 
         try expectEqual(viewModel.state.route, .permissionReview, "登录成功后应进入第 4 页")
         try expectEqual(viewModel.state.account?.login, "lele", "应保存 GitHub 账户")
-        try expectEqual(viewModel.deviceCode?.userCode, "ABCD-EFGH", "第 2 页应显示设备验证码")
         let token = try credentialStore.token(accountID: viewModelAccount.id)
         try expectEqual(token, "secret", "访问令牌应保存到凭据存储")
     },
     TestCase("确认权限后加载仓库和默认自动同步偏好") { @MainActor in
         let (viewModel, _) = try makeViewModel()
         await viewModel.startGitHubLogin()
+        await viewModel.connectGitHub(token: "secret")
 
         await viewModel.confirmPermissions()
 
@@ -175,6 +140,7 @@ let onboardingViewModelTests = [
             .finished
         ])
         await viewModel.startGitHubLogin()
+        await viewModel.connectGitHub(token: "secret")
         await viewModel.confirmPermissions()
 
         await viewModel.startSync()
@@ -191,6 +157,7 @@ let onboardingViewModelTests = [
             )
         ])
         await viewModel.startGitHubLogin()
+        await viewModel.connectGitHub(token: "secret")
         await viewModel.confirmPermissions()
 
         await viewModel.startSync()
@@ -206,6 +173,7 @@ let onboardingViewModelTests = [
             )
         ])
         await viewModel.startGitHubLogin()
+        await viewModel.connectGitHub(token: "secret")
         await viewModel.confirmPermissions()
 
         await viewModel.startSync()
@@ -221,6 +189,7 @@ let onboardingViewModelTests = [
             )
         ])
         await viewModel.startGitHubLogin()
+        await viewModel.connectGitHub(token: "secret")
         await viewModel.confirmPermissions()
 
         await viewModel.startSync()

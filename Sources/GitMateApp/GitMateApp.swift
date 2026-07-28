@@ -16,11 +16,6 @@ struct GitMateApp: App {
         }
 
         let api = URLSessionGitHubAPI()
-        let clientIDStore = GitHubClientIDStore()
-        let deviceFlow = GitHubDeviceFlow(
-            clientIDProvider: { clientIDStore.current() },
-            scopes: ["repo", "read:user", "workflow"]
-        )
         let applicationSupport = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -29,14 +24,12 @@ struct GitMateApp: App {
             .appending(path: "GitMate", directoryHint: .isDirectory)
             .appending(path: "Repositories", directoryHint: .isDirectory)
         let dependencies = OnboardingDependencies(
-            deviceAuthorizer: deviceFlow,
             apiProvider: DefaultGitHubAPIProvider(githubDotComAPI: api),
             enterpriseConnector: EnterpriseConnectionService(),
             credentialStore: KeychainCredentialStore(),
             syncService: GitRepositorySyncService(),
             networkMonitor: NWPathNetworkMonitor(),
-            syncDestination: syncDestination,
-            saveGitHubClientID: { clientIDStore.save($0) }
+            syncDestination: syncDestination
         )
         _viewModel = State(
             initialValue: OnboardingViewModel(dependencies: dependencies)

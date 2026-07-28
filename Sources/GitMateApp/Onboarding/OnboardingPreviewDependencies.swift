@@ -39,7 +39,6 @@ enum OnboardingPreviewFactory {
         }
 
         let dependencies = OnboardingDependencies(
-            deviceAuthorizer: PreviewDeviceAuthorizer(),
             apiProvider: PreviewAPIProvider(),
             enterpriseConnector: PreviewEnterpriseConnector(),
             credentialStore: InMemoryCredentialStore(),
@@ -109,16 +108,6 @@ enum OnboardingPreviewFactory {
             ownerAvatarURL: nil
         )
     ]
-}
-
-private struct PreviewDeviceAuthorizer: GitHubDeviceAuthorizing {
-    func start() async throws -> DeviceCode {
-        throw GitHubAPIError.invalidConfiguration("预览模式不执行真实授权。")
-    }
-
-    func poll(deviceCode: String, interval: Int) async throws -> DeviceAccessToken {
-        throw GitHubAPIError.invalidConfiguration("预览模式不执行真实授权。")
-    }
 }
 
 private struct PreviewGitHubAPI: GitHubAPI {

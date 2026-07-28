@@ -33,32 +33,26 @@ public struct DefaultGitHubAPIProvider: GitHubAPIProviding, @unchecked Sendable 
 }
 
 public struct OnboardingDependencies: Sendable {
-    public let deviceAuthorizer: any GitHubDeviceAuthorizing
     public let apiProvider: any GitHubAPIProviding
     public let enterpriseConnector: any EnterpriseConnecting
     public let credentialStore: any CredentialStore
     public let syncService: any RepositorySyncService
     public let networkMonitor: any NetworkMonitoring
     public let syncDestination: URL
-    public let saveGitHubClientID: @Sendable (String) -> Void
 
     public init(
-        deviceAuthorizer: any GitHubDeviceAuthorizing,
         apiProvider: any GitHubAPIProviding,
         enterpriseConnector: any EnterpriseConnecting,
         credentialStore: any CredentialStore,
         syncService: any RepositorySyncService,
         networkMonitor: any NetworkMonitoring,
-        syncDestination: URL,
-        saveGitHubClientID: @escaping @Sendable (String) -> Void = { _ in }
+        syncDestination: URL
     ) {
-        self.deviceAuthorizer = deviceAuthorizer
         self.apiProvider = apiProvider
         self.enterpriseConnector = enterpriseConnector
         self.credentialStore = credentialStore
         self.syncService = syncService
         self.networkMonitor = networkMonitor
         self.syncDestination = syncDestination
-        self.saveGitHubClientID = saveGitHubClientID
     }
 }
