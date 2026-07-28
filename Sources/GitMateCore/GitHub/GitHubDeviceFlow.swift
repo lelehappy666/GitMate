@@ -1,5 +1,10 @@
 import Foundation
 
+public protocol GitHubDeviceAuthorizing: Sendable {
+    func start() async throws -> DeviceCode
+    func poll(deviceCode: String, interval: Int) async throws -> DeviceAccessToken
+}
+
 public struct DeviceCode: Decodable, Equatable, Sendable {
     public let deviceCode: String
     public let userCode: String
@@ -28,7 +33,7 @@ public struct DeviceAccessToken: Equatable, Sendable {
     }
 }
 
-public struct GitHubDeviceFlow: @unchecked Sendable {
+public struct GitHubDeviceFlow: GitHubDeviceAuthorizing, @unchecked Sendable {
     public typealias Sleeper = @Sendable (_ seconds: Int) async throws -> Void
 
     private let clientID: String

@@ -1,5 +1,9 @@
 import Foundation
 
+public protocol EnterpriseConnecting: Sendable {
+    func verify(serverURL: URL, token: String) async throws -> GitHubAccount
+}
+
 public enum EnterpriseConnectionError: Error, Equatable, Sendable {
     case invalidServerURL
     case insecureServerURL
@@ -73,7 +77,7 @@ public struct EnterpriseEndpoint: Equatable, Sendable {
     }
 }
 
-public final class EnterpriseConnectionService: @unchecked Sendable {
+public final class EnterpriseConnectionService: EnterpriseConnecting, @unchecked Sendable {
     private let session: URLSession
     private let allowsInsecureLocalhost: Bool
 
