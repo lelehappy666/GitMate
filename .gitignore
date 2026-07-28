@@ -3,6 +3,7 @@
 .swiftpm/
 .worktrees/
 DerivedData/
+dist/
 *.xcuserstate
 xcuserdata/
 .superpowers/brainstorm/.last-port
