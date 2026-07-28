@@ -38,6 +38,7 @@ struct WelcomeView: View {
                         .buttonStyle(
                             GitMateButtonStyle(role: .primary, fillsWidth: true)
                         )
+                        .accessibilityIdentifier("onboarding.login")
 
                         Button {
                             viewModel.showEnterpriseConnection()
@@ -52,6 +53,7 @@ struct WelcomeView: View {
                         .buttonStyle(
                             GitMateButtonStyle(role: .secondary, fillsWidth: true)
                         )
+                        .accessibilityIdentifier("onboarding.enterprise")
                     }
                     .frame(width: 300)
                 }

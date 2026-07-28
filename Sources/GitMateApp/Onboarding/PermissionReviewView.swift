@@ -66,6 +66,7 @@ struct PermissionReviewView: View {
                     }
                 }
                 .buttonStyle(GitMateButtonStyle(role: .primary))
+                .accessibilityIdentifier("onboarding.permission.confirm")
                 .disabled(viewModel.isWorking)
             }
             .padding(.top, 4)

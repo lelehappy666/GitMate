@@ -8,6 +8,13 @@ struct GitMateApp: App {
     @State private var viewModel: OnboardingViewModel
 
     init() {
+        if let page = Self.previewPage {
+            _viewModel = State(
+                initialValue: OnboardingPreviewFactory.make(page: page)
+            )
+            return
+        }
+
         let api = URLSessionGitHubAPI()
         let clientID = ProcessInfo.processInfo.environment[
             "GITMATE_GITHUB_CLIENT_ID"
@@ -35,6 +42,17 @@ struct GitMateApp: App {
         _viewModel = State(
             initialValue: OnboardingViewModel(dependencies: dependencies)
         )
+    }
+
+    private static var previewPage: Int? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let flagIndex = arguments.firstIndex(of: "--preview-page"),
+              arguments.indices.contains(flagIndex + 1),
+              let page = Int(arguments[flagIndex + 1]),
+              (1...9).contains(page) else {
+            return nil
+        }
+        return page
     }
 
     var body: some Scene {

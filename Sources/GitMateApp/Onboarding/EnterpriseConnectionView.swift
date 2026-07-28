@@ -65,6 +65,7 @@ struct EnterpriseConnectionView: View {
                     .buttonStyle(
                         GitMateButtonStyle(role: .primary, fillsWidth: true)
                     )
+                    .accessibilityIdentifier("onboarding.enterprise.connect")
                     .disabled(server.isEmpty || token.isEmpty || viewModel.isWorking)
                 }
             }

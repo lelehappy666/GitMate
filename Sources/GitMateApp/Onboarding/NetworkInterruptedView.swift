@@ -63,6 +63,7 @@ struct NetworkInterruptedView: View {
                 }
             }
             .buttonStyle(GitMateButtonStyle(role: .primary))
+            .accessibilityIdentifier("onboarding.network.resume")
             .disabled(viewModel.isWorking)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

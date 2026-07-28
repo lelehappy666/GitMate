@@ -96,6 +96,7 @@ struct SyncErrorView: View {
                     Label("重试全部失败项", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(GitMateButtonStyle(role: .primary))
+                .accessibilityIdentifier("onboarding.sync.retry")
             }
         }
         .frame(maxHeight: .infinity)

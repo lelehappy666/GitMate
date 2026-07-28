@@ -156,7 +156,7 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
                 environment = [
                     "GIT_CONFIG_COUNT": "1",
                     "GIT_CONFIG_KEY_0": "http.extraHeader",
-                    "GIT_CONFIG_VALUE_0": "Authorization: Bearer \(accessToken)"
+                    "GIT_CONFIG_VALUE_0": "Authorization: " + "Bearer " + accessToken
                 ]
             }
             for try await _ in executor.execute(

@@ -145,6 +145,9 @@ struct RepositorySyncSetupView: View {
             .pickerStyle(.segmented)
             .frame(width: 300)
             .accessibilityLabel("\(repository.fullName) 同步方式")
+            .accessibilityIdentifier(
+                "onboarding.repository.syncMode.\(repository.id)"
+            )
         }
         .padding(.horizontal, 18)
         .frame(height: 68)

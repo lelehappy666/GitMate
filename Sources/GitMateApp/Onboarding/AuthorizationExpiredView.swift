@@ -73,6 +73,7 @@ struct AuthorizationExpiredView: View {
                     }
                 }
                 .buttonStyle(GitMateButtonStyle(role: .primary, fillsWidth: true))
+                .accessibilityIdentifier("onboarding.authorization.reauthorize")
                 .disabled(viewModel.isWorking || (isEnterprise && enterpriseToken.isEmpty))
 
                 Button("切换其他账户") {

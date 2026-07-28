@@ -29,6 +29,20 @@ swift run GitMate
 
 如果未配置客户端编号，登录授权页会显示明确的配置错误；GitHub Enterprise 登录不依赖该变量。
 
+GitHub Enterprise 的 Personal Access Token 至少需要 `repo` 与 `read:user` 权限；如果需要管理 Actions，再增加 `workflow` 权限。
+
+## 页面预览
+
+开发时可直接打开任意引导页面，不会连接 GitHub、写入钥匙串或执行 Git：
+
+```bash
+swift run GitMate --preview-page 1
+swift run GitMate --preview-page 6
+swift run GitMate --preview-page 8
+```
+
+支持的页码为 `1...9`。
+
 ## 验证
 
 运行轻量测试：
@@ -52,3 +66,5 @@ swift build --disable-sandbox
 ```text
 ~/Library/Application Support/GitMate/Repositories
 ```
+
+当前开发机器只有 Apple Command Line Tools，没有完整 Xcode。因此已验证 Swift Package 测试和原生 SwiftUI 可执行程序编译；应用签名、钥匙串授权弹窗、VoiceOver、`.app` 归档与公证需要安装完整 Xcode 后继续验证。
