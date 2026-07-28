@@ -15,6 +15,7 @@ let package = Package(
         .target(
             name: "GitMateCore",
             linkerSettings: [
+                .linkedFramework("Network"),
                 .linkedFramework("Security")
             ]
         ),
