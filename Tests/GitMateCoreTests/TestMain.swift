@@ -10,6 +10,7 @@ struct GitMateCoreTestsMain {
             + enterpriseConnectionTests
             + credentialStoreTests
             + repositorySyncServiceTests
+            + repositorySyncPreferenceTests
             + onboardingViewModelTests
         var failedCount = 0
 

@@ -35,6 +35,16 @@ public final class OnboardingViewModel {
         state.transition(.enterpriseRequested)
     }
 
+    public func returnToWelcome() {
+        state = OnboardingState()
+        deviceCode = nil
+    }
+
+    public func returnToPermissionReview() {
+        state.route = .permissionReview
+        state.errorMessage = nil
+    }
+
     public func connectEnterprise(serverURLText: String, token: String) async {
         guard let serverURL = normalizedURL(from: serverURLText) else {
             state.errorMessage = EnterpriseConnectionError.invalidServerURL.localizedDescription
