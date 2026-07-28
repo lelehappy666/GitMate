@@ -16,11 +16,9 @@ struct GitMateApp: App {
         }
 
         let api = URLSessionGitHubAPI()
-        let clientID = ProcessInfo.processInfo.environment[
-            "GITMATE_GITHUB_CLIENT_ID"
-        ] ?? ""
+        let clientIDStore = GitHubClientIDStore()
         let deviceFlow = GitHubDeviceFlow(
-            clientID: clientID,
+            clientIDProvider: { clientIDStore.current() },
             scopes: ["repo", "read:user", "workflow"]
         )
         let applicationSupport = FileManager.default.urls(
@@ -37,7 +35,8 @@ struct GitMateApp: App {
             credentialStore: KeychainCredentialStore(),
             syncService: GitRepositorySyncService(),
             networkMonitor: NWPathNetworkMonitor(),
-            syncDestination: syncDestination
+            syncDestination: syncDestination,
+            saveGitHubClientID: { clientIDStore.save($0) }
         )
         _viewModel = State(
             initialValue: OnboardingViewModel(dependencies: dependencies)

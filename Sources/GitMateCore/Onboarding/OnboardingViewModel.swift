@@ -7,6 +7,7 @@ public final class OnboardingViewModel {
     public private(set) var state: OnboardingState
     public private(set) var deviceCode: DeviceCode?
     public private(set) var isWorking = false
+    public private(set) var needsGitHubClientID = false
 
     @ObservationIgnored
     private let dependencies: OnboardingDependencies
@@ -38,6 +39,20 @@ public final class OnboardingViewModel {
     public func returnToWelcome() {
         state = OnboardingState()
         deviceCode = nil
+        needsGitHubClientID = false
+    }
+
+    public func configureGitHubClientIDAndRetry(_ clientID: String) async {
+        let normalizedClientID = clientID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedClientID.isEmpty else {
+            needsGitHubClientID = true
+            state.errorMessage = "请输入 GitHub OAuth App 的 Client ID。"
+            return
+        }
+
+        dependencies.saveGitHubClientID(normalizedClientID)
+        await startGitHubLogin()
     }
 
     public func returnToPermissionReview() {
@@ -231,6 +246,7 @@ public final class OnboardingViewModel {
     private func authenticateGitHub(isReauthorization: Bool) async {
         isWorking = true
         state.errorMessage = nil
+        needsGitHubClientID = false
         defer { isWorking = false }
 
         do {
@@ -273,6 +289,11 @@ public final class OnboardingViewModel {
             } else {
                 state.transition(.accountVerified(account))
             }
+        } catch GitHubAPIError.invalidConfiguration(let message) {
+            needsGitHubClientID = true
+            state.errorMessage = GitHubAPIError
+                .invalidConfiguration(message)
+                .localizedDescription
         } catch {
             state.errorMessage = error.localizedDescription
         }

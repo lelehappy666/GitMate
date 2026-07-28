@@ -36,7 +36,7 @@ public struct DeviceAccessToken: Equatable, Sendable {
 public struct GitHubDeviceFlow: GitHubDeviceAuthorizing, @unchecked Sendable {
     public typealias Sleeper = @Sendable (_ seconds: Int) async throws -> Void
 
-    private let clientID: String
+    private let clientIDProvider: @Sendable () -> String
     private let scopes: [String]
     private let session: URLSession
     private let baseURL: URL
@@ -51,7 +51,23 @@ public struct GitHubDeviceFlow: GitHubDeviceAuthorizing, @unchecked Sendable {
             try await Task.sleep(for: .seconds(seconds))
         }
     ) {
-        self.clientID = clientID
+        self.clientIDProvider = { clientID }
+        self.scopes = scopes
+        self.session = session
+        self.baseURL = baseURL
+        self.sleeper = sleeper
+    }
+
+    public init(
+        clientIDProvider: @escaping @Sendable () -> String,
+        scopes: [String],
+        session: URLSession = .shared,
+        baseURL: URL = URL(string: "https://github.com")!,
+        sleeper: @escaping Sleeper = { seconds in
+            try await Task.sleep(for: .seconds(seconds))
+        }
+    ) {
+        self.clientIDProvider = clientIDProvider
         self.scopes = scopes
         self.session = session
         self.baseURL = baseURL
@@ -59,7 +75,9 @@ public struct GitHubDeviceFlow: GitHubDeviceAuthorizing, @unchecked Sendable {
     }
 
     public func start() async throws -> DeviceCode {
-        guard !clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let clientID = clientIDProvider()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clientID.isEmpty else {
             throw GitHubAPIError.invalidConfiguration("缺少 GitHub OAuth App 的客户端编号。")
         }
 
@@ -81,6 +99,12 @@ public struct GitHubDeviceFlow: GitHubDeviceAuthorizing, @unchecked Sendable {
     }
 
     public func poll(deviceCode: String, interval: Int) async throws -> DeviceAccessToken {
+        let clientID = clientIDProvider()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clientID.isEmpty else {
+            throw GitHubAPIError.invalidConfiguration("缺少 GitHub OAuth App 的客户端编号。")
+        }
+
         var pollingInterval = max(interval, 1)
 
         while !Task.isCancelled {

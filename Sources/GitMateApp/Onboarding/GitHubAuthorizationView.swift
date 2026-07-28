@@ -5,6 +5,7 @@ import SwiftUI
 struct GitHubAuthorizationView: View {
     let viewModel: OnboardingViewModel
     @Environment(\.openURL) private var openURL
+    @State private var clientID = ""
 
     var body: some View {
         HStack(spacing: 42) {
@@ -40,10 +41,49 @@ struct GitHubAuthorizationView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 13))
                 }
 
-                Button {
-                    if let url = viewModel.deviceCode?.verificationURI {
-                        openURL(url)
+                if viewModel.needsGitHubClientID {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("首次使用需要配置 Client ID")
+                            .font(.system(size: 13, weight: .bold))
+                        Text("Client ID 只保存在这台 Mac，用于向 GitHub 获取设备验证码。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(GitMateTheme.textSecondary)
+
+                        HStack(spacing: 10) {
+                            TextField("GitHub OAuth Client ID", text: $clientID)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit {
+                                    saveClientID()
+                                }
+
+                            Button("保存并重试") {
+                                saveClientID()
+                            }
+                            .buttonStyle(GitMateButtonStyle(role: .secondary))
+                            .disabled(
+                                clientID
+                                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                                    .isEmpty || viewModel.isWorking
+                            )
+                        }
+
+                        Link(
+                            "没有 Client ID？前往创建 GitHub OAuth App",
+                            destination: URL(
+                                string: "https://github.com/settings/applications/new"
+                            )!
+                        )
+                        .font(.system(size: 12, weight: .semibold))
                     }
+                    .padding(14)
+                    .background(GitMateTheme.accentSoft)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+
+                Button {
+                    let url = viewModel.deviceCode?.verificationURI
+                        ?? URL(string: "https://github.com/login/device")!
+                    openURL(url)
                 } label: {
                     HStack {
                         Image(systemName: "safari")
@@ -53,13 +93,16 @@ struct GitHubAuthorizationView: View {
                     }
                 }
                 .buttonStyle(GitMateButtonStyle(role: .primary, fillsWidth: true))
-                .disabled(viewModel.deviceCode == nil)
 
                 if viewModel.isWorking {
                     HStack(spacing: 10) {
                         ProgressView()
                             .controlSize(.small)
-                        Text("等待 GitHub 授权…")
+                        Text(
+                            viewModel.deviceCode == nil
+                                ? "正在获取设备验证码…"
+                                : "等待 GitHub 授权…"
+                        )
                             .foregroundStyle(GitMateTheme.textSecondary)
                     }
                 }
@@ -87,5 +130,11 @@ struct GitHubAuthorizationView: View {
             .frame(maxWidth: .infinity)
         }
         .frame(maxHeight: .infinity)
+    }
+
+    private func saveClientID() {
+        Task {
+            await viewModel.configureGitHubClientIDAndRetry(clientID)
+        }
     }
 }
