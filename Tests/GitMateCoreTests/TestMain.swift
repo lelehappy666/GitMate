@@ -3,7 +3,10 @@ import Foundation
 @main
 struct GitMateCoreTestsMain {
     static func main() async {
-        let tests = onboardingRouteTests + onboardingStateTests
+        let tests = onboardingRouteTests
+            + onboardingStateTests
+            + githubDeviceFlowTests
+            + githubAPITests
         var failedCount = 0
 
         for test in tests {
