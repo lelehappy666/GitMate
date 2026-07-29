@@ -726,6 +726,184 @@ public struct GitCommandBuilder: Sendable {
         )
     }
 
+    public func remoteNames(
+        repositoryURL: URL
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        return GitCommand(
+            arguments: ["-C", repository.path, "remote"]
+        )
+    }
+
+    public func remoteURL(
+        repositoryURL: URL,
+        name: String,
+        push: Bool
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        guard GitInputValidator.isSafeRemoteName(name) else {
+            throw LocalGitError.invalidReference
+        }
+        var arguments = [
+            "-C", repository.path, "remote", "get-url"
+        ]
+        if push {
+            arguments.append("--push")
+        }
+        arguments.append(name)
+        return GitCommand(arguments: arguments)
+    }
+
+    public func branchTrackingRemotes(
+        repositoryURL: URL
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "for-each-ref",
+                "--format=%(refname:short)%00%(upstream:remotename)%00",
+                "refs/heads/"
+            ]
+        )
+    }
+
+    public func addRemote(
+        repositoryURL: URL,
+        name: String,
+        url: String
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        guard GitInputValidator.isSafeRemoteName(name) else {
+            throw LocalGitError.invalidReference
+        }
+        return GitCommand(
+            arguments: [
+                "-C", repository.path, "remote", "add", name, url
+            ],
+            cancellation: .finishToSafeState
+        )
+    }
+
+    public func renameRemote(
+        repositoryURL: URL,
+        originalName: String,
+        newName: String
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        guard GitInputValidator.isSafeRemoteName(originalName),
+              GitInputValidator.isSafeRemoteName(newName)
+        else {
+            throw LocalGitError.invalidReference
+        }
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "remote",
+                "rename",
+                originalName,
+                newName
+            ],
+            cancellation: .finishToSafeState
+        )
+    }
+
+    public func setRemoteURL(
+        repositoryURL: URL,
+        name: String,
+        url: String,
+        push: Bool
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        guard GitInputValidator.isSafeRemoteName(name) else {
+            throw LocalGitError.invalidReference
+        }
+        var arguments = [
+            "-C", repository.path, "remote", "set-url"
+        ]
+        if push {
+            arguments.append("--push")
+        }
+        arguments.append(contentsOf: [name, url])
+        return GitCommand(
+            arguments: arguments,
+            cancellation: .finishToSafeState
+        )
+    }
+
+    public func unsetRemotePushURL(
+        repositoryURL: URL,
+        name: String
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        guard GitInputValidator.isSafeRemoteName(name) else {
+            throw LocalGitError.invalidReference
+        }
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "config",
+                "--unset-all",
+                "remote.\(name).pushurl"
+            ],
+            cancellation: .finishToSafeState
+        )
+    }
+
+    public func removeRemote(
+        repositoryURL: URL,
+        name: String
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        guard GitInputValidator.isSafeRemoteName(name) else {
+            throw LocalGitError.invalidReference
+        }
+        return GitCommand(
+            arguments: [
+                "-C", repository.path, "remote", "remove", name
+            ],
+            cancellation: .finishToSafeState
+        )
+    }
+
+    public func lsRemoteHeads(
+        repositoryURL: URL,
+        remote: String,
+        environment: [String: String]
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        guard GitInputValidator.isSafeRemoteName(remote) else {
+            throw LocalGitError.invalidReference
+        }
+        return GitCommand(
+            arguments: [
+                "-C", repository.path, "ls-remote", "--heads", remote
+            ],
+            environment: environment
+        )
+    }
+
     private func validateHistoryEndpoint(_ value: String) throws {
         guard value == "HEAD"
                 || GitInputValidator.isSafeReference(value)

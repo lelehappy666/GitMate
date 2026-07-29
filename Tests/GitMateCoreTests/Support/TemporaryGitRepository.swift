@@ -78,7 +78,13 @@ final class TemporaryGitRepository: @unchecked Sendable {
     func makeBareRemote() throws -> URL {
         let remoteURL = temporaryRoot
             .appending(path: "remote.git", directoryHint: .isDirectory)
-        _ = try Self.runGit(["init", "--bare", remoteURL.path])
+        _ = try Self.runGit([
+            "init",
+            "--bare",
+            "--initial-branch",
+            "main",
+            remoteURL.path
+        ])
         return remoteURL
     }
 
