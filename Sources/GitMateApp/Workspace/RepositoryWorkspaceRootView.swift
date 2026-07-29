@@ -65,11 +65,17 @@ struct RepositoryWorkspaceRootView: View {
             TagsView(viewModel: viewModel)
         case .branchRules:
             BranchRulesView(viewModel: viewModel)
-        case .issues, .issueDetail, .newIssue, .milestones, .issueLabels:
+        case .issues:
+            IssuesOverviewView(viewModel: viewModel)
+        case .issueDetail:
+            IssueDetailView(viewModel: viewModel)
+        case .newIssue:
+            NewIssueView(viewModel: viewModel)
+        case .milestones, .issueLabels:
             WorkspaceEmptyView(
                 icon: "hammer",
                 title: "页面正在装配",
-                message: "议题、里程碑和标签页面将在下一阶段接入同一工作区。"
+                message: "里程碑和标签页面将在下一阶段接入同一工作区。"
             )
             .workspacePanel()
         }
