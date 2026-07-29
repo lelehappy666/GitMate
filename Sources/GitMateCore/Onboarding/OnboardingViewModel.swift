@@ -427,19 +427,37 @@ public final class OnboardingViewModel {
         case let .repositoryStarted(repository):
             state.progress.currentRepository = repository.fullName
             state.progress.currentFile = nil
+            state.progress.currentRepositoryFraction = 0
+            state.progress.currentRepositoryPhase = "正在准备"
             return true
 
         case let .fileChanged(_, path):
             state.progress.currentFile = path
             return true
 
+        case let .repositoryProgress(_, progress):
+            state.progress.currentRepositoryFraction = progress.fraction
+            state.progress.currentRepositoryPhase = progress.phase
+            state.progress.currentFile = progress.activity
+            return true
+
         case let .progress(progress):
             let currentRepository = state.progress.currentRepository
             let currentFile = state.progress.currentFile
+            let currentRepositoryFraction =
+                state.progress.currentRepositoryFraction
+            let currentRepositoryPhase =
+                state.progress.currentRepositoryPhase
             state.progress = progress
             state.progress.currentRepository = progress.currentRepository
                 ?? currentRepository
             state.progress.currentFile = progress.currentFile ?? currentFile
+            state.progress.currentRepositoryFraction =
+                progress.currentRepositoryFraction
+                ?? currentRepositoryFraction
+            state.progress.currentRepositoryPhase =
+                progress.currentRepositoryPhase
+                ?? currentRepositoryPhase
             return true
 
         case let .repositoryFailed(repositoryID, failure):

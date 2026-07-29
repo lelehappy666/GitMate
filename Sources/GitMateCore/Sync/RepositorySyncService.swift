@@ -21,6 +21,10 @@ public enum SyncFailure: Error, Equatable, Sendable {
 public enum SyncEvent: Equatable, Sendable {
     case repositoryStarted(Repository)
     case fileChanged(repositoryID: Int64, path: String)
+    case repositoryProgress(
+        repositoryID: Int64,
+        progress: GitTransferProgress
+    )
     case progress(SyncProgress)
     case repositoryFailed(repositoryID: Int64, failure: SyncFailure)
     case finished

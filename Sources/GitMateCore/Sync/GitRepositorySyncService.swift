@@ -57,6 +57,16 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
                                         path: "仓库已存在，已跳过首次下载"
                                     )
                                 )
+                                continuation.yield(
+                                    .repositoryProgress(
+                                        repositoryID: repository.id,
+                                        progress: GitTransferProgress(
+                                            fraction: 1,
+                                            phase: "已跳过",
+                                            activity: "仓库已存在，已跳过首次下载"
+                                        )
+                                    )
+                                )
                             } else {
                                 try await self.runGit(
                                     for: repository,
@@ -69,6 +79,15 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
                                                 path: activity
                                             )
                                         )
+                                        if let progress = GitProgressParser
+                                            .parse(activity) {
+                                            continuation.yield(
+                                                .repositoryProgress(
+                                                    repositoryID: repository.id,
+                                                    progress: progress
+                                                )
+                                            )
+                                        }
                                     }
                                 )
                                 try Task.checkCancellation()
@@ -82,6 +101,16 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
                                         )
                                     )
                                 }
+                                continuation.yield(
+                                    .repositoryProgress(
+                                        repositoryID: repository.id,
+                                        progress: GitTransferProgress(
+                                            fraction: 1,
+                                            phase: "下载完成",
+                                            activity: "仓库下载完成"
+                                        )
+                                    )
+                                )
                             }
                             completed += 1
                             continuation.yield(

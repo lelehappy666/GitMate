@@ -22,5 +22,20 @@ let syncProgressTests = [
             0,
             "未知总数时不应除以零"
         )
+    },
+    TestCase("仓库数量进度与当前仓库进度相互独立") {
+        let progress = SyncProgress(
+            completed: 2,
+            total: 4,
+            currentRepositoryFraction: 0.75,
+            currentRepositoryPhase: "正在接收对象"
+        )
+
+        try expectEqual(progress.fraction, 0.5, "仓库数量进度应为一半")
+        try expectEqual(
+            progress.currentRepositoryFraction,
+            0.75,
+            "当前仓库进度应独立保存"
+        )
     }
 ]
