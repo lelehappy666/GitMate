@@ -401,6 +401,10 @@ public final class RepositoryWallViewModel {
         }
     }
 
+    public func updateItems(_ items: [RepositoryPosterItem]) {
+        self.items = items
+    }
+
     public func resolvePendingCovers() async {
         guard let coverLoader else {
             return

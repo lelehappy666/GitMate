@@ -233,6 +233,106 @@ let dashboardViewModelTests = [
         try expectEqual(loadCount, 1, "并发 load 不应重复请求")
         try expectEqual(viewModel.state.repositoryCount, 1, "唯一请求结果应稳定写入状态")
     },
+    TestCase("增量流结束前工作台已经呈现首屏并继续更新") { @MainActor in
+        let account = dashboardAccount()
+        let firstRepository = dashboardRepository(
+            id: 1,
+            fullName: "octo/first"
+        )
+        let secondRepository = dashboardRepository(
+            id: 2,
+            fullName: "octo/second"
+        )
+        let loader = ProgressiveDashboardLoader()
+        let viewModel = DashboardViewModel(
+            account: account,
+            repositories: [firstRepository, secondRepository],
+            token: "secret",
+            loader: loader
+        )
+        let loadTask = Task { @MainActor in
+            await viewModel.load()
+        }
+
+        loader.yield(
+            WorkspaceDashboardContent(
+                account: account,
+                repositories: [
+                    dashboardRepositoryContent(repository: firstRepository)
+                ],
+                connectivity: .online,
+                panelErrors: []
+            )
+        )
+        await yieldDashboardTasks()
+
+        try expectEqual(
+            viewModel.state.repositoryCount,
+            1,
+            "流未结束时首个快照也必须立即进入页面状态"
+        )
+        try expectEqual(
+            viewModel.state.loadPhase,
+            .loading,
+            "仍有增量刷新时应保留加载提示"
+        )
+
+        loader.yield(
+            WorkspaceDashboardContent(
+                account: account,
+                repositories: [
+                    dashboardRepositoryContent(repository: firstRepository),
+                    dashboardRepositoryContent(repository: secondRepository)
+                ],
+                connectivity: .online,
+                panelErrors: []
+            )
+        )
+        loader.finish()
+        await loadTask.value
+
+        try expectEqual(viewModel.state.repositoryCount, 2, "后续快照应原位更新指标")
+        try expectEqual(viewModel.state.loadPhase, .loaded, "流结束后应完成加载")
+    },
+    TestCase("增量流已有首屏后失败仍保留已呈现数据") { @MainActor in
+        let account = dashboardAccount()
+        let repository = dashboardRepository(id: 1, fullName: "octo/cached")
+        let loader = ProgressiveDashboardLoader()
+        let viewModel = DashboardViewModel(
+            account: account,
+            repositories: [repository],
+            token: "secret",
+            loader: loader
+        )
+        let loadTask = Task { @MainActor in
+            await viewModel.load()
+        }
+
+        loader.yield(
+            WorkspaceDashboardContent(
+                account: account,
+                repositories: [
+                    dashboardRepositoryContent(repository: repository)
+                ],
+                connectivity: .online,
+                panelErrors: []
+            )
+        )
+        await yieldDashboardTasks()
+        loader.finish(throwing: DashboardFixtureError.failed("远程失败"))
+        await loadTask.value
+
+        try expectEqual(
+            viewModel.state.repositoryCount,
+            1,
+            "后续刷新失败不得清空已经呈现的缓存或本地数据"
+        )
+        try expectEqual(
+            viewModel.state.loadPhase,
+            .failed(message: "暂时无法加载工作台，请稍后重试。"),
+            "保留数据的同时应给出稳定失败提示"
+        )
+    },
     TestCase("取消暂停中的加载不写状态且随后可以重新加载") { @MainActor in
         let account = dashboardAccount()
         let repository = dashboardRepository(id: 1, fullName: "octo/app")
@@ -499,6 +599,52 @@ private actor SequencedDashboardLoader: WorkspaceDashboardLoading {
 
     func currentLoadCount() -> Int {
         loadCount
+    }
+}
+
+private final class ProgressiveDashboardLoader: WorkspaceDashboardLoading,
+    @unchecked Sendable
+{
+    private let stream: AsyncThrowingStream<WorkspaceDashboardContent, Error>
+    private let continuation:
+        AsyncThrowingStream<WorkspaceDashboardContent, Error>.Continuation
+
+    init() {
+        let pair = AsyncThrowingStream<WorkspaceDashboardContent, Error>
+            .makeStream()
+        stream = pair.stream
+        continuation = pair.continuation
+    }
+
+    func dashboard(
+        account _: GitHubAccount,
+        repositories _: [Repository],
+        token _: String
+    ) async throws -> WorkspaceDashboardContent {
+        throw DashboardFixtureError.missingContent
+    }
+
+    func dashboardUpdates(
+        account _: GitHubAccount,
+        repositories _: [Repository],
+        token _: String
+    ) -> AsyncThrowingStream<WorkspaceDashboardContent, Error> {
+        stream
+    }
+
+    func yield(_ content: WorkspaceDashboardContent) {
+        continuation.yield(content)
+    }
+
+    func finish(throwing error: Error? = nil) {
+        continuation.finish(throwing: error)
+    }
+}
+
+@MainActor
+private func yieldDashboardTasks() async {
+    for _ in 0..<100 {
+        await Task.yield()
     }
 }
 

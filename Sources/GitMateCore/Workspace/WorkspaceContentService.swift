@@ -9,19 +9,25 @@ public final class WorkspaceContentService: @unchecked Sendable {
     private let github: any GitHubWorkspaceAPI
     private let cache: any WorkspaceCaching
     private let now: @Sendable () -> Date
+    private let maximumConcurrentRepositoryRefreshes: Int
 
     public init(
         catalog: LocalRepositoryCatalog,
         localGit: any LocalGitReading,
         github: any GitHubWorkspaceAPI,
         cache: any WorkspaceCaching,
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        maximumConcurrentRepositoryRefreshes: Int = 4
     ) {
         self.catalog = catalog
         self.localGit = localGit
         self.github = github
         self.cache = cache
         self.now = now
+        self.maximumConcurrentRepositoryRefreshes = min(
+            max(maximumConcurrentRepositoryRefreshes, 1),
+            8
+        )
     }
 
     public func repositoryContent(
@@ -217,41 +223,196 @@ public final class WorkspaceContentService: @unchecked Sendable {
         repositories: [Repository],
         token: String
     ) async throws -> WorkspaceDashboardContent {
-        var contents: [RepositoryContent] = []
-        var connectivity = WorkspaceConnectivity.online
-        var panelErrors: [WorkspacePanelError] = []
+        var latest: WorkspaceDashboardContent?
+        for try await update in dashboardUpdates(
+            account: account,
+            repositories: repositories,
+            token: token
+        ) {
+            latest = update
+        }
+        return latest ?? WorkspaceDashboardContent(
+            account: account,
+            repositories: [],
+            connectivity: .online,
+            panelErrors: []
+        )
+    }
 
-        for repository in repositories {
-            do {
-                let content = try await repositoryContent(
-                    repository: repository,
-                    account: account,
-                    token: token
-                )
-                contents.append(content)
-                connectivity = mergedConnectivity(
-                    connectivity,
-                    content.connectivity
-                )
-                panelErrors.append(contentsOf: content.panelErrors)
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                panelErrors.append(
-                    panelError(
-                        panel: .localRepository,
-                        repositoryID: repository.id,
-                        message: "无法读取本地仓库。"
+    public func dashboardUpdates(
+        account: GitHubAccount,
+        repositories: [Repository],
+        token: String
+    ) -> AsyncThrowingStream<WorkspaceDashboardContent, Error> {
+        AsyncThrowingStream { continuation in
+            let producer = Task {
+                do {
+                    let initial = try initialDashboardContent(
+                        account: account,
+                        repositories: repositories
                     )
-                )
+                    try Task.checkCancellation()
+                    continuation.yield(initial)
+
+                    var contents = initial.repositories
+                    let limit = maximumConcurrentRepositoryRefreshes
+                    try await withThrowingTaskGroup(
+                        of: (Int, RepositoryContent).self
+                    ) { group in
+                        let initialTaskCount = min(limit, repositories.count)
+                        for index in 0..<initialTaskCount {
+                            let repository = repositories[index]
+                            group.addTask {
+                                let content = try await self.repositoryContent(
+                                    repository: repository,
+                                    account: account,
+                                    token: token
+                                )
+                                return (index, content)
+                            }
+                        }
+
+                        var nextIndex = initialTaskCount
+                        while let (index, content) = try await group.next() {
+                            try Task.checkCancellation()
+                            contents[index] = content
+                            continuation.yield(
+                                self.dashboardContent(
+                                    account: account,
+                                    repositories: contents
+                                )
+                            )
+                            if nextIndex < repositories.count {
+                                let index = nextIndex
+                                let repository = repositories[index]
+                                nextIndex += 1
+                                group.addTask {
+                                    let content = try await self.repositoryContent(
+                                        repository: repository,
+                                        account: account,
+                                        token: token
+                                    )
+                                    return (index, content)
+                                }
+                            }
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in
+                producer.cancel()
             }
         }
+    }
 
+    private func initialDashboardContent(
+        account: GitHubAccount,
+        repositories: [Repository]
+    ) throws -> WorkspaceDashboardContent {
+        let accountID = String(account.id)
+        let currentDate = now()
+        var globalErrors: [WorkspacePanelError] = []
+        let snapshot: WorkspaceCacheSnapshot?
+        do {
+            snapshot = validSnapshot(
+                try cache.load(accountID: accountID),
+                accountID: accountID,
+                now: currentDate
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            snapshot = nil
+            globalErrors.append(
+                panelError(
+                    panel: .onlineSummary,
+                    repositoryID: nil,
+                    message: "无法读取工作区缓存。"
+                )
+            )
+        }
+        let cachedRecords = Dictionary(
+            uniqueKeysWithValues: (snapshot?.repositoryRecords ?? []).map {
+                ($0.repository.id, $0)
+            }
+        )
+        let contents = try repositories.map { repository in
+            var errors: [WorkspacePanelError] = []
+            let localRecord: LocalRepositoryRecord
+            if let cached = cachedRecords[repository.id] {
+                localRecord = LocalRepositoryRecord(
+                    repository: repository,
+                    localURL: cached.localURL,
+                    availability: cached.availability,
+                    localSizeInBytes: cached.localSizeInBytes,
+                    lastInspectedAt: cached.lastInspectedAt
+                )
+            } else {
+                do {
+                    localRecord = try catalog.record(for: repository)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    localRecord = LocalRepositoryRecord(
+                        repository: repository,
+                        localURL: catalog.localURL(for: repository),
+                        availability: .damaged,
+                        localSizeInBytes: 0,
+                        lastInspectedAt: currentDate
+                    )
+                    errors.append(
+                        panelError(
+                            panel: .localRepository,
+                            repositoryID: repository.id,
+                            message: "无法读取本地仓库。"
+                        )
+                    )
+                }
+            }
+            return RepositoryContent(
+                repository: repository,
+                localRecord: localRecord,
+                localStatus: nil,
+                onlineSummary: snapshot?.onlineSummaries[repository.id],
+                recentCommits: [],
+                readme: nil,
+                connectivity: .online,
+                panelErrors: errors
+            )
+        }
+        let content = dashboardContent(
+            account: account,
+            repositories: contents
+        )
         return WorkspaceDashboardContent(
             account: account,
-            repositories: contents,
+            repositories: content.repositories,
+            connectivity: content.connectivity,
+            panelErrors: globalErrors + content.panelErrors
+        )
+    }
+
+    private func dashboardContent(
+        account: GitHubAccount,
+        repositories: [RepositoryContent]
+    ) -> WorkspaceDashboardContent {
+        var connectivity = WorkspaceConnectivity.online
+        var errors: [WorkspacePanelError] = []
+        for repository in repositories {
+            connectivity = mergedConnectivity(
+                connectivity,
+                repository.connectivity
+            )
+            errors.append(contentsOf: repository.panelErrors)
+        }
+        return WorkspaceDashboardContent(
+            account: account,
+            repositories: repositories,
             connectivity: connectivity,
-            panelErrors: panelErrors
+            panelErrors: errors
         )
     }
 

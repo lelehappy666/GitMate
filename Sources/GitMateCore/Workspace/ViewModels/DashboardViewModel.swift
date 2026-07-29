@@ -7,9 +7,42 @@ public protocol WorkspaceDashboardLoading: Sendable {
         repositories: [Repository],
         token: String
     ) async throws -> WorkspaceDashboardContent
+    func dashboardUpdates(
+        account: GitHubAccount,
+        repositories: [Repository],
+        token: String
+    ) -> AsyncThrowingStream<WorkspaceDashboardContent, Error>
 }
 
 extension WorkspaceContentService: WorkspaceDashboardLoading {}
+
+public extension WorkspaceDashboardLoading {
+    func dashboardUpdates(
+        account: GitHubAccount,
+        repositories: [Repository],
+        token: String
+    ) -> AsyncThrowingStream<WorkspaceDashboardContent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let content = try await dashboard(
+                        account: account,
+                        repositories: repositories,
+                        token: token
+                    )
+                    try Task.checkCancellation()
+                    continuation.yield(content)
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
+        }
+    }
+}
 
 public enum DashboardLoadPhase: Equatable, Sendable {
     case idle
@@ -222,27 +255,38 @@ public final class DashboardViewModel {
         state.loadPhase = .loading
         defer { isLoading = false }
 
+        var receivedContent = false
         do {
             try Task.checkCancellation()
-            let content = try await loader.dashboard(
+            for try await content in loader.dashboardUpdates(
                 account: account,
                 repositories: repositories,
                 token: token
-            )
+            ) {
+                try Task.checkCancellation()
+                var nextState = Self.makeState(
+                    from: content,
+                    sensitiveValue: token
+                )
+                nextState.loadPhase = .loading
+                state = nextState
+                receivedContent = true
+            }
             try Task.checkCancellation()
-            state = Self.makeState(
-                from: content,
-                sensitiveValue: token
-            )
+            if !receivedContent {
+                state = DashboardState(account: account)
+            }
+            state.loadPhase = .loaded
             hasLoadedSuccessfully = true
         } catch is CancellationError {
             state = stateBeforeLoad
         } catch {
-            var failedState = DashboardState(account: account)
-            failedState.loadPhase = .failed(
+            if !receivedContent {
+                state = DashboardState(account: account)
+            }
+            state.loadPhase = .failed(
                 message: "暂时无法加载工作台，请稍后重试。"
             )
-            state = failedState
         }
     }
 

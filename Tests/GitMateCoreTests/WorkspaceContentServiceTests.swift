@@ -1030,6 +1030,116 @@ let workspaceContentServiceTests = [
             "目录异常应记录稳定的仓库面板错误"
         )
     },
+    TestCase("工作台增量流先发布缓存首屏并限四仓库并发逐仓库刷新") {
+        let repositories = (0..<6).map(progressiveRepository)
+        let availability = Dictionary(
+            uniqueKeysWithValues: repositories.map {
+                ($0.name, LocalRepositoryAvailability.available)
+            }
+        )
+        let cachedRepository = repositories[0]
+        let cachedSummary = progressiveSummary(
+            repositoryID: cachedRepository.id,
+            issueCount: 999
+        )
+        let cache = MemoryWorkspaceCache(
+            snapshot: WorkspaceCacheSnapshot(
+                accountID: String(contentAccountFixture.id),
+                repositoryRecords: [
+                    LocalRepositoryRecord(
+                        repository: cachedRepository,
+                        localURL: URL(
+                            filePath: "/workspace/\(cachedRepository.name)"
+                        ),
+                        availability: .available,
+                        localSizeInBytes: 123,
+                        lastInspectedAt: Date(timeIntervalSince1970: 1_000)
+                    )
+                ],
+                onlineSummaries: [cachedRepository.id: cachedSummary],
+                savedAt: Date(timeIntervalSince1970: 1_000)
+            )
+        )
+        let gate = ProgressiveRefreshGate()
+        let github = FixtureGitHubWorkspaceAPI(
+            summary: { repository, _ in
+                await gate.waitUntilOpened()
+                return progressiveSummary(
+                    repositoryID: repository.id,
+                    issueCount: Int(repository.id)
+                )
+            },
+            readme: { repository, _ in
+                await gate.waitUntilOpened()
+                return GitHubREADME(
+                    repositoryID: repository.id,
+                    path: "README.md",
+                    markdown: "# \(repository.name)",
+                    downloadURL: nil
+                )
+            }
+        )
+        let service = WorkspaceContentService(
+            catalog: makeContentCatalog(availability: availability),
+            localGit: FixtureLocalGitReader(),
+            github: github,
+            cache: cache,
+            now: { Date(timeIntervalSince1970: 1_100) },
+            maximumConcurrentRepositoryRefreshes: 4
+        )
+        var iterator = service.dashboardUpdates(
+            account: contentAccountFixture,
+            repositories: repositories,
+            token: "secret"
+        ).makeAsyncIterator()
+
+        guard let first = try await iterator.next() else {
+            throw TestFailure(description: "增量流必须发布首屏")
+        }
+
+        try expectEqual(first.repositories.count, 6, "首屏应立即包含全部本地仓库记录")
+        try expectEqual(
+            first.repositories[0].onlineSummary,
+            cachedSummary,
+            "首屏应在远程刷新前使用有效缓存摘要"
+        )
+        try expect(
+            first.repositories.allSatisfy { $0.localStatus == nil },
+            "首屏不得等待本地 Git 状态请求"
+        )
+
+        await gate.waitUntilRequestCount(4)
+        let maximumActiveRequestCount = await gate.maximumActiveRequestCount
+        try expectEqual(
+            maximumActiveRequestCount,
+            4,
+            "远程模块未释放时全局最多只能有四个仓库刷新"
+        )
+        await gate.open()
+
+        var snapshots = [first]
+        while let snapshot = try await iterator.next() {
+            snapshots.append(snapshot)
+        }
+
+        try expectEqual(
+            snapshots.count,
+            repositories.count + 1,
+            "首屏后每完成一个仓库都应发布一次增量快照"
+        )
+        try expectEqual(
+            snapshots.last?.repositories.map(\.repository.id),
+            repositories.map(\.id),
+            "并发完成不得改变仓库稳定顺序"
+        )
+        try expect(
+            snapshots.last?.repositories.allSatisfy {
+                $0.onlineSummary?.openIssueCount == Int($0.repository.id)
+                    && $0.readme != nil
+            } == true,
+            "最终快照应包含所有仓库的远程刷新结果"
+        )
+    },
     TestCase("仓库目录统计异常仍返回在线仓库内容") {
         let directory = FileManager.default.temporaryDirectory
             .appending(
@@ -1201,3 +1311,69 @@ let workspaceContentServiceTests = [
         }
     }
 ]
+
+private actor ProgressiveRefreshGate {
+    private var isOpen = false
+    private var activeRequestCount = 0
+    private var maximumCount = 0
+    private var requestCount = 0
+    private var openContinuations: [CheckedContinuation<Void, Never>] = []
+
+    var maximumActiveRequestCount: Int {
+        maximumCount
+    }
+
+    func waitUntilOpened() async {
+        requestCount += 1
+        activeRequestCount += 1
+        maximumCount = max(maximumCount, activeRequestCount)
+        if !isOpen {
+            await withCheckedContinuation { continuation in
+                openContinuations.append(continuation)
+            }
+        }
+        activeRequestCount -= 1
+    }
+
+    func waitUntilRequestCount(_ expectedCount: Int) async {
+        while requestCount < expectedCount {
+            await Task.yield()
+        }
+    }
+
+    func open() {
+        isOpen = true
+        let continuations = openContinuations
+        openContinuations.removeAll()
+        continuations.forEach { $0.resume() }
+    }
+}
+
+private func progressiveRepository(_ index: Int) -> Repository {
+    Repository(
+        id: Int64(300 + index),
+        name: "repository-\(index)",
+        fullName: "GitMate/repository-\(index)",
+        isPrivate: false,
+        defaultBranch: "main",
+        sizeInKilobytes: 1_024,
+        cloneURL: URL(
+            string: "https://github.com/GitMate/repository-\(index).git"
+        )!,
+        ownerAvatarURL: nil
+    )
+}
+
+private func progressiveSummary(
+    repositoryID: Int64,
+    issueCount: Int
+) -> RepositoryOnlineSummary {
+    RepositoryOnlineSummary(
+        repositoryID: repositoryID,
+        primaryLanguage: "Swift",
+        openIssueCount: issueCount,
+        openPullRequestCount: 0,
+        failedWorkflowCount: 0,
+        remoteUpdatedAt: Date(timeIntervalSince1970: TimeInterval(repositoryID))
+    )
+}

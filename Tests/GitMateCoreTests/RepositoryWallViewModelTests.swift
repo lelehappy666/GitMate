@@ -72,6 +72,49 @@ let repositoryWallViewModelTests = [
             "同步状态筛选不得混入正常或尚未同步的仓库"
         )
     },
+    TestCase("仓库墙增量更新海报时保留用户筛选与排序") { @MainActor in
+        let viewModel = RepositoryWallViewModel(
+            items: [
+                repositoryPosterFixture(
+                    id: 1,
+                    fullName: "owner/first",
+                    language: nil,
+                    syncState: .needsAttention
+                )
+            ]
+        )
+        viewModel.searchText = "second"
+        viewModel.visibility = .publicOnly
+        viewModel.language = "Swift"
+        viewModel.syncState = .synchronized
+        viewModel.sort = .name
+
+        viewModel.updateItems([
+            repositoryPosterFixture(
+                id: 1,
+                fullName: "owner/first",
+                language: "Swift",
+                syncState: .synchronized
+            ),
+            repositoryPosterFixture(
+                id: 2,
+                fullName: "owner/second",
+                language: "Swift",
+                syncState: .synchronized
+            )
+        ])
+
+        try expectEqual(viewModel.searchText, "second", "增量更新不得清空搜索词")
+        try expectEqual(viewModel.visibility, .publicOnly, "增量更新不得重置可见性")
+        try expectEqual(viewModel.language, "Swift", "增量更新不得重置语言")
+        try expectEqual(viewModel.syncState, .synchronized, "增量更新不得重置同步状态")
+        try expectEqual(viewModel.sort, .name, "增量更新不得重置排序")
+        try expectEqual(
+            viewModel.visibleItems.map(\.id),
+            [2],
+            "新海报应立即使用现有筛选条件"
+        )
+    },
     TestCase("仓库墙最近更新排序使用仓库全名和编号稳定消除同值抖动") {
         let sameDate = Date(timeIntervalSince1970: 200)
         let sorted = RepositoryWallFilter.apply(
