@@ -98,7 +98,8 @@ public final class URLSessionGitHubAPI: GitHubAPI, @unchecked Sendable {
                 defaultBranch: $0.defaultBranch,
                 sizeInKilobytes: $0.size,
                 cloneURL: $0.cloneURL,
-                ownerAvatarURL: $0.owner.avatarURL
+                ownerAvatarURL: $0.owner.avatarURL,
+                primaryLanguage: $0.language
             )
         }
         return GitHubRepositoryPage(
@@ -226,6 +227,7 @@ private struct RepositoryPayload: Decodable {
     let size: Int
     let cloneURL: URL
     let owner: Owner
+    let language: String?
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -236,5 +238,6 @@ private struct RepositoryPayload: Decodable {
         case size
         case cloneURL = "clone_url"
         case owner
+        case language
     }
 }

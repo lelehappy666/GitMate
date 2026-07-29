@@ -9,6 +9,7 @@ public struct Repository: Identifiable, Equatable, Codable, Sendable {
     public let sizeInKilobytes: Int
     public let cloneURL: URL
     public let ownerAvatarURL: URL?
+    public let primaryLanguage: String?
 
     public init(
         id: Int64,
@@ -18,7 +19,8 @@ public struct Repository: Identifiable, Equatable, Codable, Sendable {
         defaultBranch: String,
         sizeInKilobytes: Int,
         cloneURL: URL,
-        ownerAvatarURL: URL?
+        ownerAvatarURL: URL?,
+        primaryLanguage: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -28,6 +30,7 @@ public struct Repository: Identifiable, Equatable, Codable, Sendable {
         self.sizeInKilobytes = sizeInKilobytes
         self.cloneURL = cloneURL
         self.ownerAvatarURL = ownerAvatarURL
+        self.primaryLanguage = primaryLanguage
     }
 
     public var safeLocalDirectoryName: String {

@@ -41,6 +41,7 @@ let githubAPITests = [
                   "full_name": "GitMate/mac-client",
                   "private": true,
                   "default_branch": "main",
+                  "language": "Swift",
                   "size": 2457600,
                   "clone_url": "https://github.com/GitMate/mac-client.git",
                   "owner": {
@@ -60,6 +61,11 @@ let githubAPITests = [
         try expectEqual(repository.sizeInKilobytes, 2_457_600, "应保留 GitHub 返回的仓库大小")
         try expect(repository.isPrivate, "应解析私有仓库状态")
         try expectEqual(repository.defaultBranch, "main", "应解析默认分支")
+        try expectEqual(
+            repository.primaryLanguage,
+            "Swift",
+            "应保留 GitHub 返回的仓库主要语言"
+        )
         try expectEqual(repository.cloneURL.absoluteString, "https://github.com/GitMate/mac-client.git", "应解析克隆地址")
         try expectEqual(repository.ownerAvatarURL?.absoluteString, "https://avatars.githubusercontent.com/u/1", "应解析仓库所有者头像")
     },
