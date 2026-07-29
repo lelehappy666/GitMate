@@ -1,0 +1,190 @@
+import Foundation
+import GitMateCore
+
+private let repositoryFixture = Repository(
+    id: 42,
+    name: "mac-client",
+    fullName: "gitmate/mac-client",
+    isPrivate: true,
+    defaultBranch: "main",
+    sizeInKilobytes: 0,
+    cloneURL: URL(string: "https://github.com/gitmate/mac-client.git")!,
+    ownerAvatarURL: nil
+)
+
+private struct FakeRepositoryFileSystem: RepositoryFileSystem {
+    let directories: Set<String>
+    let byteCounts: [String: Int64]
+
+    init(directories: [String], byteCounts: [String: Int64]) {
+        self.directories = Set(directories)
+        self.byteCounts = byteCounts
+    }
+
+    func itemExists(at url: URL) -> Bool {
+        directories.contains(url.path)
+    }
+
+    func recursiveByteCount(at url: URL) throws -> Int64 {
+        byteCounts[url.path] ?? 0
+    }
+}
+
+private func temporaryWorkspaceCacheDirectory() throws -> URL {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "GitMateWorkspaceCacheTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+}
+
+let localRepositoryCatalogTests = [
+    TestCase("仓库映射到首次同步目录") {
+        let fileSystem = FakeRepositoryFileSystem(
+            directories: ["/sync/mac-client/.git"],
+            byteCounts: ["/sync/mac-client": 2_048]
+        )
+        let catalog = LocalRepositoryCatalog(
+            rootDirectory: URL(fileURLWithPath: "/sync"),
+            fileSystem: fileSystem
+        )
+
+        let record = try catalog.record(for: repositoryFixture)
+
+        try expectEqual(record.localURL.path, "/sync/mac-client", "应使用同步目录")
+        try expectEqual(record.availability, .available, "存在 .git 时应可用")
+        try expectEqual(record.localSizeInBytes, 2_048, "应返回本地大小")
+    },
+    TestCase("缺少 Git 元数据时标记损坏") {
+        let fileSystem = FakeRepositoryFileSystem(
+            directories: ["/sync/mac-client"],
+            byteCounts: [:]
+        )
+        let catalog = LocalRepositoryCatalog(
+            rootDirectory: URL(fileURLWithPath: "/sync"),
+            fileSystem: fileSystem
+        )
+
+        let record = try catalog.record(for: repositoryFixture)
+
+        try expectEqual(record.availability, .damaged, "目录存在但无 .git 应标记损坏")
+    },
+    TestCase("不存在的仓库目录标记缺失") {
+        let catalog = LocalRepositoryCatalog(
+            rootDirectory: URL(fileURLWithPath: "/sync"),
+            fileSystem: FakeRepositoryFileSystem(directories: [], byteCounts: [:])
+        )
+
+        let record = try catalog.record(for: repositoryFixture)
+
+        try expectEqual(record.availability, .missing, "目录不存在应标记缺失")
+        try expectEqual(record.localSizeInBytes, 0, "缺失目录大小应为零")
+    },
+    TestCase("目录名沿用首次同步的安全规则") {
+        let unsafeRepository = Repository(
+            id: 43,
+            name: "../client:windows\\build",
+            fullName: "gitmate/client",
+            isPrivate: true,
+            defaultBranch: "main",
+            sizeInKilobytes: 0,
+            cloneURL: URL(string: "https://github.com/gitmate/client.git")!,
+            ownerAvatarURL: nil
+        )
+        let catalog = LocalRepositoryCatalog(
+            rootDirectory: URL(fileURLWithPath: "/sync"),
+            fileSystem: FakeRepositoryFileSystem(directories: [], byteCounts: [:])
+        )
+
+        let record = try catalog.record(for: unsafeRepository)
+
+        try expectEqual(record.localURL.path, "/sync/..-client-windows-build", "不安全字符应替换为连字符")
+    },
+    TestCase("默认文件系统统计真实仓库目录") {
+        let directory = try temporaryWorkspaceCacheDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repositoryDirectory = directory.appending(path: "mac-client", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(
+            at: repositoryDirectory.appending(path: ".git", directoryHint: .isDirectory),
+            withIntermediateDirectories: true
+        )
+        let fileURL = repositoryDirectory.appending(path: "README.md")
+        try Data("1234".utf8).write(to: fileURL)
+        let catalog = LocalRepositoryCatalog(rootDirectory: directory)
+
+        let record = try catalog.record(for: repositoryFixture)
+
+        try expectEqual(record.availability, .available, "真实 Git 目录应可用")
+        try expect(record.localSizeInBytes >= 4, "本地大小应包含仓库文件")
+    },
+    TestCase("缓存按账户保存读取并可清理") {
+        let directory = try temporaryWorkspaceCacheDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = JSONWorkspaceCache(rootDirectory: directory)
+        let summary = RepositoryOnlineSummary(
+            repositoryID: 42,
+            primaryLanguage: "Swift",
+            openIssueCount: 3,
+            openPullRequestCount: 2,
+            failedWorkflowCount: 1,
+            remoteUpdatedAt: Date(timeIntervalSince1970: 1_710_000_000)
+        )
+        let snapshot = WorkspaceCacheSnapshot(
+            accountID: "octo-cat",
+            repositoryRecords: [
+                LocalRepositoryRecord(
+                    repository: repositoryFixture,
+                    localURL: URL(fileURLWithPath: "/sync/mac-client"),
+                    availability: .available,
+                    localSizeInBytes: 2_048,
+                    lastInspectedAt: Date(timeIntervalSince1970: 1_710_000_100)
+                )
+            ],
+            onlineSummaries: [42: summary],
+            savedAt: Date(timeIntervalSince1970: 1_710_000_200)
+        )
+
+        try cache.save(snapshot)
+        let loadedSnapshot = try cache.load(accountID: "octo-cat")
+        try expectEqual(loadedSnapshot, snapshot, "读取的缓存应与保存内容一致")
+        try cache.clear(accountID: "octo-cat")
+        let clearedSnapshot = try cache.load(accountID: "octo-cat")
+        try expectEqual(clearedSnapshot, nil, "清理后不应读取到缓存")
+    },
+    TestCase("缓存写入时移除仓库地址中的凭据") {
+        let directory = try temporaryWorkspaceCacheDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = Repository(
+            id: 99,
+            name: "private-client",
+            fullName: "gitmate/private-client",
+            isPrivate: true,
+            defaultBranch: "main",
+            sizeInKilobytes: 0,
+            cloneURL: URL(string: "https://reader:should-not-be-written@github.com/gitmate/private-client.git?secret=should-not-be-written")!,
+            ownerAvatarURL: nil
+        )
+        let snapshot = WorkspaceCacheSnapshot(
+            accountID: "octo-cat",
+            repositoryRecords: [
+                LocalRepositoryRecord(
+                    repository: repository,
+                    localURL: URL(fileURLWithPath: "/sync/private-client"),
+                    availability: .available,
+                    localSizeInBytes: 0,
+                    lastInspectedAt: Date(timeIntervalSince1970: 1_710_000_100)
+                )
+            ],
+            onlineSummaries: [:],
+            savedAt: Date(timeIntervalSince1970: 1_710_000_200)
+        )
+        let cache = JSONWorkspaceCache(rootDirectory: directory)
+
+        try cache.save(snapshot)
+
+        let cacheURL = directory
+            .appending(path: "octo-cat", directoryHint: .isDirectory)
+            .appending(path: "workspace.json")
+        let content = try String(decoding: Data(contentsOf: cacheURL), as: UTF8.self)
+        try expect(!content.contains("should-not-be-written"), "缓存文件不应包含仓库地址中的凭据")
+    }
+]

@@ -29,4 +29,9 @@ public struct Repository: Identifiable, Equatable, Codable, Sendable {
         self.cloneURL = cloneURL
         self.ownerAvatarURL = ownerAvatarURL
     }
+
+    public var safeLocalDirectoryName: String {
+        let invalid = CharacterSet(charactersIn: "/:\\")
+        return name.components(separatedBy: invalid).joined(separator: "-")
+    }
 }

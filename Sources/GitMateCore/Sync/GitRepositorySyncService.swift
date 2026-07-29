@@ -41,7 +41,7 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
                         try Task.checkCancellation()
                         continuation.yield(.repositoryStarted(repository))
                         let repositoryDirectory = destination.appending(
-                            path: Self.safeDirectoryName(repository.name),
+                            path: repository.safeLocalDirectoryName,
                             directoryHint: .isDirectory
                         )
 
@@ -269,8 +269,4 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
         return String(normalized.prefix(180))
     }
 
-    private static func safeDirectoryName(_ name: String) -> String {
-        let invalid = CharacterSet(charactersIn: "/:\\")
-        return name.components(separatedBy: invalid).joined(separator: "-")
-    }
 }
