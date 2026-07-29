@@ -7,9 +7,8 @@ public struct READMEBlockParser: Sendable {
         _ markdown: String,
         baseURL: URL? = nil
     ) -> READMEDocument {
-        let protected = protectFencedCode(in: markdown)
-        let safeMarkdown = removeDangerousHTML(from: protected.markdown)
-        let lines = safeMarkdown.components(separatedBy: .newlines)
+        let sanitized = READMEHTMLSanitizer().sanitize(markdown)
+        let lines = sanitized.markdown.components(separatedBy: .newlines)
         var blocks: [READMEBlock] = []
         var outline: READMEOutline = []
         var links: [READMEExternalLink] = []
@@ -44,9 +43,23 @@ public struct READMEBlockParser: Sendable {
                 continue
             }
 
-            if let code = protected.codeBlocks[line] {
+            if let code = sanitized.codeBlocks[line] {
                 flushParagraph()
                 blocks.append(.code(language: code.language, value: code.value))
+                index += 1
+                continue
+            }
+
+            if let htmlImage = sanitized.htmlImages[line] {
+                flushParagraph()
+                if let candidate = htmlImageCandidate(
+                    from: htmlImage,
+                    baseURL: baseURL
+                ) {
+                    blocks.append(
+                        .image(url: candidate.url, alt: candidate.alt)
+                    )
+                }
                 index += 1
                 continue
             }
@@ -166,90 +179,6 @@ public struct READMEBlockParser: Sendable {
         )
     }
 
-    private func protectFencedCode(
-        in markdown: String
-    ) -> (markdown: String, codeBlocks: [String: CodeBlock]) {
-        var prefix = "\u{1E}GITMATE_CODE_BLOCK_"
-        while markdown.contains(prefix) {
-            prefix += "_"
-        }
-
-        let lines = markdown.components(separatedBy: .newlines)
-        var output: [String] = []
-        var codeBlocks: [String: CodeBlock] = [:]
-        var index = 0
-
-        while index < lines.count {
-            guard let fence = openingFence(in: lines[index]) else {
-                output.append(lines[index])
-                index += 1
-                continue
-            }
-
-            var codeLines: [String] = []
-            index += 1
-            while index < lines.count,
-                  !isClosingFence(lines[index], opening: fence) {
-                codeLines.append(lines[index])
-                index += 1
-            }
-            if index < lines.count {
-                index += 1
-            }
-
-            let placeholder = "\(prefix)\(codeBlocks.count)\u{1E}"
-            codeBlocks[placeholder] = CodeBlock(
-                language: fence.language,
-                value: codeLines.joined(separator: "\n")
-            )
-            output.append(placeholder)
-        }
-
-        return (output.joined(separator: "\n"), codeBlocks)
-    }
-
-    private func openingFence(
-        in line: String
-    ) -> (character: Character, count: Int, language: String?)? {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        guard let character = trimmed.first,
-              character == "`" || character == "~"
-        else {
-            return nil
-        }
-        let count = trimmed.prefix { $0 == character }.count
-        guard count >= 3 else { return nil }
-        let info = trimmed.dropFirst(count)
-            .trimmingCharacters(in: .whitespaces)
-        return (character, count, info.isEmpty ? nil : info)
-    }
-
-    private func isClosingFence(
-        _ line: String,
-        opening: (character: Character, count: Int, language: String?)
-    ) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        let count = trimmed.prefix { $0 == opening.character }.count
-        return count >= opening.count
-            && trimmed.dropFirst(count)
-                .trimmingCharacters(in: .whitespaces)
-                .isEmpty
-    }
-
-    private func removeDangerousHTML(from markdown: String) -> String {
-        var result = markdown
-        let pairedPattern =
-            #"(?is)<\s*(script|iframe|object)\b[^>]*>.*?<\s*/\s*\1\s*>"#
-        let unclosedPattern =
-            #"(?is)<\s*(script|iframe|object)\b[^>]*>.*\z"#
-        let standalonePattern =
-            #"(?is)<\s*/?\s*(script|iframe|object)\b[^>]*?/?>"#
-
-        result = result.replacingMatches(pattern: pairedPattern, with: "")
-        result = result.replacingMatches(pattern: unclosedPattern, with: "")
-        return result.replacingMatches(pattern: standalonePattern, with: "")
-    }
-
     private func heading(from line: String) -> (level: Int, text: String)? {
         let hashes = line.prefix { $0 == "#" }
         guard (1...6).contains(hashes.count),
@@ -330,6 +259,20 @@ public struct READMEBlockParser: Sendable {
         return nil
     }
 
+    private func htmlImageCandidate(
+        from tag: String,
+        baseURL: URL?
+    ) -> RepositoryCoverCandidate? {
+        attribute("src", in: tag)
+            .flatMap { safeURL($0, baseURL: baseURL) }
+            .map {
+                RepositoryCoverCandidate(
+                    url: $0,
+                    alt: attribute("alt", in: tag) ?? ""
+                )
+            }
+    }
+
     private func image(
         from line: String,
         baseURL: URL?
@@ -345,31 +288,6 @@ public struct READMEBlockParser: Sendable {
             return RecognizedImage(candidate: candidate)
         }
 
-        let withoutImages = line.replacingMatches(
-            pattern: #"(?i)<img\b[^>]*>"#,
-            with: ""
-        )
-        let nonHTMLRemainder = withoutImages.replacingMatches(
-            pattern: #"(?is)<[^>]+>"#,
-            with: ""
-        )
-        .trimmingCharacters(in: .whitespaces)
-        if nonHTMLRemainder.isEmpty,
-           let match = line.firstMatch(
-            pattern: #"(?i)<img\b([^>]*)>"#,
-            captureCount: 1
-           ) {
-            let attributes = match[0]
-            let candidate = attribute("src", in: attributes)
-                .flatMap { safeURL($0, baseURL: baseURL) }
-                .map {
-                    RepositoryCoverCandidate(
-                        url: $0,
-                        alt: attribute("alt", in: attributes) ?? ""
-                    )
-                }
-            return RecognizedImage(candidate: candidate)
-        }
         return nil
     }
 
@@ -455,23 +373,11 @@ public struct READMEBlockParser: Sendable {
     }
 
     private func safeExternalURL(_ value: String) -> URL? {
-        guard let url = URL(string: value),
-              ["http", "https"].contains(url.scheme?.lowercased()),
-              url.host != nil
-        else {
-            return nil
-        }
-        return url
+        READMEURLPolicy.resolvedRemoteURL(value, baseURL: nil)
     }
 
     private func safeURL(_ value: String, baseURL: URL?) -> URL? {
-        guard let url = URL(string: value, relativeTo: baseURL)?.absoluteURL,
-              ["http", "https"].contains(url.scheme?.lowercased()),
-              url.host != nil
-        else {
-            return nil
-        }
-        return url
+        READMEURLPolicy.resolvedRemoteURL(value, baseURL: baseURL)
     }
 
     private func plainText(for block: READMEBlock) -> String? {
@@ -495,11 +401,6 @@ public struct READMEBlockParser: Sendable {
             nil
         }
     }
-}
-
-private struct CodeBlock {
-    let language: String?
-    let value: String
 }
 
 private struct InlineResult {

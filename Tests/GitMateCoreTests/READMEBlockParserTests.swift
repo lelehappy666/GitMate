@@ -208,5 +208,130 @@ let readmeBlockParserTests = [
             "多行和单行 HTML 包裹都不得阻止安全 img 解析"
         )
         try expect(!document.plainText.contains("onerror"), "事件属性不得进入纯文本")
+    },
+    TestCase("多行和未闭合 HTML 注释屏蔽内部 Markdown") {
+        let closed = READMEBlockParser().parse("""
+        注释前
+        <!--
+        ![伪图片](https://example.com/comment.png)
+        [伪链接](https://inside.example)
+        -->
+        注释后 [外链](https://outside.example)
+        """)
+        let unclosed = READMEBlockParser().parse("""
+        保留
+        <!-- 未闭合
+        ![伪图片](https://example.com/unclosed.png)
+        [伪链接](https://unclosed.example)
+        不得保留
+        """)
+
+        try expectEqual(
+            closed.links.map(\.url.absoluteString),
+            ["https://outside.example"],
+            "多行注释中的链接不得参与解析"
+        )
+        try expectEqual(
+            closed.plainText,
+            "注释前\n注释后 外链",
+            "多行注释及内部 Markdown 必须完全移除"
+        )
+        try expectEqual(unclosed.plainText, "保留", "未闭合注释必须屏蔽到 EOF")
+        try expect(
+            !closed.blocks.contains {
+                guard case .image = $0 else { return false }
+                return true
+            },
+            "多行注释中的图片不得生成图片块"
+        )
+    },
+    TestCase("跨行危险容器及未闭合对象屏蔽到匹配结束或 EOF") {
+        let document = READMEBlockParser().parse("""
+        开始
+        <ScRiPt
+          type="text/javascript">
+        [脚本链接](https://script.example)
+        ![脚本图片](https://example.com/script.png)
+        </sCrIpT>
+        中间
+        <object
+          data="https://example.com/object">
+        对象内部
+        结束前不得出现
+        """)
+
+        try expectEqual(
+            document.plainText,
+            "开始\n中间",
+            "跨行 script 与未闭合 object 必须连内部内容删除"
+        )
+        try expectEqual(document.links, [], "危险容器内不得提取链接")
+    },
+    TestCase("跨行普通标签被缓冲且跨行 img 只提取白名单属性") {
+        let document = READMEBlockParser().parse(
+            """
+            <p
+              onclick="evil()"
+              class="hero">
+            <img
+              src="assets/hero.png"
+              alt="跨行封面"
+              width="900"
+              height="600"
+              onerror="steal()"
+            >
+            </p>
+            """,
+            baseURL: URL(string: "https://example.com/docs/README.md")!
+        )
+
+        try expectEqual(
+            document.blocks,
+            [
+                .image(
+                    url: URL(string: "https://example.com/docs/assets/hero.png")!,
+                    alt: "跨行封面"
+                )
+            ],
+            "跨行 img 应形成单一安全图片块"
+        )
+        try expectEqual(
+            document.plainText,
+            "跨行封面",
+            "普通 HTML 与事件属性不得成为段落或纯文本"
+        )
+    },
+    TestCase("围栏代码内未闭合 HTML 状态不影响围栏外解析") {
+        let document = READMEBlockParser().parse("""
+        ```html
+        <!--
+        <script>
+        [示例](https://inside.example)
+        ![示例](https://inside.example/image.png)
+        ```
+        围栏外 [安全](https://outside.example)
+        """)
+
+        try expectEqual(
+            document.links.map(\.url.absoluteString),
+            ["https://outside.example"],
+            "围栏代码内部不得改变 sanitizer 状态或产生链接"
+        )
+        let code = document.blocks.compactMap { block -> String? in
+            guard case let .code(_, value) = block else { return nil }
+            return value
+        }
+        try expectEqual(
+            code,
+            [
+                """
+                <!--
+                <script>
+                [示例](https://inside.example)
+                ![示例](https://inside.example/image.png)
+                """
+            ],
+            "围栏代码必须原样保留"
+        )
     }
 ]

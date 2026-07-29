@@ -65,6 +65,45 @@ let repositoryCoverExtractorTests = [
             "代码与危险容器中的图片不得参与封面筛选"
         )
     },
+    TestCase("封面忽略多行及未闭合 HTML 状态中的图片") {
+        let closedStates = """
+        <!--
+        ![注释图片](https://example.com/comment.png)
+        -->
+        <script
+          type="text/javascript">
+        ![脚本图片](https://example.com/script.png)
+        </script>
+        <img
+          src="https://example.com/hero.png"
+          alt="真实封面"
+          width="900"
+          height="600"
+        >
+        """
+        let unclosedComment = """
+        <!--
+        ![注释图片](https://example.com/comment.png)
+        ![尾部图片](https://example.com/after.png)
+        """
+
+        try expectEqual(
+            RepositoryCoverExtractor().firstCandidate(
+                markdown: closedStates,
+                baseURL: nil
+            )?.url.absoluteString,
+            "https://example.com/hero.png",
+            "跨行 HTML 状态只允许完整 img 进入候选"
+        )
+        try expectEqual(
+            RepositoryCoverExtractor().firstCandidate(
+                markdown: unclosedComment,
+                baseURL: nil
+            ),
+            nil,
+            "未闭合注释必须屏蔽到 EOF"
+        )
+    },
     TestCase("封面拒绝危险协议并解析相对 HTML 图片尺寸") {
         let markdown = """
         ![数据](data:image/png;base64,AAAA)
@@ -89,6 +128,86 @@ let repositoryCoverExtractorTests = [
                 declaredHeight: 600
             ),
             "相对 HTML 图片应安全解析并保留声明尺寸"
+        )
+    },
+    TestCase("封面按全局源码顺序处理 HTML 与 Markdown 图片") {
+        let markdown = """
+        <img src="https://example.com/first-html.png" width="900" height="600"> ![后出现](https://example.com/second-markdown.png)
+        """
+
+        try expectEqual(
+            RepositoryCoverExtractor().firstCandidate(
+                markdown: markdown,
+                baseURL: nil
+            )?.url.absoluteString,
+            "https://example.com/first-html.png",
+            "HTML 先出现时不得被同一行较后的 Markdown 图片抢占"
+        )
+    },
+    TestCase("同一行首张图片被拒后继续选择后续有效候选") {
+        let html = """
+        <img src="https://example.com/icon.png" width="32"><img src="https://example.com/valid-html.png" width="900" height="600">
+        """
+        let markdown = """
+        ![徽章](https://img.shields.io/build/hero.png) ![有效截图](https://example.com/valid-markdown.png)
+        """
+
+        try expectEqual(
+            RepositoryCoverExtractor().firstCandidate(
+                markdown: html,
+                baseURL: nil
+            )?.url.absoluteString,
+            "https://example.com/valid-html.png",
+            "小 HTML 图片不得阻止同一行后续有效图片"
+        )
+        try expectEqual(
+            RepositoryCoverExtractor().firstCandidate(
+                markdown: markdown,
+                baseURL: nil
+            )?.url.absoluteString,
+            "https://example.com/valid-markdown.png",
+            "受阻 Markdown 图片不得阻止同一行后续有效图片"
+        )
+    },
+    TestCase("多个 Markdown 图片严格按源码顺序筛选") {
+        let markdown = """
+        ![状态](https://example.com/status.png) ![图标](https://example.com/icon.png) ![界面](https://example.com/screens/dashboard.png)
+        """
+
+        try expectEqual(
+            RepositoryCoverExtractor().firstCandidate(
+                markdown: markdown,
+                baseURL: nil
+            )?.url.absoluteString,
+            "https://example.com/screens/dashboard.png",
+            "应遍历全部 Markdown 图片直至首个有效候选"
+        )
+    },
+    TestCase("封面拒绝显式无主机 URL 与尾点受阻主机") {
+        let schemeRelative = """
+        ![伪绝对地址](https:relative.png)
+        ![有效](https://example.com/valid.png)
+        """
+        let trailingDotHost = """
+        ![尾点徽章](https://img.shields.io./assets/hero.png)
+        ![有效](https://example.com/valid.png)
+        """
+
+        try expectEqual(
+            RepositoryCoverExtractor().firstCandidate(
+                markdown: schemeRelative,
+                baseURL: URL(string: "https://base.example/README.md")
+            )?.url.absoluteString,
+            "https://example.com/valid.png",
+            "显式 http/https scheme 必须同时具有非空 host"
+        )
+        try expectEqual(
+            RepositoryCoverExtractor().firstCandidate(
+                markdown: trailingDotHost,
+                baseURL: nil
+            )?.url.absoluteString,
+            "https://example.com/valid.png",
+            "主机比较前必须去除全部尾随点"
         )
     },
     TestCase("封面缓存真实保存读取原始数据和元数据") {
@@ -144,37 +263,214 @@ let repositoryCoverExtractorTests = [
             sourceURL: sourceURL
         )
 
-        let coverDirectory = rootDirectory
+        let repositoryDirectory = rootDirectory
             .appending(path: "Covers", directoryHint: .isDirectory)
             .appending(path: "-42", directoryHint: .isDirectory)
-        let files = try FileManager.default.contentsOfDirectory(
-            at: coverDirectory,
+        let entryRoot = repositoryDirectory.appending(
+            path: "9ac59277863bddd8926033d35c89c416657b7b5fd15c55aa8c65d925ee63140e",
+            directoryHint: .isDirectory
+        )
+        let repositoryEntries = try FileManager.default.contentsOfDirectory(
+            at: repositoryDirectory,
             includingPropertiesForKeys: nil
         )
-        try expectEqual(files.count, 2, "相同 URL 重写后只能保留数据和元数据两个稳定文件")
         try expectEqual(
-            files.map(\.lastPathComponent).sorted(),
+            repositoryEntries.map(\.lastPathComponent),
             [
-                "9ac59277863bddd8926033d35c89c416657b7b5fd15c55aa8c65d925ee63140e",
-                "9ac59277863bddd8926033d35c89c416657b7b5fd15c55aa8c65d925ee63140e.json"
+                "9ac59277863bddd8926033d35c89c416657b7b5fd15c55aa8c65d925ee63140e"
             ],
-            "缓存文件名必须使用确定性 SHA-256，不能使用 hashValue"
+            "sourceURL 必须只形成确定性 SHA-256 entryRoot"
+        )
+        let files = try FileManager.default.contentsOfDirectory(
+            at: entryRoot,
+            includingPropertiesForKeys: nil
+        )
+        try expectEqual(
+            files.filter { $0.pathExtension == "data" }.count,
+            2,
+            "每次保存应写入独立 generation 数据文件"
+        )
+        try expectEqual(
+            files.filter { $0.pathExtension == "json" }.count,
+            2,
+            "每次保存应写入独立 generation 元数据文件"
+        )
+        try expectEqual(
+            files.filter { $0.lastPathComponent == "current" }.count,
+            1,
+            "只能通过单一 current 指针发布 generation"
         )
         try expect(
             files.allSatisfy {
                 $0.standardizedFileURL.path.hasPrefix(
-                    coverDirectory.standardizedFileURL.path + "/"
+                    entryRoot.standardizedFileURL.path + "/"
                 )
             },
             "缓存文件不得逃出仓库目录"
         )
-        let metadataURL = try files.first { $0.pathExtension == "json" }
-            .unwrap("应生成元数据文件")
-        let storedMetadata = try String(contentsOf: metadataURL, encoding: .utf8)
+        for metadataURL in files where metadataURL.pathExtension == "json" {
+            let storedMetadata = try String(
+                contentsOf: metadataURL,
+                encoding: .utf8
+            )
+            try expect(
+                !storedMetadata.contains("secret")
+                    && !storedMetadata.contains("top-secret"),
+                "缓存元数据不得保存 URL 凭据或 Token"
+            )
+        }
+    },
+    TestCase("两个缓存实例并发保存不会混配数据与元数据") {
+        let rootDirectory = temporaryCoverDirectory()
+        defer { try? FileManager.default.removeItem(at: rootDirectory) }
+        let sourceURL = URL(string: "https://example.com/concurrent.png")!
+        let firstMetadata = RepositoryCoverCacheMetadata(
+            contentType: "image/first",
+            storedAt: Date(timeIntervalSince1970: 100),
+            pixelWidth: 1_000,
+            pixelHeight: 600
+        )
+        let secondMetadata = RepositoryCoverCacheMetadata(
+            contentType: "image/second",
+            storedAt: Date(timeIntervalSince1970: 200),
+            pixelWidth: 2_000,
+            pixelHeight: 1_200
+        )
+        let firstData = Data(repeating: 0x11, count: 256 * 1_024)
+        let secondData = Data(repeating: 0x22, count: 256 * 1_024)
+        let firstCache = RepositoryCoverCache(rootDirectory: rootDirectory)
+        let secondCache = RepositoryCoverCache(rootDirectory: rootDirectory)
+
+        async let firstSave: Void = firstCache.save(
+            data: firstData,
+            metadata: firstMetadata,
+            repositoryID: 77,
+            sourceURL: sourceURL
+        )
+        async let secondSave: Void = secondCache.save(
+            data: secondData,
+            metadata: secondMetadata,
+            repositoryID: 77,
+            sourceURL: sourceURL
+        )
+        _ = try await (firstSave, secondSave)
+
+        let loaded = try RepositoryCoverCache(
+            rootDirectory: rootDirectory
+        ).load(repositoryID: 77, sourceURL: sourceURL)
+        let isFirstPair = loaded
+            == RepositoryCoverCacheEntry(
+                data: firstData,
+                metadata: firstMetadata
+            )
+        let isSecondPair = loaded
+            == RepositoryCoverCacheEntry(
+                data: secondData,
+                metadata: secondMetadata
+            )
         try expect(
-            !storedMetadata.contains("secret")
-                && !storedMetadata.contains("top-secret"),
-            "缓存元数据不得保存 URL 凭据或 Token"
+            isFirstPair || isSecondPair,
+            "并发保存后只能读取任一完整 generation pair"
+        )
+        let entryRoot = try coverEntryRoot(
+            rootDirectory: rootDirectory,
+            repositoryID: 77
+        )
+        try expect(
+            FileManager.default.fileExists(
+                atPath: entryRoot.appending(path: "current").path
+            ),
+            "并发保存必须通过 current 指针发布"
+        )
+    },
+    TestCase("缓存只读取 current 指向且 generation 匹配的完整文件对") {
+        let rootDirectory = temporaryCoverDirectory()
+        defer { try? FileManager.default.removeItem(at: rootDirectory) }
+        let cache = RepositoryCoverCache(rootDirectory: rootDirectory)
+        let sourceURL = URL(string: "https://example.com/pointer.png")!
+        let metadata = RepositoryCoverCacheMetadata(
+            contentType: "image/png",
+            storedAt: Date(timeIntervalSince1970: 300),
+            pixelWidth: 900,
+            pixelHeight: 600
+        )
+        let publishedData = Data([1, 2, 3])
+        try cache.save(
+            data: publishedData,
+            metadata: metadata,
+            repositoryID: 88,
+            sourceURL: sourceURL
+        )
+        let entryRoot = try coverEntryRoot(
+            rootDirectory: rootDirectory,
+            repositoryID: 88
+        )
+        let currentURL = entryRoot.appending(path: "current")
+        let publishedGeneration = try String(
+            contentsOf: currentURL,
+            encoding: .utf8
+        )
+        let publishedMetadataURL = entryRoot.appending(
+            path: "\(publishedGeneration).json"
+        )
+
+        let unpublishedGeneration = UUID().uuidString
+        try Data([9, 9, 9]).write(
+            to: entryRoot.appending(
+                path: "\(unpublishedGeneration).data"
+            ),
+            options: .atomic
+        )
+        let stillPublished = try cache.load(
+            repositoryID: 88,
+            sourceURL: sourceURL
+        )
+        try expectEqual(
+            stillPublished?.data,
+            publishedData,
+            "未发布 generation 不得影响 current 指向的缓存"
+        )
+
+        let missingGeneration = UUID().uuidString
+        try Data(missingGeneration.utf8).write(
+            to: currentURL,
+            options: .atomic
+        )
+        let missingEntry = try cache.load(
+            repositoryID: 88,
+            sourceURL: sourceURL
+        )
+        try expectEqual(
+            missingEntry,
+            nil,
+            "current 指向缺文件 generation 时必须返回 nil"
+        )
+
+        let mismatchedGeneration = UUID().uuidString
+        try Data([7, 7]).write(
+            to: entryRoot.appending(
+                path: "\(mismatchedGeneration).data"
+            ),
+            options: .atomic
+        )
+        try FileManager.default.copyItem(
+            at: publishedMetadataURL,
+            to: entryRoot.appending(
+                path: "\(mismatchedGeneration).json"
+            )
+        )
+        try Data(mismatchedGeneration.utf8).write(
+            to: currentURL,
+            options: .atomic
+        )
+        let mismatchedEntry = try cache.load(
+            repositoryID: 88,
+            sourceURL: sourceURL
+        )
+        try expectEqual(
+            mismatchedEntry,
+            nil,
+            "元数据 generation 与 current 不匹配时必须返回 nil"
         )
     },
     TestCase("清理封面缓存只删除目标仓库目录") {
@@ -260,6 +556,26 @@ private func temporaryCoverDirectory() -> URL {
             path: "GitMateCoverTests-\(UUID().uuidString)",
             directoryHint: .isDirectory
         )
+}
+
+private func coverEntryRoot(
+    rootDirectory: URL,
+    repositoryID: Int64
+) throws -> URL {
+    let repositoryDirectory = rootDirectory
+        .appending(path: "Covers", directoryHint: .isDirectory)
+        .appending(
+            path: String(repositoryID),
+            directoryHint: .isDirectory
+        )
+    let entries = try FileManager.default.contentsOfDirectory(
+        at: repositoryDirectory,
+        includingPropertiesForKeys: nil
+    )
+    guard entries.count == 1, let entryRoot = entries.first else {
+        throw TestFailure(description: "仓库缓存目录应只有一个稳定 entryRoot")
+    }
+    return entryRoot
 }
 
 private extension Optional {

@@ -74,21 +74,36 @@ public final class RepositoryCoverCache: RepositoryCoverCaching, @unchecked Send
         lock.lock()
         defer { lock.unlock() }
 
-        let urls = try cacheURLs(
+        let entryRoot = try cacheEntryRoot(
             repositoryID: repositoryID,
             sourceURL: sourceURL
         )
-        guard fileManager.fileExists(atPath: urls.data.path),
-              fileManager.fileExists(atPath: urls.metadata.path)
+        let currentURL = entryRoot.appending(path: "current")
+        guard fileManager.fileExists(atPath: currentURL.path),
+              let generation = try? String(
+                contentsOf: currentURL,
+                encoding: .utf8
+              ),
+              UUID(uuidString: generation) != nil
+        else {
+            return nil
+        }
+        let dataURL = entryRoot.appending(path: "\(generation).data")
+        let metadataURL = entryRoot.appending(path: "\(generation).json")
+        guard fileManager.fileExists(atPath: dataURL.path),
+              fileManager.fileExists(atPath: metadataURL.path),
+              let data = try? Data(contentsOf: dataURL),
+              let storedMetadata = try? JSONDecoder().decode(
+                StoredCoverMetadata.self,
+                from: Data(contentsOf: metadataURL)
+              ),
+              storedMetadata.generation == generation
         else {
             return nil
         }
         return RepositoryCoverCacheEntry(
-            data: try Data(contentsOf: urls.data),
-            metadata: try JSONDecoder().decode(
-                RepositoryCoverCacheMetadata.self,
-                from: Data(contentsOf: urls.metadata)
-            )
+            data: data,
+            metadata: storedMetadata.metadata
         )
     }
 
@@ -101,17 +116,30 @@ public final class RepositoryCoverCache: RepositoryCoverCaching, @unchecked Send
         lock.lock()
         defer { lock.unlock() }
 
-        let urls = try cacheURLs(
+        let entryRoot = try cacheEntryRoot(
             repositoryID: repositoryID,
             sourceURL: sourceURL
         )
         try fileManager.createDirectory(
-            at: urls.data.deletingLastPathComponent(),
+            at: entryRoot,
             withIntermediateDirectories: true
         )
-        try data.write(to: urls.data, options: .atomic)
-        try JSONEncoder().encode(metadata).write(
-            to: urls.metadata,
+        let generation = UUID().uuidString
+        try data.write(
+            to: entryRoot.appending(path: "\(generation).data"),
+            options: .atomic
+        )
+        try JSONEncoder().encode(
+            StoredCoverMetadata(
+                generation: generation,
+                metadata: metadata
+            )
+        ).write(
+            to: entryRoot.appending(path: "\(generation).json"),
+            options: .atomic
+        )
+        try Data(generation.utf8).write(
+            to: entryRoot.appending(path: "current"),
             options: .atomic
         )
     }
@@ -125,21 +153,20 @@ public final class RepositoryCoverCache: RepositoryCoverCaching, @unchecked Send
         try fileManager.removeItem(at: directory)
     }
 
-    private func cacheURLs(
+    private func cacheEntryRoot(
         repositoryID: Int64,
         sourceURL: URL
-    ) throws -> (data: URL, metadata: URL) {
-        guard ["http", "https"].contains(sourceURL.scheme?.lowercased()),
-              sourceURL.host != nil
+    ) throws -> URL {
+        guard READMEURLPolicy.resolvedRemoteURL(
+            sourceURL.absoluteString,
+            baseURL: nil
+        ) != nil
         else {
             throw RepositoryCoverCacheError.invalidSourceURL
         }
         let hash = stableHash(sourceURL.absoluteString)
-        let dataURL = repositoryDirectory(repositoryID).appending(path: hash)
-        return (
-            dataURL,
-            dataURL.appendingPathExtension("json")
-        )
+        return repositoryDirectory(repositoryID)
+            .appending(path: hash, directoryHint: .isDirectory)
     }
 
     private func repositoryDirectory(_ repositoryID: Int64) -> URL {
@@ -150,6 +177,11 @@ public final class RepositoryCoverCache: RepositoryCoverCaching, @unchecked Send
                 directoryHint: .isDirectory
             )
     }
+}
+
+private struct StoredCoverMetadata: Codable {
+    let generation: String
+    let metadata: RepositoryCoverCacheMetadata
 }
 
 public struct FallbackRepositoryCover: Equatable, Codable, Sendable {

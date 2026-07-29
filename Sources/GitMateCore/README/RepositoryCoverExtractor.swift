@@ -14,83 +14,94 @@ public struct RepositoryCoverExtractor: Sendable {
         markdown: String,
         baseURL: URL?
     ) -> RepositoryCoverCandidate? {
-        let safeMarkdown = markdownForExtraction(from: markdown)
-        for line in safeMarkdown.components(separatedBy: .newlines) {
-            if let candidate = markdownCandidate(from: line, baseURL: baseURL),
-               isAllowed(candidate) {
-                return candidate
+        let sanitized = READMEHTMLSanitizer().sanitize(markdown)
+        for source in candidateSources(in: sanitized) {
+            let candidate: RepositoryCoverCandidate?
+            switch source.value {
+            case let .markdown(alt, destination):
+                candidate = markdownCandidate(
+                    alt: alt,
+                    destination: destination,
+                    baseURL: baseURL
+                )
+            case let .html(tag):
+                candidate = htmlCandidate(from: tag, baseURL: baseURL)
             }
-            if let candidate = htmlCandidate(from: line, baseURL: baseURL),
-               isAllowed(candidate) {
+            if let candidate, isAllowed(candidate) {
                 return candidate
             }
         }
         return nil
     }
 
-    private func markdownForExtraction(from markdown: String) -> String {
-        let lines = markdown.components(separatedBy: .newlines)
-        var safeLines: [String] = []
-        var fence: (character: Character, count: Int)?
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if let currentFence = fence {
-                let count = trimmed.prefix {
-                    $0 == currentFence.character
-                }.count
-                if count >= currentFence.count,
-                   trimmed.dropFirst(count)
-                    .trimmingCharacters(in: .whitespaces)
-                    .isEmpty {
-                    fence = nil
-                }
-                continue
-            }
-
-            if let character = trimmed.first,
-               character == "`" || character == "~" {
-                let count = trimmed.prefix { $0 == character }.count
-                if count >= 3 {
-                    fence = (character, count)
+    private func candidateSources(
+        in sanitized: READMESanitizedContent
+    ) -> [LocatedCoverSource] {
+        var sources: [LocatedCoverSource] = []
+        if let expression = try? NSRegularExpression(
+            pattern: #"!\[([^\]]*)\]\(\s*(<[^>\n]+>|[^\s)]+)(?:\s+[^)]*)?\s*\)"#
+        ) {
+            let range = NSRange(
+                sanitized.markdown.startIndex..<sanitized.markdown.endIndex,
+                in: sanitized.markdown
+            )
+            for match in expression.matches(
+                in: sanitized.markdown,
+                range: range
+            ) {
+                guard let altRange = Range(
+                    match.range(at: 1),
+                    in: sanitized.markdown
+                ),
+                let destinationRange = Range(
+                    match.range(at: 2),
+                    in: sanitized.markdown
+                ) else {
                     continue
                 }
+                sources.append(
+                    LocatedCoverSource(
+                        location: match.range.location,
+                        value: .markdown(
+                            alt: String(sanitized.markdown[altRange]),
+                            destination: String(
+                                sanitized.markdown[destinationRange]
+                            )
+                        )
+                    )
+                )
             }
-            safeLines.append(line)
         }
 
-        var result = safeLines.joined(separator: "\n")
-        result = result.replacingMatches(
-            pattern: #"(?is)<!--.*?-->"#,
-            with: ""
-        )
-        result = result.replacingMatches(
-            pattern: #"(?is)<\s*(script|iframe|object)\b[^>]*>.*?<\s*/\s*\1\s*>"#,
-            with: ""
-        )
-        result = result.replacingMatches(
-            pattern: #"(?is)<\s*(script|iframe|object)\b[^>]*>.*\z"#,
-            with: ""
-        )
-        return result.replacingMatches(
-            pattern: #"(?is)<\s*/?\s*(script|iframe|object)\b[^>]*?/?>"#,
-            with: ""
-        )
+        for (placeholder, tag) in sanitized.htmlImages {
+            guard let range = sanitized.markdown.range(of: placeholder) else {
+                continue
+            }
+            sources.append(
+                LocatedCoverSource(
+                    location: NSRange(range, in: sanitized.markdown).location,
+                    value: .html(tag: tag)
+                )
+            )
+        }
+        return sources.sorted { $0.location < $1.location }
     }
 
     private func markdownCandidate(
-        from line: String,
+        alt: String,
+        destination: String,
         baseURL: URL?
     ) -> RepositoryCoverCandidate? {
-        guard let match = line.firstMatch(
-            pattern: #"!\[([^\]]*)\]\(([^)\s]+)"#,
-            captureCount: 2
-        ),
-        let url = resolvedURL(match[1], baseURL: baseURL)
-        else {
+        var destination = destination
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if destination.hasPrefix("<"), destination.hasSuffix(">") {
+            destination.removeFirst()
+            destination.removeLast()
+        }
+        guard let url = resolvedURL(destination, baseURL: baseURL) else {
             return nil
         }
-        return RepositoryCoverCandidate(url: url, alt: match[0])
+        return RepositoryCoverCandidate(url: url, alt: alt)
     }
 
     private func htmlCandidate(
@@ -139,17 +150,13 @@ public struct RepositoryCoverExtractor: Sendable {
     }
 
     private func resolvedURL(_ value: String, baseURL: URL?) -> URL? {
-        let url = URL(string: value, relativeTo: baseURL)?.absoluteURL
-        guard let url,
-              ["http", "https"].contains(url.scheme?.lowercased())
-        else {
-            return nil
-        }
-        return url
+        READMEURLPolicy.resolvedRemoteURL(value, baseURL: baseURL)
     }
 
     private func isAllowed(_ candidate: RepositoryCoverCandidate) -> Bool {
-        let host = candidate.url.host?.lowercased() ?? ""
+        guard let host = READMEURLPolicy.normalizedHost(candidate.url) else {
+            return false
+        }
         guard !blockedHosts.contains(where: {
             host == $0 || host.hasSuffix(".\($0)")
         }) else {
@@ -168,19 +175,17 @@ public struct RepositoryCoverExtractor: Sendable {
     }
 }
 
-private extension String {
-    func replacingMatches(pattern: String, with replacement: String) -> String {
-        guard let expression = try? NSRegularExpression(pattern: pattern) else {
-            return self
-        }
-        let range = NSRange(startIndex..<endIndex, in: self)
-        return expression.stringByReplacingMatches(
-            in: self,
-            range: range,
-            withTemplate: replacement
-        )
-    }
+private struct LocatedCoverSource {
+    let location: Int
+    let value: CoverSource
+}
 
+private enum CoverSource {
+    case markdown(alt: String, destination: String)
+    case html(tag: String)
+}
+
+private extension String {
     func firstMatch(
         pattern: String,
         captureCount: Int,
