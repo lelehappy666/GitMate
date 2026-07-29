@@ -159,3 +159,104 @@ Build complete!
 
 - SwiftPM 在沙箱内提示用户级配置与缓存目录不可写，并禁用用户缓存；测试与编译退出码均为 0，不影响功能。
 - 无未解决的功能或安全 concern。
+
+---
+
+## 正式审查修复 Round 1
+
+### 覆盖测试文件
+
+- `Tests/GitMateCoreTests/LocalGitReaderTests.swift`
+  - type-2 重命名后的三个原路径分别以 `? `、`u `、`1 ` 开头，均不得再次计数或解析。
+  - 真实临时 Git 仓库的提交消息包含合法 `0x1f` 与 `0x1e`，详情必须逐字节保留，差异仍须正常解析。
+  - 详情与差异分别验证两条新的只读 `show` 参数契约。
+  - fake 参数不匹配后，正确调用仍获得原预置结果；`verifyComplete()` 继续报告历史契约失败。
+- `Tests/GitMateCoreTests/RepositorySyncServiceTests.swift`
+  - String stdout 与 String stderr 的 URL userinfo 均跨两个 chunk，完整行缓冲后才允许脱敏上报。
+
+### RED 证据
+
+命令：
+
+```text
+CLANG_MODULE_CACHE_PATH=.build/clang-module-cache \
+SWIFT_MODULECACHE_PATH=.build/swift-module-cache \
+swift run --disable-sandbox GitMateCoreTestsRunner
+```
+
+初始结果：79 个测试，失败 6 个，退出码 1。
+
+具体失败：
+
+1. String stderr 分片实际提前上报 `remote: https://private-`。
+2. String stdout 分片实际提前上报 `remote: https://private-`。
+3. type-2 的 `1 old-ordinary.swift` 被当作独立状态记录并抛 `malformedStatus`。
+4. 详情调用仍执行旧的含 `%B` US/RS 格式，与新 NUL 契约不匹配。
+5. 真实提交消息在内部 `0x1e` 处被提前截断并抛 `malformedShow`。
+6. fake 参数不匹配后提前消费预期与结果，后续正确调用变成“未预期额外命令”。
+
+### 逐项 GREEN 证据
+
+1. String stdout/stderr 都编码为 UTF-8 Data 并进入对应 `GitActivityDataBuffer` 后：失败数由 6 降至 4，两项跨 chunk 脱敏测试通过。
+2. porcelain v2 改为索引遍历并明确消费 type-2 下一段原路径后：失败数由 4 降至 3，三个特殊前缀原路径均未误计。
+3. fake 仅在参数匹配时同时出队预期与结果，并持久记录所有契约失败后：失败数由 3 降至 2；正确调用复用了未消费结果，`verifyComplete()` 仍失败。
+4. 详情/差异拆为两条只读 show，并使用 NUL 固定边界后：79 个测试，失败 0 个。
+
+### 修复实现
+
+- `GitRepositorySyncService`
+  - `.standardOutput(String)` 与 `.standardError(String)` 不再直接上报。
+  - String 先转 UTF-8 Data，分别进入 stdout/stderr 缓冲；只在完整 CR/LF 行或流结束 flush 时解码、脱敏与节流。
+- `GitOutputParser.parseStatus`
+  - 使用索引遍历 NUL 记录。
+  - type-2 记录解析 XY 后强制存在并跳过下一段原路径；缺失原路径视为畸形输出。
+- `CommandLocalGitReader` 与 `GitOutputParser`
+  - commit detail：`show --no-patch --format=<NUL 固定字段，%B 最后> <hash>`。
+  - diff：`show --format=%H%x00 --numstat --patch <hash>`。
+  - Git 对象不能含 NUL，因此提交消息中的 `0x1e`、`0x1f`、换行与缩进都可无损保留。
+  - 两条命令均为只读 `show`，未增加写操作。
+- `FakeCommandExecutor`
+  - 参数不匹配、额外调用、缺少结果均持久记录。
+  - 仅参数匹配成功才移除期望调用并消费对应结果。
+  - `verifyComplete()` 优先报告历史契约失败，再检查剩余预期与结果。
+
+### Round 1 最终验证
+
+完整测试：
+
+```text
+完成 79 个测试，失败 0 个。
+退出码：0
+```
+
+完整编译：
+
+```text
+swift build --disable-sandbox
+Build complete!
+退出码：0
+```
+
+差异与安全扫描：
+
+- `git diff --check`：退出码 0。
+- LocalGit、ProcessCommandExecutor、CommandExecuting 中扫描 checkout/reset/cherry-pick/merge/rebase/fetch/clone/commit 命令字符串：仅命中 `type == "commit"` 的 Git tree 对象类型，不是命令。
+- 同范围扫描 `Authorization|Token|token`：无匹配。
+- 新增生产命令仅为两条 `show` 只读形态。
+
+### Round 1 变更文件
+
+- `Sources/GitMateCore/LocalGit/CommandLocalGitReader.swift`
+- `Sources/GitMateCore/LocalGit/GitOutputParser.swift`
+- `Sources/GitMateCore/Sync/GitRepositorySyncService.swift`
+- `Tests/GitMateCoreTests/LocalGitReaderTests.swift`
+- `Tests/GitMateCoreTests/RepositorySyncServiceTests.swift`
+- `Tests/GitMateCoreTests/Support/FakeCommandExecutor.swift`
+- `.superpowers/sdd/2026-07-29-全局与仓库页面10-15实施计划/task-3-report.md`
+
+### Round 1 自审与 Concerns
+
+- 四项正式审查发现均有先失败、后通过的行为回归。
+- production LocalGit 仍严格只读；测试夹具中的 commit 仅用于构造真实提交对象。
+- SwiftPM 用户级缓存不可写警告仍存在，不影响测试与编译退出码。
+- 无未解决的功能或安全 concern。

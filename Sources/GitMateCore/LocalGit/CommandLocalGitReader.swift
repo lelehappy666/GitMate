@@ -3,8 +3,9 @@ import Foundation
 public final class CommandLocalGitReader: LocalGitReading, @unchecked Sendable {
     private static let logFormat =
         "--format=%h%x1f%H%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%P%x1f%D%x1e"
-    private static let showFormat =
-        "--format=%h%x1f%H%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%P%x1f%D%x1f%B%x1f%G?%x1f%GS%x1e"
+    private static let detailFormat =
+        "--format=%h%x00%H%x00%s%x00%an%x00%ae%x00%aI%x00%P%x00%D%x00%G?%x00%GS%x00%B%x00"
+    private static let diffFormat = "--format=%H%x00"
 
     private let executor: any CommandExecuting
 
@@ -88,14 +89,32 @@ public final class CommandLocalGitReader: LocalGitReading, @unchecked Sendable {
         repositoryURL: URL,
         hash: String
     ) async throws -> GitCommitDetail {
-        try await readShow(repositoryURL: repositoryURL, hash: hash).detail
+        let repositoryPath = try validatedRepositoryPath(repositoryURL)
+        try validateRevision(hash)
+        let output = try decode(
+            await execute([
+                "-C", repositoryPath, "show", "--no-patch",
+                Self.detailFormat, hash
+            ]),
+            context: "提交详情"
+        )
+        return try GitOutputParser.parseCommitDetail(output)
     }
 
     public func diff(
         repositoryURL: URL,
         hash: String
     ) async throws -> GitDiff {
-        try await readShow(repositoryURL: repositoryURL, hash: hash).diff
+        let repositoryPath = try validatedRepositoryPath(repositoryURL)
+        try validateRevision(hash)
+        let output = try decode(
+            await execute([
+                "-C", repositoryPath, "show", Self.diffFormat,
+                "--numstat", "--patch", hash
+            ]),
+            context: "提交差异"
+        )
+        return try GitOutputParser.parseDiff(output)
     }
 
     public func graph(
@@ -137,22 +156,6 @@ public final class CommandLocalGitReader: LocalGitReading, @unchecked Sendable {
             ? String(offset + commits.count)
             : nil
         return (commits, nextCursor)
-    }
-
-    private func readShow(
-        repositoryURL: URL,
-        hash: String
-    ) async throws -> ParsedGitShow {
-        let repositoryPath = try validatedRepositoryPath(repositoryURL)
-        try validateRevision(hash)
-        let output = try decode(
-            await execute([
-                "-C", repositoryPath, "show", Self.showFormat,
-                "--numstat", "--patch", hash
-            ]),
-            context: "提交详情"
-        )
-        return try GitOutputParser.parseShow(output)
     }
 
     private func execute(_ arguments: [String]) async throws -> Data {

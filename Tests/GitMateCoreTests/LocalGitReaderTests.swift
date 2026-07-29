@@ -19,6 +19,25 @@ diff --git a/Sources/App.swift b/Sources/App.swift
 +new
 """
 
+private let commitDetailOutput = """
+a81c32f\u{0}a81c32ffull\u{0}修复同步索引\u{0}lele\u{0}lele@example.com\u{0}2026-07-29T10:00:00Z\u{0}8e1d04a\u{0}HEAD -> main\u{0}G\u{0}Lele Zhang\u{0}完整提交消息
+第二行\u{1f}\u{1e}
+\u{0}
+"""
+
+private let diffOutput = """
+a81c32ffull\u{0}
+
+2\t1\tSources/App.swift
+-\t-\tAssets/logo.png
+diff --git a/Sources/App.swift b/Sources/App.swift
+--- a/Sources/App.swift
++++ b/Sources/App.swift
+@@ -1 +1,2 @@
+ line
++new
+"""
+
 private func expectedInvocation(
     _ arguments: [String]
 ) -> FakeCommandExecutor.ExpectedInvocation {
@@ -118,7 +137,8 @@ private func makeRealGitFixture() throws -> RealGitFixture {
     try Data("line\n  前导新增\n\n结尾\n".utf8).write(
         to: repositoryURL.appending(path: "Patch.txt")
     )
-    let commitMessage = "无损提交\n\n正文第一行\n\n  缩进行\n"
+    let commitMessage =
+        "无损提交\n\n字段\u{1f}内容\n记录\u{1e}内容\n\n  缩进行\n"
     let messageURL = repositoryURL.appending(
         path: ".git/gitmate-test-message"
     )
@@ -267,6 +287,23 @@ let localGitReaderTests = [
         } catch is GitOutputParsingError {
             // 预期路径
         }
+    },
+    TestCase("type-2 重命名原路径不得被误计为状态记录") {
+        let output = [
+            "2 R. N... 100644 100644 100644 a1 b1 R100 first.swift",
+            "? old-untracked.swift",
+            "2 R. N... 100644 100644 100644 a2 b2 R100 second.swift",
+            "u old-conflict.swift",
+            "2 R. N... 100644 100644 100644 a3 b3 R100 third.swift",
+            "1 old-ordinary.swift"
+        ].joined(separator: "\u{0}") + "\u{0}"
+
+        let status = try GitOutputParser.parseStatus(output)
+
+        try expectEqual(status.stagedCount, 3, "只应统计三个 type-2 新路径记录")
+        try expectEqual(status.unstagedCount, 0, "原路径不得增加未暂存计数")
+        try expectEqual(status.untrackedCount, 0, "? 开头原路径不得计为未跟踪")
+        try expectEqual(status.conflictCount, 0, "u 开头原路径不得计为冲突")
     },
     TestCase("提交详情和差异按记录边界分离") {
         let parsed = try GitOutputParser.parseShow(showOutput)
@@ -494,17 +531,18 @@ let localGitReaderTests = [
     },
     TestCase("提交详情和差异只执行 show 白名单命令") {
         let executor = FakeCommandExecutor(results: [
-            .success([.standardOutput(showOutput)]),
-            .success([.standardOutput(showOutput)])
+            .success([.standardOutput(commitDetailOutput)]),
+            .success([.standardOutput(diffOutput)])
         ], expectedInvocations: [
             expectedInvocation([
                 "-C", "/tmp/gitmate-repository", "show",
-                "--format=%h%x1f%H%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%P%x1f%D%x1f%B%x1f%G?%x1f%GS%x1e",
-                "--numstat", "--patch", "a81c32f"
+                "--no-patch",
+                "--format=%h%x00%H%x00%s%x00%an%x00%ae%x00%aI%x00%P%x00%D%x00%G?%x00%GS%x00%B%x00",
+                "a81c32f"
             ]),
             expectedInvocation([
                 "-C", "/tmp/gitmate-repository", "show",
-                "--format=%h%x1f%H%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%P%x1f%D%x1f%B%x1f%G?%x1f%GS%x1e",
+                "--format=%H%x00",
                 "--numstat", "--patch", "a81c32f"
             ])
         ])
@@ -520,15 +558,21 @@ let localGitReaderTests = [
             hash: "a81c32f"
         )
 
-        let expectedArguments = [
+        let expectedDetailArguments = [
             "-C", "/tmp/gitmate-repository", "show",
-            "--format=%h%x1f%H%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%P%x1f%D%x1f%B%x1f%G?%x1f%GS%x1e",
+            "--no-patch",
+            "--format=%h%x00%H%x00%s%x00%an%x00%ae%x00%aI%x00%P%x00%D%x00%G?%x00%GS%x00%B%x00",
+            "a81c32f"
+        ]
+        let expectedDiffArguments = [
+            "-C", "/tmp/gitmate-repository", "show",
+            "--format=%H%x00",
             "--numstat", "--patch", "a81c32f"
         ]
         try expectEqual(
             executor.commands,
-            [expectedArguments, expectedArguments],
-            "详情与差异只能执行相同的只读 show 形态"
+            [expectedDetailArguments, expectedDiffArguments],
+            "详情与差异应分别执行无损的只读 show 形态"
         )
         try expectEqual(detail.commit.shortHash, "a81c32f", "应返回真实提交详情")
         try expectEqual(diff.commitHash, "a81c32ffull", "差异应关联完整提交哈希")
@@ -752,7 +796,14 @@ let localGitReaderTests = [
         } catch {
             // 预期路径
         }
-        try executor.verifyComplete()
+        do {
+            try executor.verifyComplete()
+            throw TestFailure(description: "额外调用的契约失败必须持续报告")
+        } catch is TestFailure {
+            throw TestFailure(description: "verifyComplete 未报告额外调用")
+        } catch {
+            // 预期路径
+        }
     },
     TestCase("命令 fake 报告未消费的预期调用和结果") {
         let executor = FakeCommandExecutor(
@@ -770,6 +821,44 @@ let localGitReaderTests = [
             throw TestFailure(description: "剩余预期必须被 fake 报告")
         } catch is TestFailure {
             throw TestFailure(description: "fake 未报告剩余预期")
+        } catch {
+            // 预期路径
+        }
+    },
+    TestCase("命令 fake 参数不匹配后保留预期结果并持续报告失败") {
+        let output = "# branch.head main\u{0}"
+        let expectedArguments = [
+            "-C", "/tmp/gitmate-repository", "status",
+            "--porcelain=v2", "--branch", "-z"
+        ]
+        let executor = FakeCommandExecutor(
+            results: [.success([.standardOutput(output)])],
+            expectedInvocations: [expectedInvocation(expectedArguments)]
+        )
+
+        do {
+            for try await _ in executor.execute(
+                arguments: ["错误命令"],
+                environment: [:]
+            ) {}
+            throw TestFailure(description: "参数不匹配必须立即失败")
+        } catch is TestFailure {
+            throw TestFailure(description: "参数不匹配未被 fake 拒绝")
+        } catch {
+            // 预期路径
+        }
+
+        let reader = CommandLocalGitReader(executor: executor)
+        let status = try await reader.status(
+            repositoryURL: URL(fileURLWithPath: "/tmp/gitmate-repository")
+        )
+        try expectEqual(status.branch, "main", "不匹配调用不得消费正确结果")
+
+        do {
+            try executor.verifyComplete()
+            throw TestFailure(description: "历史契约失败必须持续报告")
+        } catch is TestFailure {
+            throw TestFailure(description: "verifyComplete 未报告历史契约失败")
         } catch {
             // 预期路径
         }

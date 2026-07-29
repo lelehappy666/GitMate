@@ -204,8 +204,14 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
             ) {
                 try Task.checkCancellation()
                 switch output {
-                case let .standardOutput(text), let .standardError(text):
-                    reportActivities([text])
+                case let .standardOutput(text):
+                    reportActivities(
+                        standardOutputBuffer.consume(Data(text.utf8))
+                    )
+                case let .standardError(text):
+                    reportActivities(
+                        standardErrorBuffer.consume(Data(text.utf8))
+                    )
                 case let .standardOutputData(data):
                     reportActivities(standardOutputBuffer.consume(data))
                 case let .standardErrorData(data):

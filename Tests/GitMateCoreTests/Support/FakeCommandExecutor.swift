@@ -15,6 +15,7 @@ final class FakeCommandExecutor: CommandExecuting, @unchecked Sendable {
     private let lock = NSLock()
     private var queuedResults: [Result]
     private var expectedInvocations: [ExpectedInvocation]
+    private var contractFailures: [String] = []
     private let validatesInvocations: Bool
     private var recordedCommands: [[String]] = []
     private var recordedEnvironments: [[String: String]] = []
@@ -53,31 +54,42 @@ final class FakeCommandExecutor: CommandExecuting, @unchecked Sendable {
         lock.lock()
         recordedCommands.append(arguments)
         recordedEnvironments.append(environment)
-        let contractError: FakeCommandContractError?
+        let actual = ExpectedInvocation(
+            arguments: arguments,
+            environment: environment
+        )
+        var contractError: FakeCommandContractError?
+        let result: Result?
         if !validatesInvocations {
             contractError = nil
+            result = queuedResults.count > 1
+                ? queuedResults.removeFirst()
+                : queuedResults.first
         } else if expectedInvocations.isEmpty {
             contractError = FakeCommandContractError(
                 description: "收到未预期的额外命令：\(arguments)"
             )
-        } else {
-            let expected = expectedInvocations.removeFirst()
-            contractError = expected == ExpectedInvocation(
-                arguments: arguments,
-                environment: environment
+            result = nil
+            contractFailures.append(contractError!.description)
+        } else if expectedInvocations[0] != actual {
+            contractError = FakeCommandContractError(
+                description:
+                    "命令调用不匹配，实际：\(arguments)，预期：\(expectedInvocations[0])"
             )
-                ? nil
-                : FakeCommandContractError(
-                    description: "命令调用不匹配，实际：\(arguments)，预期：\(expected)"
-                )
-        }
-        let result: Result?
-        if validatesInvocations {
-            result = queuedResults.isEmpty ? nil : queuedResults.removeFirst()
+            result = nil
+            contractFailures.append(contractError!.description)
         } else {
-            result = queuedResults.count > 1
-                ? queuedResults.removeFirst()
-                : queuedResults.first
+            expectedInvocations.removeFirst()
+            if queuedResults.isEmpty {
+                contractError = FakeCommandContractError(
+                    description: "命令没有对应的预置结果：\(arguments)"
+                )
+                result = nil
+                contractFailures.append(contractError!.description)
+            } else {
+                contractError = nil
+                result = queuedResults.removeFirst()
+            }
         }
         lock.unlock()
 
@@ -113,6 +125,11 @@ final class FakeCommandExecutor: CommandExecuting, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard validatesInvocations else { return }
+        guard contractFailures.isEmpty else {
+            throw FakeCommandContractError(
+                description: "历史命令契约失败：\(contractFailures)"
+            )
+        }
         guard expectedInvocations.isEmpty else {
             throw FakeCommandContractError(
                 description: "仍有未执行的预期命令：\(expectedInvocations)"

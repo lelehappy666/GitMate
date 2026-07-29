@@ -88,11 +88,13 @@ public enum GitOutputParser {
         var untrackedCount = 0
         var conflictCount = 0
 
-        for rawRecord in output.split(
+        let records = output.split(
             separator: "\u{0}",
             omittingEmptySubsequences: true
-        ) {
-            let record = String(rawRecord)
+        )
+        var recordIndex = 0
+        while recordIndex < records.count {
+            let record = String(records[recordIndex])
             if record.hasPrefix("# branch.head ") {
                 branch = String(record.dropFirst("# branch.head ".count))
             } else if record.hasPrefix("# branch.upstream ") {
@@ -127,11 +129,18 @@ public enum GitOutputParser {
                 if status[1] != "." {
                     unstagedCount += 1
                 }
+                if record.hasPrefix("2 ") {
+                    guard recordIndex + 1 < records.count else {
+                        throw GitOutputParsingError.malformedStatus(record)
+                    }
+                    recordIndex += 1
+                }
             } else if record.hasPrefix("u ") {
                 conflictCount += 1
             } else if record.hasPrefix("? ") {
                 untrackedCount += 1
             }
+            recordIndex += 1
         }
 
         return LocalRepositoryStatus(
@@ -143,6 +152,124 @@ public enum GitOutputParser {
             unstagedCount: unstagedCount,
             untrackedCount: untrackedCount,
             conflictCount: conflictCount
+        )
+    }
+
+    public static func parseCommitDetail(
+        _ output: String
+    ) throws -> GitCommitDetail {
+        let fields = output.split(
+            separator: "\u{0}",
+            omittingEmptySubsequences: false
+        )
+        guard fields.count == 12,
+              fields[11].allSatisfy({ $0 == "\n" || $0 == "\r" }),
+              let authoredAt = ISO8601DateFormatter().date(
+                  from: String(fields[5])
+              )
+        else {
+            throw GitOutputParsingError.malformedShow(output)
+        }
+
+        let commit = GitCommit(
+            shortHash: String(fields[0]),
+            fullHash: String(fields[1]),
+            subject: String(fields[2]),
+            authorName: String(fields[3]),
+            authorEmail: String(fields[4]),
+            authoredAt: authoredAt,
+            parentHashes: fields[6].split(separator: " ").map(String.init),
+            decorations: fields[7]
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        )
+        let signatureStatus: GitSignatureStatus
+        switch fields[8] {
+        case "G":
+            signatureStatus = .verified
+        case "B", "E", "R", "U", "X", "Y":
+            signatureStatus = .unverified
+        default:
+            signatureStatus = .unknown
+        }
+        let signerValue = String(fields[9])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return GitCommitDetail(
+            commit: commit,
+            message: String(fields[10]),
+            signatureStatus: signatureStatus,
+            signer: signerValue.isEmpty ? nil : signerValue
+        )
+    }
+
+    public static func parseDiff(_ output: String) throws -> GitDiff {
+        guard let metadataEnd = output.firstIndex(of: "\u{0}") else {
+            throw GitOutputParsingError.malformedShow(output)
+        }
+        let commitHash = String(output[..<metadataEnd])
+        guard !commitHash.isEmpty else {
+            throw GitOutputParsingError.malformedShow(output)
+        }
+        let bodyStart = output.index(after: metadataEnd)
+        let body = output[bodyStart...]
+            .drop(while: { $0 == "\n" || $0 == "\r" })
+        let lines = body.split(
+            separator: "\n",
+            omittingEmptySubsequences: false
+        )
+        let patchStart = lines.firstIndex(where: { $0.hasPrefix("diff --git ") })
+            ?? lines.endIndex
+        var changedFiles: [GitChangedFile] = []
+        var additions = 0
+        var deletions = 0
+
+        for rawLine in lines[..<patchStart] {
+            let line = String(rawLine)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else { continue }
+            let values = line.split(
+                separator: "\t",
+                maxSplits: 2,
+                omittingEmptySubsequences: false
+            )
+            guard values.count == 3 else {
+                throw GitOutputParsingError.malformedNumstat(line)
+            }
+            let isBinary = values[0] == "-" && values[1] == "-"
+            let fileAdditions: Int?
+            let fileDeletions: Int?
+            if isBinary {
+                fileAdditions = nil
+                fileDeletions = nil
+            } else if let parsedAdditions = Int(values[0]),
+                      let parsedDeletions = Int(values[1]) {
+                fileAdditions = parsedAdditions
+                fileDeletions = parsedDeletions
+                additions += parsedAdditions
+                deletions += parsedDeletions
+            } else {
+                throw GitOutputParsingError.malformedNumstat(line)
+            }
+            changedFiles.append(
+                GitChangedFile(
+                    path: String(values[2]),
+                    additions: fileAdditions,
+                    deletions: fileDeletions,
+                    isBinary: isBinary
+                )
+            )
+        }
+
+        let patch = patchStart == lines.endIndex
+            ? ""
+            : lines[patchStart...].joined(separator: "\n")
+        return GitDiff(
+            commitHash: commitHash,
+            files: changedFiles,
+            patch: patch,
+            additions: additions,
+            deletions: deletions
         )
     }
 

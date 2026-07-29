@@ -164,6 +164,76 @@ let repositorySyncServiceTests = [
             "访问令牌不得进入同步活动"
         )
     },
+    TestCase("String stderr 跨 chunk 凭据不会进入同步活动") {
+        let executor = FakeCommandExecutor(results: [
+            .success([
+                .standardError("remote: https://private-"),
+                .standardError("token@example.com/repo.git\n")
+            ])
+        ])
+        let service = GitRepositorySyncService(executor: executor)
+        let destination = try temporarySyncDirectory()
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let events = try await collect(
+            service.sync(
+                repositories: [syncRepositoryOne],
+                preferences: [
+                    RepositorySyncPreference(repositoryID: 1, mode: .manual)
+                ],
+                destination: destination,
+                accessToken: nil
+            )
+        )
+        let activities = events.compactMap { event -> String? in
+            guard case let .fileChanged(_, path) = event else { return nil }
+            return path
+        }
+
+        try expect(
+            activities.contains("remote: https://***@example.com/repo.git"),
+            "String stderr 应在完整行后统一脱敏，实际：\(activities)"
+        )
+        try expect(
+            activities.allSatisfy { !$0.contains("private-token") },
+            "String stderr 分片不得泄露令牌"
+        )
+    },
+    TestCase("String stdout 跨 chunk 凭据不会进入同步活动") {
+        let executor = FakeCommandExecutor(results: [
+            .success([
+                .standardOutput("remote: https://private-"),
+                .standardOutput("token@example.com/repo.git\n")
+            ])
+        ])
+        let service = GitRepositorySyncService(executor: executor)
+        let destination = try temporarySyncDirectory()
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let events = try await collect(
+            service.sync(
+                repositories: [syncRepositoryOne],
+                preferences: [
+                    RepositorySyncPreference(repositoryID: 1, mode: .manual)
+                ],
+                destination: destination,
+                accessToken: nil
+            )
+        )
+        let activities = events.compactMap { event -> String? in
+            guard case let .fileChanged(_, path) = event else { return nil }
+            return path
+        }
+
+        try expect(
+            activities.contains("remote: https://***@example.com/repo.git"),
+            "String stdout 应在完整行后统一脱敏，实际：\(activities)"
+        )
+        try expect(
+            activities.allSatisfy { !$0.contains("private-token") },
+            "String stdout 分片不得泄露令牌"
+        )
+    },
     TestCase("超长活动行丢弃到换行且不泄露余段凭据") {
         var oversizedLine = Data("remote: https://private-token@".utf8)
         oversizedLine.append(Data(repeating: 0x61, count: 16_385))
