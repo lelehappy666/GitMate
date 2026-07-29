@@ -44,6 +44,15 @@ private func temporarySyncDirectory() throws -> URL {
 }
 
 let repositorySyncServiceTests = [
+    TestCase("首次下载服务会暂停并继续当前 Git 进程") {
+        let executor = FakeCommandExecutor()
+        let service = GitRepositorySyncService(executor: executor)
+
+        try service.pause()
+        try expect(executor.isPaused, "服务应挂起当前命令")
+        try service.resume()
+        try expect(!executor.isPaused, "服务应恢复同一个命令")
+    },
     TestCase("标记为不同步的仓库不会执行 Git 命令") {
         let executor = FakeCommandExecutor()
         let service = GitRepositorySyncService(executor: executor)

@@ -11,6 +11,7 @@ final class FakeCommandExecutor: CommandExecuting, @unchecked Sendable {
     private var queuedResults: [Result]
     private var recordedCommands: [[String]] = []
     private var recordedEnvironments: [[String: String]] = []
+    private var paused = false
 
     init(results: [Result] = [.success([])]) {
         queuedResults = results
@@ -26,6 +27,24 @@ final class FakeCommandExecutor: CommandExecuting, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return recordedEnvironments
+    }
+
+    var isPaused: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return paused
+    }
+
+    func pause() throws {
+        lock.lock()
+        paused = true
+        lock.unlock()
+    }
+
+    func resume() throws {
+        lock.lock()
+        paused = false
+        lock.unlock()
     }
 
     func execute(

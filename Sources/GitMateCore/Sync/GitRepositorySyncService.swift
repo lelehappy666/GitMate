@@ -12,6 +12,14 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
         self.fileManager = fileManager
     }
 
+    public func pause() throws {
+        try executor.pause()
+    }
+
+    public func resume() throws {
+        try executor.resume()
+    }
+
     public func sync(
         repositories: [Repository],
         selectedRepositoryIDs: Set<Int64>,

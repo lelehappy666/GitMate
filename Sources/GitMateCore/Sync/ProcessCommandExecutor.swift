@@ -1,7 +1,26 @@
 @preconcurrency import Foundation
 
 public final class ProcessCommandExecutor: CommandExecuting, @unchecked Sendable {
+    private let processLock = NSLock()
+    private var activeProcess: ProcessBox?
+
     public init() {}
+
+    public func pause() throws {
+        let process = currentProcess()
+        guard let process else {
+            throw CommandControlError.noActiveProcess
+        }
+        try process.pause()
+    }
+
+    public func resume() throws {
+        let process = currentProcess()
+        guard let process else {
+            throw CommandControlError.noActiveProcess
+        }
+        try process.resume()
+    }
 
     public func execute(
         arguments: [String],
@@ -13,6 +32,7 @@ public final class ProcessCommandExecutor: CommandExecuting, @unchecked Sendable
             let standardError = Pipe()
             let state = ProcessOutputState()
             let box = ProcessBox(process)
+            self.setActiveProcess(box)
 
             process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
             process.arguments = arguments
@@ -41,6 +61,7 @@ public final class ProcessCommandExecutor: CommandExecuting, @unchecked Sendable
             }
 
             process.terminationHandler = { process in
+                self.clearActiveProcess(box)
                 standardOutput.fileHandleForReading.readabilityHandler = nil
                 standardError.fileHandleForReading.readabilityHandler = nil
                 state.consume(
@@ -70,6 +91,7 @@ public final class ProcessCommandExecutor: CommandExecuting, @unchecked Sendable
             do {
                 try process.run()
             } catch {
+                self.clearActiveProcess(box)
                 continuation.finish(
                     throwing: CommandExecutionError.launchFailed(
                         error.localizedDescription
@@ -79,23 +101,75 @@ public final class ProcessCommandExecutor: CommandExecuting, @unchecked Sendable
 
             continuation.onTermination = { _ in
                 box.terminate()
+                self.clearActiveProcess(box)
             }
         }
+    }
+
+    private func currentProcess() -> ProcessBox? {
+        processLock.lock()
+        defer { processLock.unlock() }
+        return activeProcess
+    }
+
+    private func setActiveProcess(_ process: ProcessBox) {
+        processLock.lock()
+        activeProcess = process
+        processLock.unlock()
+    }
+
+    private func clearActiveProcess(_ process: ProcessBox) {
+        processLock.lock()
+        if activeProcess === process {
+            activeProcess = nil
+        }
+        processLock.unlock()
     }
 }
 
 private final class ProcessBox: @unchecked Sendable {
     private let process: Process
     private let lock = NSLock()
+    private var isPaused = false
 
     init(_ process: Process) {
         self.process = process
+    }
+
+    func pause() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard process.isRunning else {
+            throw CommandControlError.noActiveProcess
+        }
+        guard !isPaused else { return }
+        guard process.suspend() else {
+            throw CommandControlError.operationFailed("无法暂停当前下载任务。")
+        }
+        isPaused = true
+    }
+
+    func resume() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard process.isRunning else {
+            throw CommandControlError.noActiveProcess
+        }
+        guard isPaused else { return }
+        guard process.resume() else {
+            throw CommandControlError.operationFailed("无法继续当前下载任务。")
+        }
+        isPaused = false
     }
 
     func terminate() {
         lock.lock()
         defer { lock.unlock() }
         if process.isRunning {
+            if isPaused {
+                _ = process.resume()
+                isPaused = false
+            }
             process.terminate()
         }
     }

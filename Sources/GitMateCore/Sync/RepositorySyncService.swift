@@ -37,4 +37,17 @@ public protocol RepositorySyncService: Sendable {
         destination: URL,
         accessToken: String?
     ) -> AsyncThrowingStream<SyncEvent, Error>
+
+    func pause() throws
+    func resume() throws
+}
+
+public extension RepositorySyncService {
+    func pause() throws {
+        throw CommandControlError.noActiveProcess
+    }
+
+    func resume() throws {
+        throw CommandControlError.noActiveProcess
+    }
 }

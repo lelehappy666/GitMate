@@ -6,6 +6,7 @@ import Observation
 public final class OnboardingViewModel {
     public private(set) var state: OnboardingState
     public private(set) var isWorking = false
+    public private(set) var isDownloadPaused = false
     public private(set) var syncDestination: URL?
 
     @ObservationIgnored
@@ -191,6 +192,7 @@ public final class OnboardingViewModel {
 
     public func startSync() async {
         activeSyncTask?.cancel()
+        isDownloadPaused = false
         let selectedRepositoryIDs = state.selectedRepositoryIDs
         guard !selectedRepositoryIDs.isEmpty else {
             state.transition(.downloadConfigured([]))
@@ -233,6 +235,29 @@ public final class OnboardingViewModel {
         if activeSyncID == operationID {
             activeSyncTask = nil
             activeSyncID = nil
+            isDownloadPaused = false
+        }
+    }
+
+    public func pauseDownload() {
+        do {
+            try dependencies.syncService.pause()
+            isDownloadPaused = true
+            state.errorMessage = nil
+            state.progress.currentFile = "下载已暂停"
+        } catch {
+            state.errorMessage = error.localizedDescription
+        }
+    }
+
+    public func resumeDownload() {
+        do {
+            try dependencies.syncService.resume()
+            isDownloadPaused = false
+            state.errorMessage = nil
+            state.progress.currentFile = "正在继续下载…"
+        } catch {
+            state.errorMessage = error.localizedDescription
         }
     }
 
@@ -241,6 +266,7 @@ public final class OnboardingViewModel {
         activeSyncTask = nil
         activeSyncID = nil
         isWorking = false
+        isDownloadPaused = false
         state.errorMessage = nil
         state.progress.currentFile = "同步已停止"
         state.route = .repositorySync

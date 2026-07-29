@@ -67,6 +67,7 @@ private final class CancellableSyncService: RepositorySyncService, @unchecked Se
     private let lock = NSLock()
     private var started = false
     private var cancelled = false
+    private var paused = false
 
     var hasStarted: Bool {
         lock.lock()
@@ -78,6 +79,24 @@ private final class CancellableSyncService: RepositorySyncService, @unchecked Se
         lock.lock()
         defer { lock.unlock() }
         return cancelled
+    }
+
+    var isPaused: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return paused
+    }
+
+    func pause() throws {
+        lock.lock()
+        paused = true
+        lock.unlock()
+    }
+
+    func resume() throws {
+        lock.lock()
+        paused = false
+        lock.unlock()
     }
 
     func sync(
@@ -272,6 +291,18 @@ let onboardingViewModelTests = [
 
         try expectEqual(viewModel.state.route, .repositorySync, "停止后应返回仓库选择页")
         try expect(syncService.hasCancelled, "停止后应取消同步流和后台 Git 任务")
+    },
+    TestCase("暂停与继续会更新下载状态并控制当前任务") { @MainActor in
+        let syncService = CancellableSyncService()
+        let (viewModel, _) = try makeViewModel(syncService: syncService)
+
+        viewModel.pauseDownload()
+        try expect(viewModel.isDownloadPaused, "暂停后界面应切换为继续下载")
+        try expect(syncService.isPaused, "暂停后应挂起当前 Git 任务")
+
+        viewModel.resumeDownload()
+        try expect(!viewModel.isDownloadPaused, "继续后界面应恢复暂停按钮")
+        try expect(!syncService.isPaused, "继续后应恢复同一个 Git 任务")
     },
     TestCase("未选择存储目录时不能开始同步") { @MainActor in
         let destinationStore = InMemorySyncDestinationStore()
