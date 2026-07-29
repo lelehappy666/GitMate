@@ -12,6 +12,7 @@ struct GitMateCoreTestsMain {
             + enterpriseConnectionTests
             + credentialStoreTests
             + repositorySyncServiceTests
+            + localRepositoryGitServiceTests
             + repositorySyncPreferenceTests
             + syncProgressTests
             + onboardingViewModelTests

@@ -5,6 +5,8 @@ final class FakeCommandExecutor: CommandExecuting, @unchecked Sendable {
     enum Result: Sendable {
         case success([CommandOutput])
         case failure(SyncFailure)
+        case commandFailure(CommandExecutionError)
+        case cancelled
     }
 
     private let lock = NSLock()
@@ -52,6 +54,10 @@ final class FakeCommandExecutor: CommandExecuting, @unchecked Sendable {
                 continuation.finish()
             case let .failure(error):
                 continuation.finish(throwing: error)
+            case let .commandFailure(error):
+                continuation.finish(throwing: error)
+            case .cancelled:
+                continuation.finish(throwing: CancellationError())
             }
         }
     }
