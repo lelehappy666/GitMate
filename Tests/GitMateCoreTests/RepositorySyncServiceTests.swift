@@ -72,15 +72,21 @@ let repositorySyncServiceTests = [
             !executor.commands[0].contains("private-token"),
             "访问令牌不得出现在 Git 命令参数"
         )
+        let basicCredential = Data("x-access-token:private-token".utf8)
+            .base64EncodedString()
         try expectEqual(
             executor.environments[0]["GIT_CONFIG_VALUE_0"],
-            "Authorization: Bearer private-token",
-            "私有仓库令牌应通过临时 Git 环境传入"
+            "Authorization: Basic \(basicCredential)",
+            "Git HTTPS 应使用 PAT 的 Basic 认证头"
         )
         try expectEqual(
             executor.environments[0]["GIT_TERMINAL_PROMPT"],
             "0",
             "同步不得等待终端凭据输入"
+        )
+        try expect(
+            executor.environments[0]["GIT_ASKPASS"] == nil,
+            "不得把 /usr/bin/false 配置为 AskPass 程序"
         )
         try expect(events.contains(.finished), "选中仓库完成后应结束同步")
     },

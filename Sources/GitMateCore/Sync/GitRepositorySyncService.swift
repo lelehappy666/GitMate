@@ -114,6 +114,8 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
             "authentication failed",
             "bad credentials",
             "could not read username",
+            "terminal prompts disabled",
+            "unable to read askpass response",
             "permission denied"
         ]
         if authorizationMarkers.contains(where: normalized.contains) {
@@ -165,13 +167,16 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
         do {
             var environment: [String: String] = [
                 "GIT_TERMINAL_PROMPT": "0",
-                "GCM_INTERACTIVE": "never",
-                "GIT_ASKPASS": "/usr/bin/false"
+                "GCM_INTERACTIVE": "never"
             ]
             if let accessToken, !accessToken.isEmpty {
+                let credential = Data(
+                    "x-access-token:\(accessToken)".utf8
+                )
+                .base64EncodedString()
                 environment["GIT_CONFIG_COUNT"] = "1"
                 environment["GIT_CONFIG_KEY_0"] = "http.extraHeader"
-                environment["GIT_CONFIG_VALUE_0"] = "Authorization: Bearer \(accessToken)"
+                environment["GIT_CONFIG_VALUE_0"] = "Authorization: Basic \(credential)"
             }
 
             let clock = ContinuousClock()

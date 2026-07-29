@@ -6,12 +6,21 @@ import Observation
 public final class OnboardingViewModel {
     public private(set) var state: OnboardingState
     public private(set) var isWorking = false
+    public var syncDestination: URL {
+        dependencies.syncDestination
+    }
 
     @ObservationIgnored
     private let dependencies: OnboardingDependencies
 
     @ObservationIgnored
     private var networkTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var activeSyncTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var activeSyncID: UUID?
 
     @ObservationIgnored
     private var hasAttemptedSessionRestore = false
@@ -26,6 +35,7 @@ public final class OnboardingViewModel {
 
     deinit {
         networkTask?.cancel()
+        activeSyncTask?.cancel()
     }
 
     public func startGitHubLogin() async {
@@ -37,6 +47,9 @@ public final class OnboardingViewModel {
     }
 
     public func returnToWelcome() {
+        activeSyncTask?.cancel()
+        activeSyncTask = nil
+        activeSyncID = nil
         if let account = state.account {
             try? dependencies.credentialStore.deleteToken(accountID: account.id)
         }
@@ -184,11 +197,35 @@ public final class OnboardingViewModel {
     }
 
     public func startSync() async {
+        activeSyncTask?.cancel()
         state.transition(.syncConfigured(state.preferences))
-        await runSync(
-            repositories: state.repositories,
-            preferences: state.preferences
-        )
+        let operationID = UUID()
+        activeSyncID = operationID
+        let repositories = state.repositories
+        let preferences = state.preferences
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.runSync(
+                repositories: repositories,
+                preferences: preferences
+            )
+        }
+        activeSyncTask = task
+        await task.value
+        if activeSyncID == operationID {
+            activeSyncTask = nil
+            activeSyncID = nil
+        }
+    }
+
+    public func stopSync() {
+        activeSyncTask?.cancel()
+        activeSyncTask = nil
+        activeSyncID = nil
+        isWorking = false
+        state.errorMessage = nil
+        state.progress.currentFile = "同步已停止"
+        state.route = .repositorySync
     }
 
     public func retryFailed() async {
@@ -356,7 +393,11 @@ public final class OnboardingViewModel {
                 }
             }
         } catch let failure as SyncFailure {
-            handle(syncFailure: failure, repositoryID: nil)
+            if failure != .cancelled {
+                handle(syncFailure: failure, repositoryID: nil)
+            }
+        } catch is CancellationError {
+            return
         } catch {
             state.errorMessage = error.localizedDescription
             state.route = .syncError
@@ -416,7 +457,7 @@ public final class OnboardingViewModel {
             )
 
         case .cancelled:
-            state.errorMessage = syncFailure.message
+            return
         }
     }
 

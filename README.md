@@ -14,6 +14,7 @@ GitMate 是一款原生 macOS GitHub 管理工具。本阶段已实现第 01–0
 - 使用系统 Git 执行 clone 与 fetch
 - 大量仓库惰性渲染、头像缓存与后台同步
 - 横向进度条、Git 实时进度和当前文件显示
+- 支持主动停止同步并终止后台 Git 任务
 - 单仓库失败、网络中断和授权失效恢复
 
 ## 运行要求
@@ -63,5 +64,7 @@ swift build --disable-sandbox
 ```text
 ~/Library/Application Support/GitMate/Repositories
 ```
+
+同步页面会显示该目录，并可直接在 Finder 中打开。
 
 当前开发机器只有 Apple Command Line Tools，没有完整 Xcode。因此已验证 Swift Package 测试和原生 SwiftUI 可执行程序编译；应用签名、钥匙串授权弹窗、VoiceOver、`.app` 归档与公证需要安装完整 Xcode 后继续验证。

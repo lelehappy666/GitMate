@@ -63,6 +63,46 @@ private struct SilentNetworkMonitor: NetworkMonitoring {
     }
 }
 
+private final class CancellableSyncService: RepositorySyncService, @unchecked Sendable {
+    private let lock = NSLock()
+    private var started = false
+    private var cancelled = false
+
+    var hasStarted: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return started
+    }
+
+    var hasCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func sync(
+        repositories: [Repository],
+        preferences: [RepositorySyncPreference],
+        destination: URL,
+        accessToken: String?
+    ) -> AsyncThrowingStream<SyncEvent, Error> {
+        AsyncThrowingStream { continuation in
+            lock.lock()
+            started = true
+            lock.unlock()
+            if let repository = repositories.first {
+                continuation.yield(.repositoryStarted(repository))
+            }
+            continuation.onTermination = { [weak self] _ in
+                guard let self else { return }
+                lock.lock()
+                cancelled = true
+                lock.unlock()
+            }
+        }
+    }
+}
+
 private let viewModelAccount = GitHubAccount(
     id: "github.com:1",
     login: "lele",
@@ -88,7 +128,8 @@ private let viewModelRepository = Repository(
 private func makeViewModel(
     syncEvents: [SyncEvent] = [.finished],
     credentialStore: InMemoryCredentialStore = InMemoryCredentialStore(),
-    sessionStore: InMemoryAccountSessionStore = InMemoryAccountSessionStore()
+    sessionStore: InMemoryAccountSessionStore = InMemoryAccountSessionStore(),
+    syncService: (any RepositorySyncService)? = nil
 ) throws -> (OnboardingViewModel, InMemoryCredentialStore) {
     let api = FakeGitHubAPI(
         account: viewModelAccount,
@@ -99,7 +140,7 @@ private func makeViewModel(
         enterpriseConnector: FakeEnterpriseConnector(account: viewModelAccount),
         credentialStore: credentialStore,
         accountSessionStore: sessionStore,
-        syncService: FixedSyncService(events: syncEvents),
+        syncService: syncService ?? FixedSyncService(events: syncEvents),
         networkMonitor: SilentNetworkMonitor(),
         syncDestination: FileManager.default.temporaryDirectory
     )
@@ -179,6 +220,24 @@ let onboardingViewModelTests = [
         try expectEqual(viewModel.state.route, .complete, "同步完成后应退出引导")
         try expectEqual(viewModel.state.progress.completed, 1, "应更新完成数量")
         try expectEqual(viewModel.state.progress.currentFile, "Sources/App.swift", "应保留最后同步文件")
+    },
+    TestCase("停止同步会取消后台任务并返回仓库选择页") { @MainActor in
+        let syncService = CancellableSyncService()
+        let (viewModel, _) = try makeViewModel(syncService: syncService)
+        await viewModel.startGitHubLogin()
+        await viewModel.connectGitHub(token: "secret")
+        await viewModel.confirmPermissions()
+        viewModel.updateSyncMode(repositoryID: 101, mode: .manual)
+
+        let task = Task { await viewModel.startSync() }
+        while !syncService.hasStarted {
+            await Task.yield()
+        }
+        viewModel.stopSync()
+        await task.value
+
+        try expectEqual(viewModel.state.route, .repositorySync, "停止后应返回仓库选择页")
+        try expect(syncService.hasCancelled, "停止后应取消同步流和后台 Git 任务")
     },
     TestCase("同步断网进入第 8 页并允许恢复") { @MainActor in
         let (viewModel, _) = try makeViewModel(syncEvents: [

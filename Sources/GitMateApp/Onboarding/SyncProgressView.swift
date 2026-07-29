@@ -1,3 +1,4 @@
+import AppKit
 import GitMateCore
 import SwiftUI
 
@@ -29,6 +30,14 @@ struct SyncProgressView: View {
                 Label("连接正常", systemImage: "circle.fill")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(GitMateTheme.success)
+
+                Button {
+                    viewModel.stopSync()
+                } label: {
+                    Label("停止同步", systemImage: "stop.circle.fill")
+                }
+                .buttonStyle(GitMateButtonStyle(role: .destructive))
+                .accessibilityIdentifier("onboarding.sync.stop")
             }
 
             VStack(alignment: .leading, spacing: 16) {
@@ -59,7 +68,7 @@ struct SyncProgressView: View {
                     )
                     statusBox(
                         icon: "doc.text",
-                        title: "当前文件",
+                        title: "当前文件 / 状态",
                         value: progress.currentFile ?? "等待文件…",
                         monospaced: true
                     )
@@ -96,12 +105,24 @@ struct SyncProgressView: View {
             }
 
             HStack {
-                Label(
-                    "同步中断后会保留已完成文件，并从现场继续。",
-                    systemImage: "externaldrive.badge.checkmark"
-                )
-                .font(.system(size: 12))
-                .foregroundStyle(GitMateTheme.textSecondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(
+                        "同步目录",
+                        systemImage: "externaldrive.badge.checkmark"
+                    )
+                    .font(.system(size: 12, weight: .semibold))
+                    Text(viewModel.syncDestination.path)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(GitMateTheme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Button("在 Finder 中显示") {
+                    revealSyncDestination()
+                }
+                .buttonStyle(GitMateButtonStyle(role: .quiet))
+
                 Spacer()
                 Text("正在计算剩余时间")
                     .font(.system(size: 12, weight: .medium))
@@ -109,6 +130,16 @@ struct SyncProgressView: View {
             }
         }
         .frame(maxHeight: .infinity)
+    }
+
+    private func revealSyncDestination() {
+        try? FileManager.default.createDirectory(
+            at: viewModel.syncDestination,
+            withIntermediateDirectories: true
+        )
+        NSWorkspace.shared.activateFileViewerSelecting([
+            viewModel.syncDestination
+        ])
     }
 
     private func statusBox(
