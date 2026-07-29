@@ -13,6 +13,135 @@ private let workspaceRepositoryFixture = Repository(
 )
 
 let githubWorkspaceAPITests = [
+    TestCase("损坏的企业地址拒绝创建工作区 API") {
+        let provider = DefaultGitHubWorkspaceAPIProvider(
+            session: makeStubSession()
+        )
+        let account = GitHubAccount(
+            id: "enterprise:broken",
+            login: "broken",
+            name: nil,
+            avatarURL: nil,
+            serverURL: URL(fileURLWithPath: "/旧版企业地址"),
+            kind: .enterprise,
+            scopes: ["repo"]
+        )
+
+        do {
+            _ = try provider.api(for: account)
+            throw TestFailure(
+                description: "损坏的企业地址不得回退公共 GitHub API"
+            )
+        } catch EnterpriseConnectionError.invalidServerURL {
+            // 企业端点无效时必须在创建客户端前失败。
+        }
+    },
+    TestCase("不安全的企业地址拒绝创建工作区 API") {
+        let provider = DefaultGitHubWorkspaceAPIProvider(
+            session: makeStubSession()
+        )
+        let account = GitHubAccount(
+            id: "enterprise:insecure",
+            login: "insecure",
+            name: nil,
+            avatarURL: nil,
+            serverURL: URL(string: "http://github.company.com")!,
+            kind: .enterprise,
+            scopes: ["repo"]
+        )
+
+        do {
+            _ = try provider.api(for: account)
+            throw TestFailure(
+                description: "HTTP 企业地址不得回退公共 GitHub API"
+            )
+        } catch EnterpriseConnectionError.insecureServerURL {
+            // 非本机企业端点必须使用 HTTPS。
+        }
+    },
+    TestCase("旧版企业 API 地址只向企业主机发送令牌") {
+        let recorder = LockedRecorder<URLRequest>()
+        URLProtocolStub.handler = { request in
+            recorder.append(request)
+            switch request.url?.path {
+            case "/api/v3/repos/GitMate/mac-client":
+                return try stubResponse(
+                    for: request,
+                    body: #"{"language":"Swift","updated_at":"2026-07-29T10:00:00Z"}"#
+                )
+            case "/api/v3/search/issues":
+                return try stubResponse(
+                    for: request,
+                    body: #"{"total_count":0,"items":[]}"#
+                )
+            case "/api/v3/repos/GitMate/mac-client/actions/runs":
+                return try stubResponse(
+                    for: request,
+                    body: #"{"total_count":0,"workflow_runs":[]}"#
+                )
+            default:
+                return try stubResponse(
+                    for: request,
+                    statusCode: 404,
+                    body: #"{"message":"Not Found"}"#
+                )
+            }
+        }
+        let provider = DefaultGitHubWorkspaceAPIProvider(
+            session: makeStubSession()
+        )
+        let account = GitHubAccount(
+            id: "enterprise:legacy",
+            login: "legacy",
+            name: nil,
+            avatarURL: nil,
+            serverURL: URL(
+                string: "https://github.company.com/api/v3/"
+            )!,
+            kind: .enterprise,
+            scopes: ["repo"]
+        )
+
+        let api = try provider.api(for: account)
+        _ = try await api.repositorySummary(
+            repository: workspaceRepositoryFixture,
+            token: "enterprise-pat"
+        )
+
+        try expect(
+            recorder.snapshot.allSatisfy {
+                $0.url?.host == "github.company.com"
+                    && $0.url?.path.hasPrefix("/api/v3/") == true
+                    && $0.value(
+                        forHTTPHeaderField: "Authorization"
+                    ) == "Bearer enterprise-pat"
+            },
+            "旧版企业地址必须标准化到企业 API，令牌不得发送给 api.github.com"
+        )
+    },
+    TestCase("企业配置错误稳定映射为重新授权") {
+        let api = ReauthorizationRequiredGitHubWorkspaceAPI()
+
+        do {
+            _ = try await api.repositorySummary(
+                repository: workspaceRepositoryFixture,
+                token: "enterprise-pat"
+            )
+            throw TestFailure(description: "无效配置不应请求在线摘要")
+        } catch WorkspaceAPIError.authorizationRequired {
+            // UI 使用该稳定错误进入重新授权状态。
+        }
+
+        do {
+            _ = try await api.readme(
+                repository: workspaceRepositoryFixture,
+                token: "enterprise-pat"
+            )
+            throw TestFailure(description: "无效配置不应请求 README")
+        } catch WorkspaceAPIError.authorizationRequired {
+            // 所有工作区 API 入口使用同一错误映射。
+        }
+    },
     TestCase("仓库摘要使用分离搜索并解析在线数量") {
         let recorder = LockedRecorder<URLRequest>()
         URLProtocolStub.handler = { request in

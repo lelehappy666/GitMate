@@ -17,6 +17,7 @@ final class WorkspaceRuntimeDependencies {
 
     private var contentServices: [String: WorkspaceContentService] = [:]
     private let workspaceAPIOverride: (any GitHubWorkspaceAPI)?
+    private let workspaceAPIProvider: any GitHubWorkspaceAPIProviding
 
     init(
         syncDestination: URL,
@@ -27,6 +28,8 @@ final class WorkspaceRuntimeDependencies {
             executor: ProcessCommandExecutor()
         ),
         workspaceAPI: (any GitHubWorkspaceAPI)? = nil,
+        workspaceAPIProvider: any GitHubWorkspaceAPIProviding =
+            DefaultGitHubWorkspaceAPIProvider(),
         cache: (any WorkspaceCaching)? = nil,
         coverCache: (any RepositoryCoverCaching)? = nil,
         coverLoader: (any RepositoryCoverLoading)? = nil
@@ -37,6 +40,7 @@ final class WorkspaceRuntimeDependencies {
         )
         self.localGit = localGit
         workspaceAPIOverride = workspaceAPI
+        self.workspaceAPIProvider = workspaceAPIProvider
 
         let workspaceCache = cache ?? JSONWorkspaceCache(
             rootDirectory: cacheDirectory.appending(
@@ -59,6 +63,14 @@ final class WorkspaceRuntimeDependencies {
     }
 
     func authorization(for account: GitHubAccount) -> WorkspaceAuthorization {
+        if account.kind == .enterprise {
+            do {
+                _ = try EnterpriseEndpoint(serverURL: account.serverURL)
+            } catch {
+                return .reauthorizationRequired
+            }
+        }
+
         do {
             guard let token = try credentialStore.token(accountID: account.id)?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -79,11 +91,12 @@ final class WorkspaceRuntimeDependencies {
         let api: any GitHubWorkspaceAPI
         if let workspaceAPIOverride {
             api = workspaceAPIOverride
-        } else if account.kind == .enterprise,
-           let endpoint = try? EnterpriseEndpoint(serverURL: account.serverURL) {
-            api = URLSessionGitHubWorkspaceAPI(baseURL: endpoint.apiBaseURL)
         } else {
-            api = URLSessionGitHubWorkspaceAPI()
+            do {
+                api = try workspaceAPIProvider.api(for: account)
+            } catch {
+                api = ReauthorizationRequiredGitHubWorkspaceAPI()
+            }
         }
         let content = WorkspaceContentService(
             catalog: catalog,

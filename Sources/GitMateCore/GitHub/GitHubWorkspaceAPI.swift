@@ -12,6 +12,52 @@ public protocol GitHubWorkspaceAPI: Sendable {
     ) async throws -> GitHubREADME
 }
 
+public protocol GitHubWorkspaceAPIProviding: Sendable {
+    func api(for account: GitHubAccount) throws -> any GitHubWorkspaceAPI
+}
+
+public struct DefaultGitHubWorkspaceAPIProvider:
+    GitHubWorkspaceAPIProviding,
+    @unchecked Sendable
+{
+    private let session: URLSession
+
+    public init(session: URLSession = .shared) {
+        self.session = session
+    }
+
+    public func api(for account: GitHubAccount) throws -> any GitHubWorkspaceAPI {
+        switch account.kind {
+        case .githubDotCom:
+            return URLSessionGitHubWorkspaceAPI(session: session)
+        case .enterprise:
+            let endpoint = try EnterpriseEndpoint(serverURL: account.serverURL)
+            return URLSessionGitHubWorkspaceAPI(
+                session: session,
+                baseURL: endpoint.apiBaseURL
+            )
+        }
+    }
+}
+
+public struct ReauthorizationRequiredGitHubWorkspaceAPI: GitHubWorkspaceAPI {
+    public init() {}
+
+    public func repositorySummary(
+        repository: Repository,
+        token: String
+    ) async throws -> RepositoryOnlineSummary {
+        throw WorkspaceAPIError.authorizationRequired
+    }
+
+    public func readme(
+        repository: Repository,
+        token: String
+    ) async throws -> GitHubREADME {
+        throw WorkspaceAPIError.authorizationRequired
+    }
+}
+
 public struct GitHubREADME: Equatable, Sendable {
     public let repositoryID: Int64
     public let path: String
