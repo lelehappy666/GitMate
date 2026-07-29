@@ -10,6 +10,8 @@ struct GitMateCoreTestsMain {
             + githubAPITests
             + githubRESTClientTests
             + githubBranchesAPITests
+            + githubIssuesAPITests
+            + labelMergeServiceTests
             + enterpriseConnectionTests
             + credentialStoreTests
             + repositorySyncServiceTests
