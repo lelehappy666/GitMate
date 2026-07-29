@@ -191,3 +191,74 @@ Build complete!
 
 - 无未解决的功能或安全阻塞。
 - 默认 CommandLineTools 仍存在编译器与 SDK 版本不匹配，验证继续使用已安装的 Xcode 工具链。
+
+---
+
+## 正式审查修复 Round 2
+
+### 覆盖测试
+
+`Tests/GitMateCoreTests/GitHubWorkspaceAPITests.swift` 新增：
+
+- `无效 Retry-After 回退主限流恢复时间`
+- 表驱动覆盖 `-5`、`NaN`、`Infinity` 和非数字字符串。
+- 响应同时携带 `X-RateLimit-Remaining: 0` 与合法未来 `X-RateLimit-Reset`，所有无效 `Retry-After` 都必须回退 Reset。
+
+### RED 证据
+
+命令：
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+SWIFTPM_MODULECACHE_OVERRIDE=/private/tmp/gitmate-task4-module-cache \
+CLANG_MODULE_CACHE_PATH=/private/tmp/gitmate-task4-clang-cache \
+swift run GitMateCoreTestsRunner
+```
+
+结果：
+
+```text
+✗ 无效 Retry-After 回退主限流恢复时间：
+  实际 2000000000，预期 2000000900
+完成 103 个测试，失败 1 个。
+```
+
+旧实现使用 `max(0, delay)`，把 `-5` 变为 0 秒并允许立即重试。
+
+### 最小修复
+
+- 只有 `Retry-After` 能解析为有限数值且 `delay >= 0` 时才采用。
+- 负数、NaN、Infinity 和非数字都视为无效。
+- 无效时继续使用既有优先级：主限流合法 Reset，其次 secondary/429 的 `now + 60 秒` 安全默认。
+- 移除将负数夹为 0 的 `max(0, delay)`。
+
+### GREEN 与完整验证
+
+完整测试：
+
+```text
+完成 103 个测试，失败 0 个。
+退出码：0
+```
+
+完整编译：
+
+```text
+Build complete!
+退出码：0
+```
+
+差异与安全检查：
+
+- `git diff --check`：无空白错误。
+- 生产代码扫描未发现令牌日志、缓存字段或 URL 查询令牌。
+
+### Round 2 变更文件
+
+- `Sources/GitMateCore/GitHub/URLSessionGitHubWorkspaceAPI.swift`
+- `Tests/GitMateCoreTests/GitHubWorkspaceAPITests.swift`
+- `.superpowers/sdd/2026-07-29-全局与仓库页面10-15实施计划/task-4-report.md`
+
+### Round 2 Concerns
+
+- 无未解决的功能或安全阻塞。

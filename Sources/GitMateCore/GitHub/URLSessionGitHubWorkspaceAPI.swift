@@ -196,9 +196,11 @@ public final class URLSessionGitHubWorkspaceAPI: GitHubWorkspaceAPI, @unchecked 
         if let rawDelay = response.value(
             forHTTPHeaderField: "Retry-After"
         ),
-           let delay = TimeInterval(rawDelay)
+           let delay = TimeInterval(rawDelay),
+           delay.isFinite,
+           delay >= 0
         {
-            return now().addingTimeInterval(max(0, delay))
+            return now().addingTimeInterval(delay)
         }
         if response.value(
             forHTTPHeaderField: "X-RateLimit-Remaining"
