@@ -50,7 +50,7 @@ struct GitMateApp: App {
 
     var body: some Scene {
         WindowGroup {
-            OnboardingRootView(viewModel: viewModel)
+            GitMateRootView(onboarding: viewModel)
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)

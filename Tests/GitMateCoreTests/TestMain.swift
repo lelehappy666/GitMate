@@ -13,6 +13,7 @@ struct GitMateCoreTestsMain {
             + repositorySyncPreferenceTests
             + syncProgressTests
             + onboardingViewModelTests
+            + workspaceRouteTests
         var failedCount = 0
 
         for test in tests {
