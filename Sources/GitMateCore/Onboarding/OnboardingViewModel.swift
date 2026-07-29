@@ -158,12 +158,7 @@ public final class OnboardingViewModel {
             let api = try dependencies.apiProvider.api(for: account)
             let repositories = try await api.repositories(token: token)
             state.transition(.repositoriesLoaded(repositories))
-            state.preferences = repositories.map {
-                RepositorySyncPreference(
-                    repositoryID: $0.id,
-                    mode: .never
-                )
-            }
+            state.selectedRepositoryIDs = []
         } catch GitHubAPIError.httpStatus(401, _) {
             state.transition(.authorizationExpired(message: "账户授权已失效，请重新登录。"))
         } catch {
@@ -171,27 +166,14 @@ public final class OnboardingViewModel {
         }
     }
 
-    public func updateSyncMode(
+    public func setRepositorySelected(
         repositoryID: Int64,
-        mode: RepositorySyncMode
+        isSelected: Bool
     ) {
-        if let index = state.preferences.firstIndex(
-            where: { $0.repositoryID == repositoryID }
-        ) {
-            state.preferences[index].mode = mode
+        if isSelected {
+            state.selectedRepositoryIDs.insert(repositoryID)
         } else {
-            state.preferences.append(
-                RepositorySyncPreference(
-                    repositoryID: repositoryID,
-                    mode: mode
-                )
-            )
-        }
-    }
-
-    public func setSyncModeForAllRepositories(_ mode: RepositorySyncMode) {
-        state.preferences = state.repositories.map {
-            RepositorySyncPreference(repositoryID: $0.id, mode: mode)
+            state.selectedRepositoryIDs.remove(repositoryID)
         }
     }
 
@@ -209,11 +191,9 @@ public final class OnboardingViewModel {
 
     public func startSync() async {
         activeSyncTask?.cancel()
-        let selectedPreferences = state.preferences.filter(
-            \.shouldSyncInitially
-        )
-        guard !selectedPreferences.isEmpty else {
-            state.transition(.syncConfigured(state.preferences))
+        let selectedRepositoryIDs = state.selectedRepositoryIDs
+        guard !selectedRepositoryIDs.isEmpty else {
+            state.transition(.downloadConfigured([]))
             state.transition(.syncFinished)
             return
         }
@@ -224,7 +204,7 @@ public final class OnboardingViewModel {
         }
         let conflicts = SyncDestinationInspector.conflicts(
             repositories: state.repositories,
-            preferences: state.preferences,
+            selectedRepositoryIDs: selectedRepositoryIDs,
             destination: syncDestination
         )
         guard conflicts.isEmpty else {
@@ -237,16 +217,15 @@ public final class OnboardingViewModel {
             return
         }
 
-        state.transition(.syncConfigured(state.preferences))
+        state.transition(.downloadConfigured(selectedRepositoryIDs))
         let operationID = UUID()
         activeSyncID = operationID
         let repositories = state.repositories
-        let preferences = state.preferences
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             await self.runSync(
                 repositories: repositories,
-                preferences: preferences
+                selectedRepositoryIDs: selectedRepositoryIDs
             )
         }
         activeSyncTask = task
@@ -270,13 +249,13 @@ public final class OnboardingViewModel {
     public func retryFailed() async {
         let failedIDs = Set(state.failedRepositoryIDs)
         let repositories = state.repositories.filter { failedIDs.contains($0.id) }
-        let preferences = repositories.map {
-            RepositorySyncPreference(repositoryID: $0.id, mode: .manual)
-        }
         state.failedRepositoryIDs.removeAll()
         state.errorMessage = nil
         state.route = .syncProgress
-        await runSync(repositories: repositories, preferences: preferences)
+        await runSync(
+            repositories: repositories,
+            selectedRepositoryIDs: failedIDs
+        )
     }
 
     public func retry(repositoryID: Int64) async {
@@ -290,12 +269,7 @@ public final class OnboardingViewModel {
         state.route = .syncProgress
         await runSync(
             repositories: [repository],
-            preferences: [
-                RepositorySyncPreference(
-                    repositoryID: repositoryID,
-                    mode: .manual
-                )
-            ]
+            selectedRepositoryIDs: [repositoryID]
         )
     }
 
@@ -309,7 +283,7 @@ public final class OnboardingViewModel {
         state.transition(.networkRestored)
         await runSync(
             repositories: state.repositories,
-            preferences: state.preferences
+            selectedRepositoryIDs: state.selectedRepositoryIDs
         )
     }
 
@@ -405,7 +379,7 @@ public final class OnboardingViewModel {
 
     private func runSync(
         repositories: [Repository],
-        preferences: [RepositorySyncPreference]
+        selectedRepositoryIDs: Set<Int64>
     ) async {
         guard let syncDestination else {
             state.errorMessage = "尚未选择仓库存储目录。"
@@ -427,7 +401,7 @@ public final class OnboardingViewModel {
             }
             let stream = dependencies.syncService.sync(
                 repositories: repositories,
-                preferences: preferences,
+                selectedRepositoryIDs: selectedRepositoryIDs,
                 destination: syncDestination,
                 accessToken: accessToken
             )

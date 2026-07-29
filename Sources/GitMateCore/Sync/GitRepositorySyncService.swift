@@ -14,16 +14,13 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
 
     public func sync(
         repositories: [Repository],
-        preferences: [RepositorySyncPreference],
+        selectedRepositoryIDs: Set<Int64>,
         destination: URL,
         accessToken: String?
     ) -> AsyncThrowingStream<SyncEvent, Error> {
-        let selectedIDs = Set(
-            preferences
-                .filter(\.shouldSyncInitially)
-                .map(\.repositoryID)
-        )
-        let selectedRepositories = repositories.filter { selectedIDs.contains($0.id) }
+        let selectedRepositories = repositories.filter {
+            selectedRepositoryIDs.contains($0.id)
+        }
 
         return AsyncThrowingStream(
             SyncEvent.self,

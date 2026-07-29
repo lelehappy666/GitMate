@@ -56,9 +56,7 @@ let syncDestinationTests = [
 
         let conflicts = SyncDestinationInspector.conflicts(
             repositories: [destinationRepository],
-            preferences: [
-                RepositorySyncPreference(repositoryID: 501, mode: .manual)
-            ],
+            selectedRepositoryIDs: [501],
             destination: destination
         )
 
@@ -89,13 +87,11 @@ let syncDestinationTests = [
 
         let conflicts = SyncDestinationInspector.conflicts(
             repositories: [destinationRepository],
-            preferences: [
-                RepositorySyncPreference(repositoryID: 501, mode: .automatic)
-            ],
+            selectedRepositoryIDs: [501],
             destination: destination
         )
 
-        try expect(conflicts.isEmpty, "相同远端的 Git 仓库应允许 fetch")
+        try expect(conflicts.isEmpty, "相同远端的 Git 仓库应允许安全跳过")
     },
     TestCase("不同远端的同名 Git 仓库会阻止同步") {
         let destination = try destinationTestDirectory()
@@ -117,9 +113,7 @@ let syncDestinationTests = [
 
         let conflicts = SyncDestinationInspector.conflicts(
             repositories: [destinationRepository],
-            preferences: [
-                RepositorySyncPreference(repositoryID: 501, mode: .manual)
-            ],
+            selectedRepositoryIDs: [501],
             destination: destination
         )
 

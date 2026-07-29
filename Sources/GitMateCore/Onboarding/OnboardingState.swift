@@ -4,7 +4,7 @@ public enum OnboardingEvent: Equatable, Sendable {
     case accountVerified(GitHubAccount)
     case permissionsConfirmed
     case repositoriesLoaded([Repository])
-    case syncConfigured([RepositorySyncPreference])
+    case downloadConfigured(Set<Int64>)
     case syncProgressUpdated(SyncProgress)
     case repositoryFailed(id: Int64, message: String)
     case networkLost
@@ -18,7 +18,7 @@ public struct OnboardingState: Equatable, Sendable {
     public var route: OnboardingRoute
     public var account: GitHubAccount?
     public var repositories: [Repository]
-    public var preferences: [RepositorySyncPreference]
+    public var selectedRepositoryIDs: Set<Int64>
     public var progress: SyncProgress
     public var canResumeSync: Bool
     public var failedRepositoryIDs: [Int64]
@@ -28,7 +28,7 @@ public struct OnboardingState: Equatable, Sendable {
         route: OnboardingRoute = .welcome,
         account: GitHubAccount? = nil,
         repositories: [Repository] = [],
-        preferences: [RepositorySyncPreference] = [],
+        selectedRepositoryIDs: Set<Int64> = [],
         progress: SyncProgress = SyncProgress(),
         canResumeSync: Bool = false,
         failedRepositoryIDs: [Int64] = [],
@@ -37,7 +37,7 @@ public struct OnboardingState: Equatable, Sendable {
         self.route = route
         self.account = account
         self.repositories = repositories
-        self.preferences = preferences
+        self.selectedRepositoryIDs = selectedRepositoryIDs
         self.progress = progress
         self.canResumeSync = canResumeSync
         self.failedRepositoryIDs = failedRepositoryIDs
@@ -63,11 +63,11 @@ public struct OnboardingState: Equatable, Sendable {
         case let .repositoriesLoaded(repositories):
             self.repositories = repositories
 
-        case let .syncConfigured(preferences):
-            self.preferences = preferences
+        case let .downloadConfigured(selectedRepositoryIDs):
+            self.selectedRepositoryIDs = selectedRepositoryIDs
             progress = SyncProgress(
                 completed: 0,
-                total: preferences.filter(\.shouldSyncInitially).count
+                total: selectedRepositoryIDs.count
             )
             route = .syncProgress
 

@@ -53,10 +53,7 @@ let repositorySyncServiceTests = [
         let events = try await collect(
             service.sync(
                 repositories: [syncRepositoryOne, syncRepositoryTwo],
-                preferences: [
-                    RepositorySyncPreference(repositoryID: 1, mode: .automatic),
-                    RepositorySyncPreference(repositoryID: 2, mode: .never)
-                ],
+                selectedRepositoryIDs: [1],
                 destination: destination,
                 accessToken: "private-token"
             )
@@ -103,9 +100,7 @@ let repositorySyncServiceTests = [
         let events = try await collect(
             service.sync(
                 repositories: [syncRepositoryOne],
-                preferences: [
-                    RepositorySyncPreference(repositoryID: 1, mode: .manual)
-                ],
+                selectedRepositoryIDs: [1],
                 destination: destination,
                 accessToken: "private-token"
             )
@@ -138,9 +133,7 @@ let repositorySyncServiceTests = [
         let events = try await collect(
             service.sync(
                 repositories: [syncRepositoryOne],
-                preferences: [
-                    RepositorySyncPreference(repositoryID: 1, mode: .manual)
-                ],
+                selectedRepositoryIDs: [1],
                 destination: destination,
                 accessToken: nil
             )
@@ -168,10 +161,7 @@ let repositorySyncServiceTests = [
         let events = try await collect(
             service.sync(
                 repositories: [syncRepositoryOne, syncRepositoryTwo],
-                preferences: [
-                    RepositorySyncPreference(repositoryID: 1, mode: .automatic),
-                    RepositorySyncPreference(repositoryID: 2, mode: .automatic)
-                ],
+                selectedRepositoryIDs: [1, 2],
                 destination: destination,
                 accessToken: nil
             )

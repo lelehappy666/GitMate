@@ -37,7 +37,7 @@ let onboardingStateTests = [
         state.transition(.enterpriseRequested)
         try expectEqual(state.route, .enterpriseConnection, "企业登录应进入企业连接页")
     },
-    TestCase("权限确认后加载仓库并保存同步偏好") {
+    TestCase("权限确认后加载仓库并保存下载选择") {
         var state = OnboardingState(route: .permissionReview, account: fixtureAccount)
         state.transition(.permissionsConfirmed)
         try expectEqual(state.route, .repositorySync, "权限确认后应进入仓库同步设置")
@@ -45,10 +45,13 @@ let onboardingStateTests = [
         state.transition(.repositoriesLoaded([fixtureRepository]))
         try expectEqual(state.repositories.count, 1, "应保存加载到的仓库")
 
-        let preference = RepositorySyncPreference(repositoryID: 101, mode: .automatic)
-        state.transition(.syncConfigured([preference]))
+        state.transition(.downloadConfigured([101]))
         try expectEqual(state.route, .syncProgress, "确认同步设置后应进入同步进度页")
-        try expectEqual(state.preferences, [preference], "应保存仓库同步偏好")
+        try expectEqual(
+            state.selectedRepositoryIDs,
+            [101],
+            "应保存仓库下载选择"
+        )
     },
     TestCase("同步时断网进入可恢复页面") {
         var state = OnboardingState(route: .syncProgress)

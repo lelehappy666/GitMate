@@ -44,7 +44,7 @@ private struct FixedSyncService: RepositorySyncService {
 
     func sync(
         repositories: [Repository],
-        preferences: [RepositorySyncPreference],
+        selectedRepositoryIDs: Set<Int64>,
         destination: URL,
         accessToken: String?
     ) -> AsyncThrowingStream<SyncEvent, Error> {
@@ -82,7 +82,7 @@ private final class CancellableSyncService: RepositorySyncService, @unchecked Se
 
     func sync(
         repositories: [Repository],
-        preferences: [RepositorySyncPreference],
+        selectedRepositoryIDs: Set<Int64>,
         destination: URL,
         accessToken: String?
     ) -> AsyncThrowingStream<SyncEvent, Error> {
@@ -151,6 +151,36 @@ private func makeViewModel(
 }
 
 let onboardingViewModelTests = [
+    TestCase("仓库默认全部未选择并可切换首次下载选择") { @MainActor in
+        let (viewModel, _) = try makeViewModel()
+        await viewModel.startGitHubLogin()
+        await viewModel.connectGitHub(token: "secret")
+        await viewModel.confirmPermissions()
+
+        try expectEqual(
+            viewModel.state.selectedRepositoryIDs,
+            [],
+            "仓库默认应全部未选择"
+        )
+        viewModel.setRepositorySelected(
+            repositoryID: viewModelRepository.id,
+            isSelected: true
+        )
+        try expectEqual(
+            viewModel.state.selectedRepositoryIDs,
+            [viewModelRepository.id],
+            "勾选后应进入首次下载集合"
+        )
+        viewModel.setRepositorySelected(
+            repositoryID: viewModelRepository.id,
+            isSelected: false
+        )
+        try expectEqual(
+            viewModel.state.selectedRepositoryIDs,
+            [],
+            "取消勾选后应移出首次下载集合"
+        )
+    },
     TestCase("GitHub 登录保存令牌并进入权限确认页") { @MainActor in
         let sessionStore = InMemoryAccountSessionStore()
         let (viewModel, credentialStore) = try makeViewModel(
@@ -171,7 +201,7 @@ let onboardingViewModelTests = [
             "账户元数据应保存到会话存储"
         )
     },
-    TestCase("确认权限后加载仓库并默认全部不同步") { @MainActor in
+    TestCase("确认权限后加载仓库并默认全部未选择") { @MainActor in
         let (viewModel, _) = try makeViewModel()
         await viewModel.startGitHubLogin()
         await viewModel.connectGitHub(token: "secret")
@@ -181,9 +211,9 @@ let onboardingViewModelTests = [
         try expectEqual(viewModel.state.route, .repositorySync, "应进入第 5 页")
         try expectEqual(viewModel.state.repositories, [viewModelRepository], "应加载账户仓库")
         try expectEqual(
-            viewModel.state.preferences,
-            [RepositorySyncPreference(repositoryID: 101, mode: .never)],
-            "首次加载应默认全部不同步"
+            viewModel.state.selectedRepositoryIDs,
+            [],
+            "首次加载应默认全部未选择"
         )
     },
     TestCase("重新启动后恢复账户并直接进入仓库页") { @MainActor in
@@ -201,9 +231,9 @@ let onboardingViewModelTests = [
         try expectEqual(viewModel.state.account, viewModelAccount, "应恢复已登录账户")
         try expectEqual(viewModel.state.route, .repositorySync, "应跳过登录并进入仓库页")
         try expectEqual(
-            viewModel.state.preferences,
-            [RepositorySyncPreference(repositoryID: 101, mode: .never)],
-            "恢复会话后仓库也应默认不同步"
+            viewModel.state.selectedRepositoryIDs,
+            [],
+            "恢复会话后仓库也应默认未选择"
         )
     },
     TestCase("同步事件实时更新当前文件与长条进度") { @MainActor in
@@ -217,7 +247,7 @@ let onboardingViewModelTests = [
         await viewModel.startGitHubLogin()
         await viewModel.connectGitHub(token: "secret")
         await viewModel.confirmPermissions()
-        viewModel.updateSyncMode(repositoryID: 101, mode: .manual)
+        viewModel.setRepositorySelected(repositoryID: 101, isSelected: true)
 
         await viewModel.startSync()
 
@@ -231,7 +261,7 @@ let onboardingViewModelTests = [
         await viewModel.startGitHubLogin()
         await viewModel.connectGitHub(token: "secret")
         await viewModel.confirmPermissions()
-        viewModel.updateSyncMode(repositoryID: 101, mode: .manual)
+        viewModel.setRepositorySelected(repositoryID: 101, isSelected: true)
 
         let task = Task { await viewModel.startSync() }
         while !syncService.hasStarted {
@@ -253,7 +283,7 @@ let onboardingViewModelTests = [
         await viewModel.startGitHubLogin()
         await viewModel.connectGitHub(token: "secret")
         await viewModel.confirmPermissions()
-        viewModel.updateSyncMode(repositoryID: 101, mode: .manual)
+        viewModel.setRepositorySelected(repositoryID: 101, isSelected: true)
 
         await viewModel.startSync()
 
@@ -310,7 +340,7 @@ let onboardingViewModelTests = [
         await viewModel.startGitHubLogin()
         await viewModel.connectGitHub(token: "secret")
         await viewModel.confirmPermissions()
-        viewModel.updateSyncMode(repositoryID: 101, mode: .manual)
+        viewModel.setRepositorySelected(repositoryID: 101, isSelected: true)
 
         await viewModel.startSync()
 
@@ -331,7 +361,7 @@ let onboardingViewModelTests = [
         await viewModel.startGitHubLogin()
         await viewModel.connectGitHub(token: "secret")
         await viewModel.confirmPermissions()
-        viewModel.updateSyncMode(repositoryID: 101, mode: .manual)
+        viewModel.setRepositorySelected(repositoryID: 101, isSelected: true)
 
         await viewModel.startSync()
 
@@ -348,7 +378,7 @@ let onboardingViewModelTests = [
         await viewModel.startGitHubLogin()
         await viewModel.connectGitHub(token: "secret")
         await viewModel.confirmPermissions()
-        viewModel.updateSyncMode(repositoryID: 101, mode: .manual)
+        viewModel.setRepositorySelected(repositoryID: 101, isSelected: true)
 
         await viewModel.startSync()
 
@@ -365,7 +395,7 @@ let onboardingViewModelTests = [
         await viewModel.startGitHubLogin()
         await viewModel.connectGitHub(token: "secret")
         await viewModel.confirmPermissions()
-        viewModel.updateSyncMode(repositoryID: 101, mode: .manual)
+        viewModel.setRepositorySelected(repositoryID: 101, isSelected: true)
 
         await viewModel.startSync()
 

@@ -3,18 +3,14 @@ import Foundation
 public enum SyncDestinationInspector {
     public static func conflicts(
         repositories: [Repository],
-        preferences: [RepositorySyncPreference],
+        selectedRepositoryIDs: Set<Int64>,
         destination: URL,
         fileManager: FileManager = .default
     ) -> [URL] {
-        let selectedIDs = Set(
-            preferences
-                .filter(\.shouldSyncInitially)
-                .map(\.repositoryID)
-        )
-
         return repositories.compactMap { repository in
-            guard selectedIDs.contains(repository.id) else { return nil }
+            guard selectedRepositoryIDs.contains(repository.id) else {
+                return nil
+            }
             let repositoryDirectory = repositoryDirectory(
                 for: repository,
                 destination: destination

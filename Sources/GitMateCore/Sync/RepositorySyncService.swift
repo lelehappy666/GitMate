@@ -29,7 +29,7 @@ public enum SyncEvent: Equatable, Sendable {
 public protocol RepositorySyncService: Sendable {
     func sync(
         repositories: [Repository],
-        preferences: [RepositorySyncPreference],
+        selectedRepositoryIDs: Set<Int64>,
         destination: URL,
         accessToken: String?
     ) -> AsyncThrowingStream<SyncEvent, Error>
