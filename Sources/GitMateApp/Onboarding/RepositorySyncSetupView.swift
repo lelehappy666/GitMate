@@ -44,19 +44,24 @@ struct RepositorySyncSetupView: View {
                         Task { await viewModel.refreshRepositories() }
                     } label: {
                         if viewModel.isRefreshingRepositories {
-                            HStack(spacing: 7) {
-                                ProgressView().controlSize(.small)
-                                Text("正在刷新")
-                            }
+                            ProgressView()
+                                .controlSize(.small)
                         } else {
-                            Label(
-                                "刷新云端仓库",
-                                systemImage: "arrow.clockwise"
-                            )
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 13, weight: .semibold))
                         }
                     }
-                    .buttonStyle(GitMateButtonStyle(role: .quiet))
+                    .buttonStyle(.plain)
+                    .frame(width: 32, height: 32)
+                    .background(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(GitMateTheme.border, lineWidth: 1)
+                    }
                     .disabled(viewModel.isRefreshingRepositories)
+                    .help("刷新云端仓库")
+                    .accessibilityLabel("刷新云端仓库")
                     .accessibilityIdentifier(
                         "onboarding.repository.refresh"
                     )
