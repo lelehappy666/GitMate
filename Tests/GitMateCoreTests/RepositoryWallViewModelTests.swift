@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import GitMateCore
 
@@ -163,7 +164,7 @@ let repositoryWallViewModelTests = [
     },
     TestCase("仓库墙从 README 提取封面并优先读取磁盘缓存") {
         let sourceURL = URL(string: "https://cdn.example.com/hero.png")!
-        let imageData = Data([0x01, 0x02, 0x03])
+        let imageData = validRepositoryWallCoverData()
         let cache = RepositoryWallCoverCacheStub(
             entries: [
                 sourceURL: RepositoryCoverCacheEntry(
@@ -243,8 +244,120 @@ let repositoryWallViewModelTests = [
             "workspace.repositories.poster.42",
             "海报应提供由仓库编号稳定生成的可访问标识"
         )
+    },
+    TestCase("仓库墙解析远程封面成功转缓存失败转稳定回退") { @MainActor in
+        let successURL = URL(string: "https://images.example/success.png")!
+        let failureURL = URL(string: "https://images.example/failure.png")!
+        let success = remoteRepositoryPosterFixture(
+            id: 51,
+            sourceURL: successURL
+        )
+        let failure = remoteRepositoryPosterFixture(
+            id: 52,
+            sourceURL: failureURL
+        )
+        let data = validRepositoryWallCoverData()
+        let loader = RepositoryWallLoaderStub(
+            successfulEntries: [
+                successURL: RepositoryCoverCacheEntry(
+                    data: data,
+                    metadata: RepositoryCoverCacheMetadata(
+                        contentType: "image/png",
+                        storedAt: Date(timeIntervalSince1970: 10),
+                        pixelWidth: 320,
+                        pixelHeight: 280
+                    )
+                )
+            ]
+        )
+        let viewModel = RepositoryWallViewModel(
+            items: [success, failure],
+            coverLoader: loader
+        )
+
+        try expect(
+            !success.cover.usesREADMEImage,
+            "远程图片尚未验证前不得计为 README 封面"
+        )
+        await viewModel.resolvePendingCovers()
+
+        try expectEqual(
+            viewModel.items[0].cover,
+            .cached(
+                data: data,
+                sourceURL: successURL,
+                fallback: success.cover.fallback
+            ),
+            "成功加载后应转为真实缓存封面"
+        )
+        try expectEqual(
+            viewModel.items[1].cover,
+            .fallback(failure.cover.fallback),
+            "远程失败后应转为稳定回退封面"
+        )
+    },
+    TestCase("仓库墙解析远程封面取消后保持待加载状态") { @MainActor in
+        let item = remoteRepositoryPosterFixture(
+            id: 61,
+            sourceURL: URL(string: "https://images.example/slow.png")!
+        )
+        let loader = SuspendingRepositoryWallLoader()
+        let viewModel = RepositoryWallViewModel(
+            items: [item],
+            coverLoader: loader
+        )
+        let task = Task { @MainActor in
+            await viewModel.resolvePendingCovers()
+        }
+
+        while await !loader.hasStarted {
+            await Task.yield()
+        }
+        task.cancel()
+        await task.value
+
+        try expectEqual(
+            viewModel.items[0].cover,
+            item.cover,
+            "取消不得把尚未完成的远程封面错误标记为失败"
+        )
     }
 ]
+
+private enum RepositoryWallLoaderError: Error, Sendable {
+    case failed
+}
+
+private actor RepositoryWallLoaderStub: RepositoryCoverLoading {
+    let successfulEntries: [URL: RepositoryCoverCacheEntry]
+
+    init(successfulEntries: [URL: RepositoryCoverCacheEntry]) {
+        self.successfulEntries = successfulEntries
+    }
+
+    func load(
+        repositoryID _: Int64,
+        sourceURL: URL
+    ) async throws -> RepositoryCoverCacheEntry {
+        guard let entry = successfulEntries[sourceURL] else {
+            throw RepositoryWallLoaderError.failed
+        }
+        return entry
+    }
+}
+
+private actor SuspendingRepositoryWallLoader: RepositoryCoverLoading {
+    private(set) var hasStarted = false
+
+    func load(
+        repositoryID _: Int64,
+        sourceURL _: URL
+    ) async throws -> RepositoryCoverCacheEntry {
+        hasStarted = true
+        try await Task.sleep(for: .seconds(30))
+        throw RepositoryWallLoaderError.failed
+    }
+}
 
 private final class RepositoryWallCoverCacheStub: RepositoryCoverCaching,
     @unchecked Sendable
@@ -299,6 +412,28 @@ private func repositoryPosterFixture(
                 language: language
             )
         )
+    )
+}
+
+private func remoteRepositoryPosterFixture(
+    id: Int64,
+    sourceURL: URL
+) -> RepositoryPosterItem {
+    let repository = repositoryWallRepository(
+        id: id,
+        fullName: "owner/repository-\(id)"
+    )
+    let fallback = FallbackRepositoryCover.make(
+        repository: repository,
+        language: "Swift"
+    )
+    return RepositoryPosterItem(
+        repository: repository,
+        language: "Swift",
+        syncMode: .automatic,
+        syncState: .synchronized,
+        updatedAt: nil,
+        cover: .remote(sourceURL: sourceURL, fallback: fallback)
     )
 }
 
@@ -361,4 +496,23 @@ private func repositoryWallRepository(
         cloneURL: URL(string: "https://github.example/\(fullName).git")!,
         ownerAvatarURL: nil
     )
+}
+
+private func validRepositoryWallCoverData() -> Data {
+    let representation = NSBitmapImageRep(
+        bitmapDataPlanes: nil,
+        pixelsWide: 320,
+        pixelsHigh: 280,
+        bitsPerSample: 8,
+        samplesPerPixel: 4,
+        hasAlpha: true,
+        isPlanar: false,
+        colorSpaceName: .deviceRGB,
+        bytesPerRow: 0,
+        bitsPerPixel: 0
+    )!
+    return representation.representation(
+        using: .png,
+        properties: [:]
+    )!
 }

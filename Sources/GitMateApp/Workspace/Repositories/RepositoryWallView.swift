@@ -15,22 +15,26 @@ struct RepositoryWallView: View {
     ]
 
     var body: some View {
+        let visibleItems = viewModel.visibleItems
         VStack(alignment: .leading, spacing: 0) {
             header
                 .padding(.horizontal, 28)
                 .padding(.top, 22)
                 .padding(.bottom, 16)
 
-            toolbar
+            toolbar(visibleItemCount: visibleItems.count)
                 .padding(.horizontal, 28)
                 .padding(.bottom, 16)
 
             Divider()
 
-            repositoryContent
+            repositoryContent(visibleItems: visibleItems)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(GitMateTheme.canvas)
+        .task {
+            await viewModel.resolvePendingCovers()
+        }
     }
 
     private var header: some View {
@@ -79,7 +83,7 @@ struct RepositoryWallView: View {
         .frame(maxWidth: GitMateTheme.contentMaxWidth, alignment: .leading)
     }
 
-    private var toolbar: some View {
+    private func toolbar(visibleItemCount: Int) -> some View {
         VStack(spacing: 10) {
             HStack(spacing: 10) {
                 HStack(spacing: 9) {
@@ -139,7 +143,7 @@ struct RepositoryWallView: View {
 
                 Spacer(minLength: 0)
 
-                Text("显示 \(viewModel.visibleItems.count) 个仓库")
+                Text("显示 \(visibleItemCount) 个仓库")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(GitMateTheme.textSecondary)
             }
@@ -207,14 +211,16 @@ struct RepositoryWallView: View {
     }
 
     @ViewBuilder
-    private var repositoryContent: some View {
+    private func repositoryContent(
+        visibleItems: [RepositoryPosterItem]
+    ) -> some View {
         if viewModel.items.isEmpty {
             emptyState(
                 symbol: "square.stack.3d.up.slash",
                 title: "还没有仓库",
                 message: "完成同步或添加本地仓库后，仓库会出现在这里。"
             )
-        } else if viewModel.visibleItems.isEmpty {
+        } else if visibleItems.isEmpty {
             emptyState(
                 symbol: "line.3.horizontal.decrease.circle",
                 title: "没有符合条件的仓库",
@@ -223,7 +229,7 @@ struct RepositoryWallView: View {
         } else {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 18) {
-                    ForEach(viewModel.visibleItems) { item in
+                    ForEach(visibleItems) { item in
                         Button {
                             onRoute(item.destination)
                         } label: {
@@ -389,10 +395,16 @@ private struct RepositoryPosterCard: View {
                         .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(GitMateTheme.textPrimary)
                         .lineLimit(1)
-                    Text(item.owner)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(GitMateTheme.textSecondary)
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        GitMateAvatar(
+                            url: item.repository.ownerAvatarURL,
+                            size: 18
+                        )
+                        Text(item.owner)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(GitMateTheme.textSecondary)
+                            .lineLimit(1)
+                    }
                 }
 
                 HStack(spacing: 7) {
@@ -457,23 +469,12 @@ private struct RepositoryPosterCard: View {
             } else {
                 RepositoryFallbackCover(cover: fallback)
             }
-        case let .remote(sourceURL, fallback):
-            AsyncImage(url: sourceURL) { phase in
-                switch phase {
-                case let .success(image):
-                    posterImage(image)
-                case .empty:
-                    ZStack {
-                        RepositoryFallbackCover(cover: fallback)
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(.white)
-                    }
-                case .failure:
-                    RepositoryFallbackCover(cover: fallback)
-                @unknown default:
-                    RepositoryFallbackCover(cover: fallback)
-                }
+        case let .remote(_, fallback):
+            ZStack {
+                RepositoryFallbackCover(cover: fallback)
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(.white)
             }
         case let .fallback(fallback):
             RepositoryFallbackCover(cover: fallback)
@@ -575,25 +576,6 @@ private struct RepositoryPosterCard: View {
 private struct RepositoryFallbackCover: View {
     let cover: FallbackRepositoryCover
 
-    private let palette: [(Color, Color)] = [
-        (
-            Color(red: 0.08, green: 0.31, blue: 0.62),
-            Color(red: 0.15, green: 0.53, blue: 0.83)
-        ),
-        (
-            Color(red: 0.25, green: 0.16, blue: 0.55),
-            Color(red: 0.52, green: 0.31, blue: 0.75)
-        ),
-        (
-            Color(red: 0.08, green: 0.38, blue: 0.34),
-            Color(red: 0.16, green: 0.62, blue: 0.46)
-        ),
-        (
-            Color(red: 0.45, green: 0.18, blue: 0.20),
-            Color(red: 0.76, green: 0.33, blue: 0.27)
-        )
-    ]
-
     var body: some View {
         ZStack {
             LinearGradient(
@@ -629,8 +611,21 @@ private struct RepositoryFallbackCover: View {
     }
 
     private var colors: [Color] {
-        let byte = Int(cover.seed.prefix(2), radix: 16) ?? 0
-        let pair = palette[byte % palette.count]
-        return [pair.0, pair.1]
+        let palette = RepositoryFallbackPaletteResolver.resolve(cover)
+        let baseHues = [0.58, 0.52, 0.38, 0.03, 0.74, 0.92]
+        let hue = baseHues[palette.family % baseHues.count]
+            + Double(palette.variant) * 0.012
+        return [
+            Color(
+                hue: hue.truncatingRemainder(dividingBy: 1),
+                saturation: 0.78,
+                brightness: 0.46
+            ),
+            Color(
+                hue: (hue + 0.055).truncatingRemainder(dividingBy: 1),
+                saturation: 0.68,
+                brightness: 0.70
+            )
+        ]
     }
 }

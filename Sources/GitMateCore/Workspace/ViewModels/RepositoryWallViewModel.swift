@@ -64,9 +64,9 @@ public enum RepositoryPosterCover: Equatable, Sendable {
 
     public var usesREADMEImage: Bool {
         switch self {
-        case .cached, .remote:
+        case .cached:
             true
-        case .fallback:
+        case .remote, .fallback:
             false
         }
     }
@@ -112,6 +112,19 @@ public struct RepositoryPosterItem: Identifiable, Equatable, Sendable {
 
     public var accessibilityIdentifier: String {
         "workspace.repositories.poster.\(repository.id)"
+    }
+
+    public func replacingCover(
+        _ cover: RepositoryPosterCover
+    ) -> RepositoryPosterItem {
+        RepositoryPosterItem(
+            repository: repository,
+            language: language,
+            syncMode: syncMode,
+            syncState: syncState,
+            updatedAt: updatedAt,
+            cover: cover
+        )
     }
 }
 
@@ -170,7 +183,10 @@ public enum RepositoryPosterBuilder {
         if let cached = try? cache.load(
             repositoryID: content.repository.id,
             sourceURL: candidate.url
-        ) {
+        ), (try? RepositoryCoverImageValidator.dimensions(
+            data: cached.data,
+            minimumPixelDimension: 240
+        )) != nil {
             return .cached(
                 data: cached.data,
                 sourceURL: candidate.url,
@@ -347,8 +363,15 @@ public final class RepositoryWallViewModel {
     public var sort: RepositoryWallSort = .recentlyUpdated
     public private(set) var items: [RepositoryPosterItem]
 
-    public init(items: [RepositoryPosterItem]) {
+    @ObservationIgnored
+    private let coverLoader: (any RepositoryCoverLoading)?
+
+    public init(
+        items: [RepositoryPosterItem],
+        coverLoader: (any RepositoryCoverLoading)? = nil
+    ) {
         self.items = items
+        self.coverLoader = coverLoader
     }
 
     public var visibleItems: [RepositoryPosterItem] {
@@ -378,10 +401,93 @@ public final class RepositoryWallViewModel {
         }
     }
 
+    public func resolvePendingCovers() async {
+        guard let coverLoader else {
+            return
+        }
+        let pending = items.compactMap { item -> PendingRepositoryCover? in
+            guard case let .remote(sourceURL, fallback) = item.cover else {
+                return nil
+            }
+            return PendingRepositoryCover(
+                repositoryID: item.id,
+                sourceURL: sourceURL,
+                fallback: fallback
+            )
+        }
+        guard !pending.isEmpty else {
+            return
+        }
+
+        do {
+            let resolutions = try await withThrowingTaskGroup(
+                of: RepositoryCoverResolution.self
+            ) { group in
+                for cover in pending {
+                    group.addTask {
+                        try Task.checkCancellation()
+                        do {
+                            let entry = try await coverLoader.load(
+                                repositoryID: cover.repositoryID,
+                                sourceURL: cover.sourceURL
+                            )
+                            try Task.checkCancellation()
+                            return RepositoryCoverResolution(
+                                repositoryID: cover.repositoryID,
+                                cover: .cached(
+                                    data: entry.data,
+                                    sourceURL: cover.sourceURL,
+                                    fallback: cover.fallback
+                                )
+                            )
+                        } catch is CancellationError {
+                            throw CancellationError()
+                        } catch {
+                            return RepositoryCoverResolution(
+                                repositoryID: cover.repositoryID,
+                                cover: .fallback(cover.fallback)
+                            )
+                        }
+                    }
+                }
+
+                var results: [RepositoryCoverResolution] = []
+                for try await resolution in group {
+                    results.append(resolution)
+                }
+                return results
+            }
+            try Task.checkCancellation()
+            let covers = Dictionary(
+                uniqueKeysWithValues: resolutions.map {
+                    ($0.repositoryID, $0.cover)
+                }
+            )
+            items = items.map { item in
+                covers[item.id].map(item.replacingCover) ?? item
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            return
+        }
+    }
+
     private func normalizedLanguage(_ language: String) -> String {
         language.folding(
             options: [.caseInsensitive, .diacriticInsensitive],
             locale: Locale(identifier: "en_US_POSIX")
         )
     }
+}
+
+private struct PendingRepositoryCover: Sendable {
+    let repositoryID: Int64
+    let sourceURL: URL
+    let fallback: FallbackRepositoryCover
+}
+
+private struct RepositoryCoverResolution: Sendable {
+    let repositoryID: Int64
+    let cover: RepositoryPosterCover
 }

@@ -20,6 +20,7 @@ struct GitMateCoreTestsMain {
             + workspaceContentServiceTests
             + dashboardViewModelTests
             + repositoryWallViewModelTests
+            + repositoryCoverLoaderTests
             + readmeBlockParserTests
             + repositoryCoverExtractorTests
         var failedCount = 0
