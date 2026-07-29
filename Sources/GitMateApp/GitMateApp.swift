@@ -5,17 +5,30 @@ import SwiftUI
 @main
 @MainActor
 struct GitMateApp: App {
-    @State private var viewModel: OnboardingViewModel
+    @State private var onboardingViewModel: OnboardingViewModel?
+    @State private var previewWorkspaceViewModel:
+        RepositoryWorkspaceViewModel?
+    private let workspaceFactory: RepositoryWorkspaceRuntimeFactory?
 
     init() {
         if let page = Self.previewPage {
-            _viewModel = State(
-                initialValue: OnboardingPreviewFactory.make(page: page)
-            )
+            if (16...23).contains(page) {
+                _onboardingViewModel = State(initialValue: nil)
+                _previewWorkspaceViewModel = State(
+                    initialValue: WorkspacePreviewFactory.make(page: page)
+                )
+            } else {
+                _onboardingViewModel = State(
+                    initialValue: OnboardingPreviewFactory.make(page: page)
+                )
+                _previewWorkspaceViewModel = State(initialValue: nil)
+            }
+            workspaceFactory = nil
             return
         }
 
         let api = URLSessionGitHubAPI()
+        let credentialStore = KeychainCredentialStore()
         let applicationSupport = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -26,14 +39,19 @@ struct GitMateApp: App {
         let dependencies = OnboardingDependencies(
             apiProvider: DefaultGitHubAPIProvider(githubDotComAPI: api),
             enterpriseConnector: EnterpriseConnectionService(),
-            credentialStore: KeychainCredentialStore(),
+            credentialStore: credentialStore,
             accountSessionStore: UserDefaultsAccountSessionStore(),
             syncService: GitRepositorySyncService(),
             networkMonitor: NWPathNetworkMonitor(),
             syncDestination: syncDestination
         )
-        _viewModel = State(
+        _onboardingViewModel = State(
             initialValue: OnboardingViewModel(dependencies: dependencies)
+        )
+        _previewWorkspaceViewModel = State(initialValue: nil)
+        workspaceFactory = RepositoryWorkspaceRuntimeFactory(
+            credentialStore: credentialStore,
+            syncDestination: syncDestination
         )
     }
 
@@ -42,7 +60,7 @@ struct GitMateApp: App {
         guard let flagIndex = arguments.firstIndex(of: "--preview-page"),
               arguments.indices.contains(flagIndex + 1),
               let page = Int(arguments[flagIndex + 1]),
-              (1...9).contains(page) else {
+              (1...9).contains(page) || (16...23).contains(page) else {
             return nil
         }
         return page
@@ -50,7 +68,19 @@ struct GitMateApp: App {
 
     var body: some Scene {
         WindowGroup {
-            OnboardingRootView(viewModel: viewModel)
+            if let previewWorkspaceViewModel {
+                RepositoryWorkspaceRootView(
+                    viewModel: previewWorkspaceViewModel
+                )
+            } else if let onboardingViewModel, let workspaceFactory {
+                GitMateApplicationRootView(
+                    onboardingViewModel: onboardingViewModel,
+                    workspaceFactory: workspaceFactory
+                )
+            } else {
+                ProgressView("正在准备 GitMate…")
+                    .frame(width: 1_040, height: 680)
+            }
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)

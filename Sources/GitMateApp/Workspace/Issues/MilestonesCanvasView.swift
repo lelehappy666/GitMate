@@ -463,6 +463,15 @@ private struct MilestoneNodeView: View {
             .shadow(color: .black.opacity(0.09), radius: 12, y: 5)
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "\(milestone.title)，完成 \(Int(milestone.progress * 100))%"
+        )
+        .accessibilityHint("打开里程碑详情")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            action()
+        }
     }
 
     private var nodeColor: Color {
