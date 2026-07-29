@@ -5,6 +5,8 @@ struct GitMateCoreTestsMain {
     static func main() async {
         let tests = onboardingRouteTests
             + localGitCommandTests
+            + localGitSecurityTests
+            + repositoryOperationCoordinatorTests
             + onboardingStateTests
             + githubDeviceFlowTests
             + githubAPITests
