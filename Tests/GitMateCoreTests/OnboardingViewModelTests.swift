@@ -17,6 +17,30 @@ private final class FakeGitHubAPI: GitHubAPI, @unchecked Sendable {
     func repositories(token: String) async throws -> [Repository] {
         repositoryList
     }
+
+    func repositoryPage(
+        token: String,
+        page: Int,
+        perPage: Int
+    ) async throws -> GitHubRepositoryPage {
+        let normalizedPage = max(page, 1)
+        let normalizedPerPage = max(perPage, 1)
+        let start = (normalizedPage - 1) * normalizedPerPage
+        let pageRepositories: [Repository]
+        if start < repositoryList.count {
+            pageRepositories = Array(
+                repositoryList.dropFirst(start).prefix(normalizedPerPage)
+            )
+        } else {
+            pageRepositories = []
+        }
+        return GitHubRepositoryPage(
+            repositories: pageRepositories,
+            page: normalizedPage,
+            hasNextPage: start + pageRepositories.count
+                < repositoryList.count
+        )
+    }
 }
 
 private struct FakeAPIProvider: GitHubAPIProviding {
@@ -69,6 +93,14 @@ private struct OfflineGitHubAPI: GitHubAPI {
     }
 
     func repositories(token: String) async throws -> [Repository] {
+        throw URLError(.notConnectedToInternet)
+    }
+
+    func repositoryPage(
+        token: String,
+        page: Int,
+        perPage: Int
+    ) async throws -> GitHubRepositoryPage {
         throw URLError(.notConnectedToInternet)
     }
 }

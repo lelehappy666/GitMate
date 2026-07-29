@@ -50,11 +50,32 @@ public final class URLSessionGitHubAPI: GitHubAPI, @unchecked Sendable {
     }
 
     public func repositories(token: String) async throws -> [Repository] {
+        try await repositoryPage(
+            token: token,
+            page: 1,
+            perPage: 100
+        ).repositories
+    }
+
+    public func repositoryPage(
+        token: String,
+        page: Int,
+        perPage: Int
+    ) async throws -> GitHubRepositoryPage {
+        let normalizedPage = max(page, 1)
+        let normalizedPerPage = min(max(perPage, 1), 100)
         let request = try makeRequest(
             path: "/user/repos",
             token: token,
             queryItems: [
-                URLQueryItem(name: "per_page", value: "100"),
+                URLQueryItem(
+                    name: "page",
+                    value: String(normalizedPage)
+                ),
+                URLQueryItem(
+                    name: "per_page",
+                    value: String(normalizedPerPage)
+                ),
                 URLQueryItem(name: "sort", value: "updated")
             ]
         )
@@ -68,7 +89,7 @@ public final class URLSessionGitHubAPI: GitHubAPI, @unchecked Sendable {
             throw GitHubAPIError.decoding(error.localizedDescription)
         }
 
-        return payloads.map {
+        let repositories = payloads.map {
             Repository(
                 id: $0.id,
                 name: $0.name,
@@ -80,6 +101,11 @@ public final class URLSessionGitHubAPI: GitHubAPI, @unchecked Sendable {
                 ownerAvatarURL: $0.owner.avatarURL
             )
         }
+        return GitHubRepositoryPage(
+            repositories: repositories,
+            page: normalizedPage,
+            hasNextPage: repositories.count == normalizedPerPage
+        )
     }
 
     private func makeRequest(
@@ -114,12 +140,50 @@ public final class URLSessionGitHubAPI: GitHubAPI, @unchecked Sendable {
             throw GitHubAPIError.invalidResponse
         }
         guard (200..<300).contains(response.statusCode) else {
+            let message = GitHubErrorPayload.message(from: data)
+            if isRateLimited(response: response, message: message) {
+                throw GitHubAPIError.rateLimited(
+                    resetAt: rateLimitResetDate(response: response)
+                )
+            }
             throw GitHubAPIError.httpStatus(
                 response.statusCode,
-                GitHubErrorPayload.message(from: data)
+                message
             )
         }
         return response
+    }
+
+    private func isRateLimited(
+        response: HTTPURLResponse,
+        message: String?
+    ) -> Bool {
+        guard response.statusCode == 403 || response.statusCode == 429 else {
+            return false
+        }
+        if response.value(
+            forHTTPHeaderField: "X-RateLimit-Remaining"
+        ) == "0" {
+            return true
+        }
+        return message?
+            .localizedCaseInsensitiveContains("rate limit") == true
+    }
+
+    private func rateLimitResetDate(
+        response: HTTPURLResponse
+    ) -> Date {
+        if let value = response.value(
+            forHTTPHeaderField: "X-RateLimit-Reset"
+        ), let timestamp = TimeInterval(value) {
+            return Date(timeIntervalSince1970: timestamp)
+        }
+        if let value = response.value(
+            forHTTPHeaderField: "Retry-After"
+        ), let seconds = TimeInterval(value) {
+            return Date().addingTimeInterval(seconds)
+        }
+        return Date().addingTimeInterval(60)
     }
 }
 

@@ -4,6 +4,7 @@ public enum GitHubAPIError: Error, Equatable, Sendable {
     case invalidConfiguration(String)
     case invalidResponse
     case httpStatus(Int, String?)
+    case rateLimited(resetAt: Date)
     case decoding(String)
     case authorizationPending
     case slowDown
@@ -22,6 +23,8 @@ extension GitHubAPIError: LocalizedError {
         case let .httpStatus(statusCode, message):
             message.map { "GitHub 请求失败（\(statusCode)）：\($0)" }
                 ?? "GitHub 请求失败（\(statusCode)）。"
+        case let .rateLimited(resetAt):
+            "GitHub API 已达到速率限制，请在 \(resetAt.formatted()) 后重试。"
         case let .decoding(message):
             "无法解析 GitHub 数据：\(message)"
         case .authorizationPending:
