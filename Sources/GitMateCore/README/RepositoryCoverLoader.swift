@@ -400,7 +400,7 @@ private actor RepositoryCoverDownloadCoordinator {
     }
 }
 
-private actor RepositoryCoverDownloadGate {
+package actor RepositoryCoverDownloadGate {
     private struct Waiter {
         let id: UUID
         let continuation: CheckedContinuation<Void, Error>
@@ -410,11 +410,11 @@ private actor RepositoryCoverDownloadGate {
     private var activeCount = 0
     private var waiters: [Waiter] = []
 
-    init(maximumConcurrentDownloads: Int) {
+    package init(maximumConcurrentDownloads: Int) {
         self.maximumConcurrentDownloads = maximumConcurrentDownloads
     }
 
-    func acquire() async throws {
+    package func acquire() async throws {
         try Task.checkCancellation()
         if activeCount < maximumConcurrentDownloads {
             activeCount += 1
@@ -428,7 +428,12 @@ private actor RepositoryCoverDownloadGate {
                     Waiter(id: waiterID, continuation: continuation)
                 )
             }
-            try Task.checkCancellation()
+            do {
+                try Task.checkCancellation()
+            } catch {
+                release()
+                throw error
+            }
         } onCancel: {
             Task {
                 await self.cancel(waiterID)
@@ -436,7 +441,7 @@ private actor RepositoryCoverDownloadGate {
         }
     }
 
-    func release() {
+    package func release() {
         if waiters.isEmpty {
             activeCount = max(activeCount - 1, 0)
             return

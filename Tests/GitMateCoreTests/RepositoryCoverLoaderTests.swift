@@ -234,8 +234,95 @@ let repositoryCoverLoaderTests = [
                 != RepositoryFallbackPaletteResolver.resolve(swiftVariant).variant,
             "seed 必须继续影响渐变变体"
         )
+    },
+    TestCase("排队请求在令牌交接后取消不会永久占用并发许可") {
+        for _ in 0..<32 {
+            let gate = RepositoryCoverDownloadGate(
+                maximumConcurrentDownloads: 1
+            )
+            let tracker = CoverPermitTracker()
+
+            try await gate.acquire()
+            await tracker.enter()
+
+            let cancelledWaiter = Task(priority: .background) {
+                try await gate.acquire()
+                await tracker.enter()
+                defer {
+                    Task {
+                        await tracker.leave()
+                        await gate.release()
+                    }
+                }
+                try Task.checkCancellation()
+            }
+            for _ in 0..<8 {
+                await Task.yield()
+            }
+
+            await tracker.leave()
+            await gate.release()
+            cancelledWaiter.cancel()
+            _ = try? await cancelledWaiter.value
+
+            let thirdRequest = Task {
+                try await gate.acquire()
+                await tracker.enter()
+                await tracker.leave()
+                await gate.release()
+            }
+            try await waitForCoverPermitTask(
+                thirdRequest,
+                timeout: .milliseconds(250)
+            )
+
+            let maximumActiveCount = await tracker.maximumActiveCount
+            try expect(
+                maximumActiveCount <= 1,
+                "并发上限为一时任何令牌交接都不得出现双持有"
+            )
+        }
     }
 ]
+
+private actor CoverPermitTracker {
+    private var activeCount = 0
+    private(set) var maximumActiveCount = 0
+
+    func enter() {
+        activeCount += 1
+        maximumActiveCount = max(maximumActiveCount, activeCount)
+    }
+
+    func leave() {
+        activeCount -= 1
+    }
+}
+
+private enum CoverPermitTimeout: Error, Sendable {
+    case exceeded
+}
+
+private func waitForCoverPermitTask(
+    _ task: Task<Void, Error>,
+    timeout: Duration
+) async throws {
+    try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask {
+            try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+        }
+        group.addTask {
+            try await Task.sleep(for: timeout)
+            throw CoverPermitTimeout.exceeded
+        }
+        _ = try await group.next()
+        group.cancelAll()
+    }
+}
 
 private final class CoverLoaderCacheStub: RepositoryCoverCaching,
     @unchecked Sendable
