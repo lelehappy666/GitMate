@@ -61,7 +61,7 @@ struct DashboardView: View {
     private var accountDescription: String {
         let accountName = viewModel.state.account.displayName
             ?? viewModel.state.account.login
-        return "\(accountName) · \(viewModel.state.account.serverURL.host ?? viewModel.state.account.serverURL.absoluteString)"
+        return "\(accountName) · \(viewModel.state.account.serverDisplayName)"
     }
 
     @ViewBuilder
@@ -133,10 +133,10 @@ struct DashboardView: View {
         HStack(alignment: .center, spacing: 22) {
             ZStack {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.white.opacity(0.17))
+                    .fill(focusForeground.opacity(0.13))
                 Image(systemName: focusSymbol)
                     .font(.system(size: 30, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(focusForeground)
             }
             .frame(width: 66, height: 66)
 
@@ -145,13 +145,13 @@ struct DashboardView: View {
                     .font(.system(size: 12, weight: .bold))
                     .textCase(.uppercase)
                     .tracking(1.2)
-                    .foregroundStyle(Color.white.opacity(0.88))
+                    .foregroundStyle(focusSecondaryForeground)
                 Text(viewModel.state.focus.title)
                     .font(.system(size: 23, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(focusForeground)
                 Text(viewModel.state.focus.message)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.94))
+                    .foregroundStyle(focusSecondaryForeground)
                     .lineLimit(2)
             }
 
@@ -164,7 +164,7 @@ struct DashboardView: View {
                     Text("待关注")
                         .font(.system(size: 11, weight: .semibold))
                 }
-                .foregroundStyle(.white)
+                .foregroundStyle(focusForeground)
                 .accessibilityElement(children: .combine)
             }
         }
@@ -403,6 +403,32 @@ struct DashboardView: View {
             GitMateTheme.accent
         case .neutral:
             GitMateTheme.success
+        }
+    }
+
+    private var focusForeground: Color {
+        switch viewModel.state.focus.kind {
+        case .failedWorkflow, .neutral:
+            GitMateTheme.textPrimary
+        case .authorizationRequired,
+             .syncFailure,
+             .localChanges,
+             .pendingPullRequest,
+             .recentActivity:
+            .white
+        }
+    }
+
+    private var focusSecondaryForeground: Color {
+        switch viewModel.state.focus.kind {
+        case .failedWorkflow, .neutral:
+            GitMateTheme.textPrimary
+        case .authorizationRequired,
+             .syncFailure,
+             .localChanges,
+             .pendingPullRequest,
+             .recentActivity:
+            Color.white.opacity(0.94)
         }
     }
 }

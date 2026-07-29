@@ -30,6 +30,29 @@ public struct DashboardAccountSummary: Equatable, Sendable {
         avatarURL = account.avatarURL
         serverURL = account.serverURL
     }
+
+    public var serverDisplayName: String {
+        guard let host = serverURL.host else {
+            return serverURL.absoluteString
+        }
+        guard let port = serverURL.port,
+              !isDefaultPort(port, for: serverURL.scheme)
+        else {
+            return host
+        }
+        return "\(host):\(port)"
+    }
+
+    private func isDefaultPort(_ port: Int, for scheme: String?) -> Bool {
+        switch scheme?.lowercased() {
+        case "https":
+            port == 443
+        case "http":
+            port == 80
+        default:
+            false
+        }
+    }
 }
 
 public enum DashboardFocusKind: Equatable, Sendable {
@@ -194,21 +217,26 @@ public final class DashboardViewModel {
             return
         }
 
+        let stateBeforeLoad = state
         isLoading = true
         state.loadPhase = .loading
         defer { isLoading = false }
 
         do {
+            try Task.checkCancellation()
             let content = try await loader.dashboard(
                 account: account,
                 repositories: repositories,
                 token: token
             )
+            try Task.checkCancellation()
             state = Self.makeState(
                 from: content,
                 sensitiveValue: token
             )
             hasLoadedSuccessfully = true
+        } catch is CancellationError {
+            state = stateBeforeLoad
         } catch {
             var failedState = DashboardState(account: account)
             failedState.loadPhase = .failed(

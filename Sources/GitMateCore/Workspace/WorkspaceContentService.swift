@@ -36,6 +36,8 @@ public final class WorkspaceContentService: @unchecked Sendable {
         var catalogReadFailed = false
         do {
             localRecord = try catalog.record(for: repository)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             catalogReadFailed = true
             localRecord = LocalRepositoryRecord(
@@ -60,6 +62,8 @@ public final class WorkspaceContentService: @unchecked Sendable {
         let loadedSnapshot: WorkspaceCacheSnapshot?
         do {
             loadedSnapshot = try cache.load(accountID: accountID)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             loadedSnapshot = nil
             panelErrors.append(
@@ -82,6 +86,8 @@ public final class WorkspaceContentService: @unchecked Sendable {
                 localStatus = try await localGit.status(
                     repositoryURL: localRecord.localURL
                 )
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 panelErrors.append(
                     panelError(
@@ -101,6 +107,8 @@ public final class WorkspaceContentService: @unchecked Sendable {
                 recentCommits = Array(
                     page.commits.prefix(Self.recentCommitLimit)
                 )
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 panelErrors.append(
                     panelError(
@@ -143,6 +151,8 @@ public final class WorkspaceContentService: @unchecked Sendable {
                     localRecord: localRecord,
                     accountID: accountID
                 )
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 panelErrors.append(
                     panelError(
@@ -152,6 +162,8 @@ public final class WorkspaceContentService: @unchecked Sendable {
                     )
                 )
             }
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             connectivity = mergedConnectivity(
                 connectivity,
@@ -172,6 +184,8 @@ public final class WorkspaceContentService: @unchecked Sendable {
                 repository: repository,
                 token: token
             )
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             connectivity = mergedConnectivity(
                 connectivity,
@@ -220,6 +234,8 @@ public final class WorkspaceContentService: @unchecked Sendable {
                     content.connectivity
                 )
                 panelErrors.append(contentsOf: content.panelErrors)
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 panelErrors.append(
                     panelError(

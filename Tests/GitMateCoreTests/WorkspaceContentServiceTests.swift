@@ -356,6 +356,68 @@ private actor SummaryRequestBarrier {
     }
 }
 
+private struct CancellationRepositoryFileSystem: RepositoryFileSystem {
+    func itemExists(at url: URL) -> Bool {
+        true
+    }
+
+    func recursiveByteCount(at url: URL) throws -> Int64 {
+        throw CancellationError()
+    }
+}
+
+private final class CancellationWorkspaceCache: WorkspaceCaching, @unchecked Sendable {
+    enum Stage: Equatable {
+        case load
+        case update
+    }
+
+    private let stage: Stage
+
+    init(stage: Stage) {
+        self.stage = stage
+    }
+
+    func load(accountID: String) throws -> WorkspaceCacheSnapshot? {
+        if stage == .load {
+            throw CancellationError()
+        }
+        return nil
+    }
+
+    func save(_ snapshot: WorkspaceCacheSnapshot) throws {}
+
+    func clear(accountID: String) throws {}
+
+    func update(
+        accountID: String,
+        _ transform: @Sendable (
+            WorkspaceCacheSnapshot?
+        ) throws -> WorkspaceCacheSnapshot
+    ) throws {
+        if stage == .update {
+            throw CancellationError()
+        }
+        _ = try transform(nil)
+    }
+}
+
+private func expectWorkspaceCancellation(
+    _ message: String,
+    operation: () async throws -> Void
+) async throws {
+    do {
+        try await operation()
+        throw TestFailure(description: "\(message)：操作未抛出 CancellationError")
+    } catch is CancellationError {
+        return
+    } catch {
+        throw TestFailure(
+            description: "\(message)：实际错误为 \(String(describing: error))"
+        )
+    }
+}
+
 private func contentCommitFixture(_ index: Int) -> GitCommit {
     GitCommit(
         shortHash: "abc\(index)",
@@ -1014,5 +1076,128 @@ let workspaceContentServiceTests = [
             },
             "应记录稳定的本地仓库面板错误"
         )
+    },
+    TestCase("工作区内容服务所有模块都向上传播取消") {
+        func service(
+            localGit: FixtureLocalGitReader = FixtureLocalGitReader(),
+            github: FixtureGitHubWorkspaceAPI = FixtureGitHubWorkspaceAPI(
+                summary: { _, _ in contentSummaryFixture },
+                readme: { _, _ in contentREADMEFixture }
+            ),
+            cache: any WorkspaceCaching = MemoryWorkspaceCache(),
+            catalog: LocalRepositoryCatalog = makeContentCatalog(
+                availability: ["desktop": .available]
+            )
+        ) -> WorkspaceContentService {
+            WorkspaceContentService(
+                catalog: catalog,
+                localGit: localGit,
+                github: github,
+                cache: cache
+            )
+        }
+
+        try await expectWorkspaceCancellation("本地目录模块不得吞掉取消") {
+            let cancellationService = service(
+                catalog: LocalRepositoryCatalog(
+                    rootDirectory: URL(filePath: "/workspace"),
+                    fileSystem: CancellationRepositoryFileSystem()
+                )
+            )
+            _ = try await cancellationService.repositoryContent(
+                repository: contentRepositoryFixture,
+                account: contentAccountFixture,
+                token: "secret"
+            )
+        }
+
+        try await expectWorkspaceCancellation("缓存读取模块不得吞掉取消") {
+            let cancellationService = service(
+                cache: CancellationWorkspaceCache(stage: .load)
+            )
+            _ = try await cancellationService.repositoryContent(
+                repository: contentRepositoryFixture,
+                account: contentAccountFixture,
+                token: "secret"
+            )
+        }
+
+        try await expectWorkspaceCancellation("本地状态模块不得吞掉取消") {
+            let cancellationService = service(
+                localGit: FixtureLocalGitReader(
+                    status: { _ in throw CancellationError() }
+                )
+            )
+            _ = try await cancellationService.repositoryContent(
+                repository: contentRepositoryFixture,
+                account: contentAccountFixture,
+                token: "secret"
+            )
+        }
+
+        try await expectWorkspaceCancellation("最近提交模块不得吞掉取消") {
+            let cancellationService = service(
+                localGit: FixtureLocalGitReader(
+                    commits: { _, _, _ in throw CancellationError() }
+                )
+            )
+            _ = try await cancellationService.repositoryContent(
+                repository: contentRepositoryFixture,
+                account: contentAccountFixture,
+                token: "secret"
+            )
+        }
+
+        try await expectWorkspaceCancellation("在线摘要模块不得吞掉取消") {
+            let cancellationService = service(
+                github: FixtureGitHubWorkspaceAPI(
+                    summary: { _, _ in throw CancellationError() },
+                    readme: { _, _ in contentREADMEFixture }
+                )
+            )
+            _ = try await cancellationService.repositoryContent(
+                repository: contentRepositoryFixture,
+                account: contentAccountFixture,
+                token: "secret"
+            )
+        }
+
+        try await expectWorkspaceCancellation("缓存保存模块不得吞掉取消") {
+            let cancellationService = service(
+                cache: CancellationWorkspaceCache(stage: .update)
+            )
+            _ = try await cancellationService.repositoryContent(
+                repository: contentRepositoryFixture,
+                account: contentAccountFixture,
+                token: "secret"
+            )
+        }
+
+        try await expectWorkspaceCancellation("README 模块不得吞掉取消") {
+            let cancellationService = service(
+                github: FixtureGitHubWorkspaceAPI(
+                    summary: { _, _ in contentSummaryFixture },
+                    readme: { _, _ in throw CancellationError() }
+                )
+            )
+            _ = try await cancellationService.repositoryContent(
+                repository: contentRepositoryFixture,
+                account: contentAccountFixture,
+                token: "secret"
+            )
+        }
+
+        try await expectWorkspaceCancellation("工作台聚合层不得吞掉取消") {
+            let cancellationService = service(
+                localGit: FixtureLocalGitReader(
+                    status: { _ in throw CancellationError() }
+                )
+            )
+            _ = try await cancellationService.dashboard(
+                account: contentAccountFixture,
+                repositories: [contentRepositoryFixture],
+                token: "secret"
+            )
+        }
     }
 ]

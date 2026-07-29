@@ -233,6 +233,132 @@ let dashboardViewModelTests = [
         try expectEqual(loadCount, 1, "并发 load 不应重复请求")
         try expectEqual(viewModel.state.repositoryCount, 1, "唯一请求结果应稳定写入状态")
     },
+    TestCase("取消暂停中的加载不写状态且随后可以重新加载") { @MainActor in
+        let account = dashboardAccount()
+        let repository = dashboardRepository(id: 1, fullName: "octo/app")
+        let content = WorkspaceDashboardContent(
+            account: account,
+            repositories: [dashboardRepositoryContent(repository: repository)],
+            connectivity: .online,
+            panelErrors: []
+        )
+        let loader = PausableDashboardLoader()
+        let viewModel = DashboardViewModel(
+            account: account,
+            repositories: [repository],
+            token: "secret",
+            loader: loader
+        )
+        let stateBeforeLoad = viewModel.state
+
+        let cancelledLoad = Task { @MainActor in
+            await viewModel.load()
+        }
+        while await loader.loadCount < 1 {
+            await Task.yield()
+        }
+        cancelledLoad.cancel()
+        await loader.resumeNext(with: content)
+        await cancelledLoad.value
+
+        try expectEqual(
+            viewModel.state,
+            stateBeforeLoad,
+            "取消不得写入成功、失败或残留加载状态"
+        )
+
+        let retryLoad = Task { @MainActor in
+            await viewModel.load()
+        }
+        while await loader.loadCount < 2 {
+            await Task.yield()
+        }
+        await loader.resumeNext(with: content)
+        await retryLoad.value
+
+        try expectEqual(viewModel.state.loadPhase, .loaded, "取消后应允许重新加载")
+        try expectEqual(viewModel.state.repositoryCount, 1, "重试应写入最新成功结果")
+    },
+    TestCase("加载失败后可以重试并写入成功结果") { @MainActor in
+        let account = dashboardAccount()
+        let repository = dashboardRepository(id: 1, fullName: "octo/retry")
+        let loader = SequencedDashboardLoader(
+            outcomes: [
+                .failure(.failed("第一次失败")),
+                .success(
+                    WorkspaceDashboardContent(
+                        account: account,
+                        repositories: [
+                            dashboardRepositoryContent(repository: repository)
+                        ],
+                        connectivity: .online,
+                        panelErrors: []
+                    )
+                )
+            ]
+        )
+        let viewModel = DashboardViewModel(
+            account: account,
+            repositories: [repository],
+            token: "secret",
+            loader: loader
+        )
+
+        await viewModel.load()
+        try expectEqual(
+            viewModel.state.loadPhase,
+            .failed(message: "暂时无法加载工作台，请稍后重试。"),
+            "首次失败应进入稳定失败状态"
+        )
+
+        await viewModel.load()
+
+        try expectEqual(viewModel.state.loadPhase, .loaded, "失败后再次加载应成功")
+        try expectEqual(viewModel.state.repositoryCount, 1, "重试成功结果应进入状态")
+        let loadCount = await loader.currentLoadCount()
+        try expectEqual(loadCount, 2, "失败后应真正发起第二次请求")
+    },
+    TestCase("加载成功后顺序重复调用只请求一次") { @MainActor in
+        let account = dashboardAccount()
+        let content = WorkspaceDashboardContent(
+            account: account,
+            repositories: [],
+            connectivity: .online,
+            panelErrors: []
+        )
+        let loader = SequencedDashboardLoader(
+            outcomes: [.success(content), .success(content)]
+        )
+        let viewModel = DashboardViewModel(
+            account: account,
+            repositories: [],
+            token: "secret",
+            loader: loader
+        )
+
+        await viewModel.load()
+        await viewModel.load()
+
+        let loadCount = await loader.currentLoadCount()
+        try expectEqual(loadCount, 1, "成功后顺序重复 load 应直接返回")
+    },
+    TestCase("企业服务器展示保留非默认端口") {
+        let account = GitHubAccount(
+            id: "enterprise-account",
+            login: "developer",
+            name: nil,
+            avatarURL: nil,
+            serverURL: URL(string: "https://git.company.example:8443/api/v3")!,
+            kind: .enterprise,
+            scopes: ["repo"]
+        )
+
+        try expectEqual(
+            DashboardAccountSummary(account: account).serverDisplayName,
+            "git.company.example:8443",
+            "企业服务器的非默认端口不得在展示摘要中丢失"
+        )
+    },
     TestCase("加载错误转为稳定状态且不泄露令牌") { @MainActor in
         let account = dashboardAccount()
         let secret = "ghp_do-not-leak"
@@ -328,7 +454,55 @@ private actor DashboardLoaderFixture: WorkspaceDashboardLoading {
     }
 }
 
-private enum DashboardFixtureError: Error {
+private actor PausableDashboardLoader: WorkspaceDashboardLoading {
+    private var continuations: [
+        CheckedContinuation<WorkspaceDashboardContent, Never>
+    ] = []
+    private(set) var loadCount = 0
+
+    func dashboard(
+        account: GitHubAccount,
+        repositories: [Repository],
+        token: String
+    ) async throws -> WorkspaceDashboardContent {
+        loadCount += 1
+        return await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func resumeNext(with content: WorkspaceDashboardContent) {
+        continuations.removeFirst().resume(returning: content)
+    }
+}
+
+private actor SequencedDashboardLoader: WorkspaceDashboardLoading {
+    private var outcomes: [
+        Result<WorkspaceDashboardContent, DashboardFixtureError>
+    ]
+    private var loadCount = 0
+
+    init(
+        outcomes: [Result<WorkspaceDashboardContent, DashboardFixtureError>]
+    ) {
+        self.outcomes = outcomes
+    }
+
+    func dashboard(
+        account: GitHubAccount,
+        repositories: [Repository],
+        token: String
+    ) async throws -> WorkspaceDashboardContent {
+        loadCount += 1
+        return try outcomes.removeFirst().get()
+    }
+
+    func currentLoadCount() -> Int {
+        loadCount
+    }
+}
+
+private enum DashboardFixtureError: Error, Sendable {
     case failed(String)
     case missingContent
 }
