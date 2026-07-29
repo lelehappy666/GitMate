@@ -19,6 +19,37 @@ private final class FakeGitHubAPI: GitHubAPI, @unchecked Sendable {
     }
 }
 
+private final class SequencedGitHubAPI: GitHubAPI, @unchecked Sendable {
+    private let account: GitHubAccount
+    private let lock = NSLock()
+    private var repositoryResults: [Result<[Repository], Error>]
+
+    init(
+        account: GitHubAccount,
+        repositoryResults: [Result<[Repository], Error>]
+    ) {
+        self.account = account
+        self.repositoryResults = repositoryResults
+    }
+
+    func currentUser(token: String) async throws -> GitHubAccount {
+        account
+    }
+
+    func repositories(token: String) async throws -> [Repository] {
+        let result = lock.withLock {
+            repositoryResults.count > 1
+                ? repositoryResults.removeFirst()
+                : repositoryResults[0]
+        }
+        return try result.get()
+    }
+}
+
+private enum RepositoryRefreshTestError: Error {
+    case unavailable
+}
+
 private struct FakeAPIProvider: GitHubAPIProviding {
     let api: any GitHubAPI
 
@@ -143,22 +174,34 @@ private let viewModelRepository = Repository(
     ownerAvatarURL: URL(string: "https://avatars.githubusercontent.com/u/1")
 )
 
+private let refreshedRepository = Repository(
+    id: 102,
+    name: "new-client",
+    fullName: "GitMate/new-client",
+    isPrivate: false,
+    defaultBranch: "main",
+    sizeInKilobytes: 512,
+    cloneURL: URL(string: "https://github.com/GitMate/new-client.git")!,
+    ownerAvatarURL: nil
+)
+
 @MainActor
 private func makeViewModel(
     syncEvents: [SyncEvent] = [.finished],
     credentialStore: InMemoryCredentialStore = InMemoryCredentialStore(),
     sessionStore: InMemoryAccountSessionStore = InMemoryAccountSessionStore(),
     syncService: (any RepositorySyncService)? = nil,
+    api: (any GitHubAPI)? = nil,
     destinationStore: InMemorySyncDestinationStore = InMemorySyncDestinationStore(
         destination: FileManager.default.temporaryDirectory
     )
 ) throws -> (OnboardingViewModel, InMemoryCredentialStore) {
-    let api = FakeGitHubAPI(
+    let resolvedAPI = api ?? FakeGitHubAPI(
         account: viewModelAccount,
         repositories: [viewModelRepository]
     )
     let dependencies = OnboardingDependencies(
-        apiProvider: FakeAPIProvider(api: api),
+        apiProvider: FakeAPIProvider(api: resolvedAPI),
         enterpriseConnector: FakeEnterpriseConnector(account: viewModelAccount),
         credentialStore: credentialStore,
         accountSessionStore: sessionStore,
@@ -199,6 +242,81 @@ let onboardingViewModelTests = [
             [],
             "取消勾选后应移出首次下载集合"
         )
+    },
+    TestCase("刷新云端仓库会保留仍存在仓库的选择") { @MainActor in
+        let removedRepository = Repository(
+            id: 103,
+            name: "removed",
+            fullName: "GitMate/removed",
+            isPrivate: false,
+            defaultBranch: "main",
+            sizeInKilobytes: 256,
+            cloneURL: URL(string: "https://github.com/GitMate/removed.git")!,
+            ownerAvatarURL: nil
+        )
+        let api = SequencedGitHubAPI(
+            account: viewModelAccount,
+            repositoryResults: [
+                .success([viewModelRepository, removedRepository]),
+                .success([viewModelRepository, refreshedRepository])
+            ]
+        )
+        let (viewModel, _) = try makeViewModel(api: api)
+        await viewModel.startGitHubLogin()
+        await viewModel.connectGitHub(token: "secret")
+        await viewModel.confirmPermissions()
+        viewModel.setRepositorySelected(
+            repositoryID: viewModelRepository.id,
+            isSelected: true
+        )
+        viewModel.setRepositorySelected(
+            repositoryID: removedRepository.id,
+            isSelected: true
+        )
+
+        await viewModel.refreshRepositories()
+
+        try expectEqual(
+            viewModel.state.repositories.map(\.id),
+            [viewModelRepository.id, refreshedRepository.id],
+            "刷新应使用最新云端列表"
+        )
+        try expectEqual(
+            viewModel.state.selectedRepositoryIDs,
+            [viewModelRepository.id],
+            "应保留仍存在仓库的选择并移除失效仓库"
+        )
+    },
+    TestCase("刷新云端仓库失败时保留当前列表和选择") { @MainActor in
+        let api = SequencedGitHubAPI(
+            account: viewModelAccount,
+            repositoryResults: [
+                .success([viewModelRepository]),
+                .failure(RepositoryRefreshTestError.unavailable)
+            ]
+        )
+        let (viewModel, _) = try makeViewModel(api: api)
+        await viewModel.startGitHubLogin()
+        await viewModel.connectGitHub(token: "secret")
+        await viewModel.confirmPermissions()
+        viewModel.setRepositorySelected(
+            repositoryID: viewModelRepository.id,
+            isSelected: true
+        )
+
+        await viewModel.refreshRepositories()
+
+        try expectEqual(
+            viewModel.state.repositories,
+            [viewModelRepository],
+            "刷新失败不得清空当前仓库"
+        )
+        try expectEqual(
+            viewModel.state.selectedRepositoryIDs,
+            [viewModelRepository.id],
+            "刷新失败不得清空当前选择"
+        )
+        try expect(viewModel.state.errorMessage != nil, "刷新失败应显示错误")
     },
     TestCase("GitHub 登录保存令牌并进入权限确认页") { @MainActor in
         let sessionStore = InMemoryAccountSessionStore()

@@ -6,6 +6,7 @@ import Observation
 public final class OnboardingViewModel {
     public private(set) var state: OnboardingState
     public private(set) var isWorking = false
+    public private(set) var isRefreshingRepositories = false
     public private(set) var isDownloadPaused = false
     public private(set) var syncDestination: URL?
 
@@ -162,6 +163,44 @@ public final class OnboardingViewModel {
             state.selectedRepositoryIDs = []
         } catch GitHubAPIError.httpStatus(401, _) {
             state.transition(.authorizationExpired(message: "账户授权已失效，请重新登录。"))
+        } catch {
+            state.errorMessage = error.localizedDescription
+        }
+    }
+
+    public func refreshRepositories() async {
+        guard let account = state.account else {
+            state.errorMessage = "尚未连接 GitHub 账户。"
+            return
+        }
+        guard !isRefreshingRepositories else { return }
+
+        isRefreshingRepositories = true
+        state.errorMessage = nil
+        defer { isRefreshingRepositories = false }
+
+        do {
+            guard let token = try dependencies.credentialStore.token(
+                accountID: account.id
+            ) else {
+                state.transition(
+                    .authorizationExpired(
+                        message: "账户令牌不存在，请重新授权。"
+                    )
+                )
+                return
+            }
+            let api = try dependencies.apiProvider.api(for: account)
+            let repositories = try await api.repositories(token: token)
+            let availableIDs = Set(repositories.map(\.id))
+            state.selectedRepositoryIDs.formIntersection(availableIDs)
+            state.transition(.repositoriesLoaded(repositories))
+        } catch GitHubAPIError.httpStatus(401, _) {
+            state.transition(
+                .authorizationExpired(
+                    message: "账户授权已失效，请重新登录。"
+                )
+            )
         } catch {
             state.errorMessage = error.localizedDescription
         }
