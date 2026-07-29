@@ -424,6 +424,275 @@ public struct GitCommandBuilder: Sendable {
         )
     }
 
+    public func fullWorkingTreeStatus(
+        repositoryURL: URL
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "status",
+                "--porcelain=v2",
+                "-z",
+                "--untracked-files=normal"
+            ]
+        )
+    }
+
+    public func headOID(
+        repositoryURL: URL
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "rev-parse",
+                "--verify",
+                "HEAD"
+            ]
+        )
+    }
+
+    public func verifyCommit(
+        repositoryURL: URL,
+        reference: String
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        guard GitInputValidator.isSafeReference(reference)
+                || GitInputValidator.isSafeHash(reference)
+        else {
+            throw LocalGitError.invalidReference
+        }
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "rev-parse",
+                "--verify",
+                "\(reference)^{commit}"
+            ]
+        )
+    }
+
+    public func historyAffectedPaths(
+        repositoryURL: URL,
+        first: String,
+        second: String
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        try validateHistoryEndpoint(first)
+        try validateHistoryEndpoint(second)
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "diff",
+                "--name-only",
+                "-z",
+                "\(first)...\(second)"
+            ]
+        )
+    }
+
+    public func commitAffectedPaths(
+        repositoryURL: URL,
+        commit: String
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        guard GitInputValidator.isSafeHash(commit) else {
+            throw LocalGitError.invalidReference
+        }
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "show",
+                "--format=",
+                "--name-only",
+                "-z",
+                commit
+            ]
+        )
+    }
+
+    public func historyCommitCount(
+        repositoryURL: URL,
+        range: String
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        let endpoints = range.components(separatedBy: "..")
+        guard endpoints.count == 2 else {
+            throw LocalGitError.invalidReference
+        }
+        try validateHistoryEndpoint(endpoints[0])
+        try validateHistoryEndpoint(endpoints[1])
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "rev-list",
+                "--count",
+                range
+            ]
+        )
+    }
+
+    public func mergeBase(
+        repositoryURL: URL,
+        first: String,
+        second: String
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        try validateHistoryEndpoint(first)
+        try validateHistoryEndpoint(second)
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "merge-base",
+                first,
+                second
+            ]
+        )
+    }
+
+    public func mergeTree(
+        repositoryURL: URL,
+        base: String,
+        ours: String,
+        theirs: String
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        for value in [base, ours, theirs] {
+            try validateHistoryEndpoint(value)
+        }
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "merge-tree",
+                base,
+                ours,
+                theirs
+            ]
+        )
+    }
+
+    public func startHistoryOperation(
+        repositoryURL: URL,
+        request: GitHistoryOperationRequest
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        let arguments: [String]
+        switch request {
+        case let .merge(source):
+            try validateHistoryEndpoint(source)
+            arguments = [
+                "-C", repository.path, "merge", "--no-edit", "--", source
+            ]
+        case let .rebase(onto):
+            try validateHistoryEndpoint(onto)
+            arguments = [
+                "-C", repository.path, "rebase", "--", onto
+            ]
+        case let .cherryPick(commits):
+            guard !commits.isEmpty else {
+                throw LocalGitError.invalidReference
+            }
+            for commit in commits {
+                guard GitInputValidator.isSafeHash(commit) else {
+                    throw LocalGitError.invalidReference
+                }
+            }
+            arguments = [
+                "-C", repository.path, "cherry-pick", "--"
+            ] + commits
+        }
+        return GitCommand(
+            arguments: arguments,
+            environment: ["GIT_EDITOR": "true"],
+            cancellation: .finishToSafeState
+        )
+    }
+
+    public func continueHistoryOperation(
+        repositoryURL: URL,
+        kind: GitRepositoryOperationKind
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        let operation: String
+        switch kind {
+        case .merge:
+            operation = "merge"
+        case .rebase:
+            operation = "rebase"
+        case .cherryPick:
+            operation = "cherry-pick"
+        }
+        return GitCommand(
+            arguments: [
+                "-C", repository.path, operation, "--continue"
+            ],
+            environment: ["GIT_EDITOR": "true"],
+            cancellation: .finishToSafeState
+        )
+    }
+
+    public func abortHistoryOperation(
+        repositoryURL: URL,
+        kind: GitRepositoryOperationKind
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        let operation: String
+        switch kind {
+        case .merge:
+            operation = "merge"
+        case .rebase:
+            operation = "rebase"
+        case .cherryPick:
+            operation = "cherry-pick"
+        }
+        return GitCommand(
+            arguments: [
+                "-C", repository.path, operation, "--abort"
+            ],
+            cancellation: .finishToSafeState
+        )
+    }
+
+    private func validateHistoryEndpoint(_ value: String) throws {
+        guard value == "HEAD"
+                || GitInputValidator.isSafeReference(value)
+                || GitInputValidator.isSafeHash(value)
+        else {
+            throw LocalGitError.invalidReference
+        }
+    }
+
     private func pathspecData(
         _ paths: [String],
         repositoryURL: URL
