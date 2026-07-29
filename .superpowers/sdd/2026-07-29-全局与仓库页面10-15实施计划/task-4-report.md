@@ -1,0 +1,111 @@
+# Task 4：GitHub 工作区摘要 API 与本地在线融合报告
+
+## 状态
+
+已完成。GitHub 在线摘要、README 解码、本地 Git 合并、离线缓存、授权与限流状态、面板级错误和工作台聚合均已实现。
+
+## 实现内容
+
+### GitHub 工作区 API
+
+- 新增 `GitHubWorkspaceAPI`、`GitHubREADME` 和稳定的 `WorkspaceAPIError`。
+- 仓库摘要分别请求仓库元数据、开放议题、开放拉取请求和失败 Actions；议题与拉取请求使用独立 Search 查询。
+- Actions 固定使用 `status=failure&per_page=1`。
+- 所有请求使用 `Bearer` 认证头、GitHub JSON Accept 头和 `2022-11-28` API 版本；令牌不进入 URL。
+- 支持注入 API 基址，并保留企业 API 的路径前缀。
+- 401 和普通 403 映射为重新授权；主限流、429 和二级限流映射为带恢复时间的 `rateLimited`。
+- README 只接受 Base64，移除换行后严格解码 UTF-8；保留路径和可选下载地址。
+
+### 工作区数据融合
+
+- 新增 `WorkspaceConnectivity`、五种 `WorkspacePanel`、`WorkspacePanelError`、`RepositoryContent` 和 `WorkspaceDashboardContent`。
+- 本地 Git 是仓库状态和最近提交的事实源；最近提交请求和返回均最多 8 条。
+- 本地仓库缺失或损坏时不调用本地 Git，仍返回在线摘要与 README，并记录稳定中文面板错误。
+- 普通网络失败保留本地内容及有效缓存并标记离线；授权失效和限流保持独立状态。
+- 在线摘要成功后按 `String(account.id)` 更新缓存；README 不进入工作区缓存。
+- 缓存 TTL 为 900 秒，包含 0 和 900 秒边界；过期及未来时间快照不可用于回退或后续合并。
+- 缓存更新在服务内串行执行原子“重读、校验、合并、保存”，并发刷新不同仓库不会互相覆盖。
+- `LocalRepositoryCatalog.localURL(for:)` 复用安全目录名计算本地路径；目录统计或权限异常时构造 `.damaged` fallback，仓库页和工作台都继续返回在线摘要与 README。
+- 工作台逐仓库隔离本地目录读取异常，单仓库失败不会中止其他仓库内容；面板错误保留仓库编号。
+- 多个限流结果取较晚恢复时间，避免过早重试。
+
+## TDD 证据
+
+### 初始在线 API RED
+
+保留前一实现代理留下的测试并运行：
+
+```text
+cannot find 'URLSessionGitHubWorkspaceAPI' in scope
+```
+
+失败原因是 Task 4 在线 API 尚未实现。实现摘要、限流、授权与 README 后，84 个测试全部通过。
+
+遗留测试将 `2026-07-29T10:00:00Z` 错写为 Unix 时间 `1775034000`；核对后只将无效预期修正为准确值 `1785319200`，未改变测试行为。
+
+### 融合服务 RED/GREEN
+
+- 初始 RED：缺少 `WorkspaceContentService`、`WorkspaceConnectivity` 等生产类型。
+- 第一轮 GREEN：91 个测试、失败 0 个。
+- 增加非限流 403 和可注入 API 基址边界后：93 个测试、失败 0 个。
+- 对 base URL 做反向变异，临时忽略注入值时定向测试准确失败 1 项；恢复正确实现后再次全绿。
+
+### 正式审查修复
+
+独立审查报告无 Critical，发现缓存有效性、并发更新、目录错误隔离、扩展限流和恢复时间选择问题。逐项增加回归测试：
+
+- 过期快照中的其他摘要不得因目标仓库刷新而复活。
+- 无法解码的旧缓存可被在线成功结果覆盖并恢复。
+- 并发刷新两个仓库必须保留两个成功摘要。
+- 429 与二级 403 限流必须保留 `Retry-After` 恢复时间；缺少限流头时至少等待 60 秒。
+- 多个限流模块必须采用较晚恢复时间。
+- 单仓库目录读取异常不得终止工作台其他仓库；直接加载仓库页也必须保留在线载荷。
+
+第一次并发修复运行 98 个测试时仍有 1 项失败。根因是保存使用请求开始时刻，较早启动但较晚保存的请求会把刚写入快照判断为未来时间。将时间读取移动到缓存锁内后，98 个测试全部通过。
+
+最终复核继续发现损坏缓存无法自愈、无恢复头的二级限流会立即重试，以及直接仓库页的目录统计异常仍会外抛。三项均先增加失败测试，再以最小实现修复；最终完整测试增至 100 项。
+
+## 最终验证
+
+测试命令：
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+SWIFTPM_MODULECACHE_OVERRIDE=/private/tmp/gitmate-task4-module-cache \
+CLANG_MODULE_CACHE_PATH=/private/tmp/gitmate-task4-clang-cache \
+swift run GitMateCoreTestsRunner
+```
+
+结果：
+
+```text
+完成 100 个测试，失败 0 个。
+退出码：0
+```
+
+编译命令使用相同工具链和缓存变量执行 `swift build`，结果为 `Build complete!`，退出码 0。
+
+差异与安全检查：
+
+- `git diff --check` 及所有新增文件的 `git diff --no-index --check`：无空白错误。
+- 生产文件扫描未发现令牌日志、令牌缓存或 URL 查询令牌。
+- 生产代码中的令牌只沿 API 方法参数传递，并在请求边界写入 `Authorization: Bearer` 头。
+- 真实请求测试确认 Search 查询正确编码、令牌不在 URL、Actions 参数固定。
+
+## 变更文件
+
+- `Sources/GitMateCore/GitHub/GitHubWorkspaceAPI.swift`
+- `Sources/GitMateCore/GitHub/URLSessionGitHubWorkspaceAPI.swift`
+- `Sources/GitMateCore/Workspace/WorkspaceContentService.swift`
+- `Sources/GitMateCore/Workspace/WorkspaceDependencies.swift`
+- `Sources/GitMateCore/Workspace/LocalRepositoryCatalog.swift`（主协调者授权的精确范围扩展）
+- `Tests/GitMateCoreTests/GitHubWorkspaceAPITests.swift`
+- `Tests/GitMateCoreTests/WorkspaceContentServiceTests.swift`
+- `Tests/GitMateCoreTests/TestMain.swift`
+- `.superpowers/sdd/2026-07-29-全局与仓库页面10-15实施计划/task-4-report.md`
+
+## Concerns
+
+- 无功能或安全阻塞。
+- 现有 Task 2 的 `WorkspaceCacheSnapshot` 只有快照级 `savedAt`，因此 TTL 语义是快照级而不是逐仓库级；本实现只保留仍有效快照中的其他条目，符合“保留其他条目”和现有缓存结构。
+- 当前系统默认 CommandLineTools 的编译器与 SDK 版本不匹配，最终验证显式使用已安装的 Xcode 工具链；不影响测试和构建结果。

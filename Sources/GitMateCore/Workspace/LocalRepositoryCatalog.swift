@@ -57,10 +57,7 @@ public final class LocalRepositoryCatalog: @unchecked Sendable {
     }
 
     public func record(for repository: Repository) throws -> LocalRepositoryRecord {
-        let localURL = rootDirectory.appending(
-            path: repository.safeLocalDirectoryName,
-            directoryHint: .isDirectory
-        )
+        let localURL = localURL(for: repository)
         let gitURL = localURL.appending(path: ".git", directoryHint: .isDirectory)
         let availability: LocalRepositoryAvailability
         let localSizeInBytes: Int64
@@ -82,6 +79,13 @@ public final class LocalRepositoryCatalog: @unchecked Sendable {
             availability: availability,
             localSizeInBytes: localSizeInBytes,
             lastInspectedAt: Date()
+        )
+    }
+
+    public func localURL(for repository: Repository) -> URL {
+        rootDirectory.appending(
+            path: repository.safeLocalDirectoryName,
+            directoryHint: .isDirectory
         )
     }
 
