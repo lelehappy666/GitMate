@@ -123,7 +123,6 @@ public final class JSONWorkspaceCache: WorkspaceCaching, @unchecked Sendable {
               accountID != ".",
               accountID != "..",
               !accountID.contains("/"),
-              !accountID.contains(":"),
               !accountID.contains("\\")
         else {
             throw WorkspaceCacheError.invalidAccountID

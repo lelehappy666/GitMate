@@ -25,6 +25,9 @@ public final class OnboardingViewModel {
     @ObservationIgnored
     private var hasAttemptedSessionRestore = false
 
+    @ObservationIgnored
+    private var shouldReturnToWorkspaceAfterReauthorization = false
+
     public init(
         dependencies: OnboardingDependencies,
         initialState: OnboardingState = OnboardingState()
@@ -50,6 +53,7 @@ public final class OnboardingViewModel {
         activeSyncTask?.cancel()
         activeSyncTask = nil
         activeSyncID = nil
+        shouldReturnToWorkspaceAfterReauthorization = false
         if let account = state.account {
             try? dependencies.credentialStore.deleteToken(accountID: account.id)
         }
@@ -76,10 +80,75 @@ public final class OnboardingViewModel {
             }
 
             state.account = account
+            if let cachedRepositories = cachedRepositories(
+                accountID: account.id
+            ) {
+                state.repositories = cachedRepositories
+                state.preferences = cachedRepositories.map {
+                    RepositorySyncPreference(
+                        repositoryID: $0.id,
+                        mode: .manual
+                    )
+                }
+                state.route = .complete
+                return
+            }
+            if hasLocalRepositoryData() {
+                state.route = .complete
+                return
+            }
             state.route = .repositorySync
             await loadRepositories()
         } catch {
             state.errorMessage = error.localizedDescription
+        }
+    }
+
+    private func cachedRepositories(accountID: String) -> [Repository]? {
+        guard let workspaceCache = dependencies.workspaceCache,
+              let snapshot = try? workspaceCache.load(
+                  accountID: accountID
+              )
+        else {
+            return nil
+        }
+
+        var seenRepositoryIDs = Set<Int64>()
+        return snapshot.repositoryRecords.compactMap { record in
+            guard seenRepositoryIDs.insert(record.repository.id).inserted
+            else {
+                return nil
+            }
+            return record.repository
+        }
+    }
+
+    private func hasLocalRepositoryData() -> Bool {
+        guard let repositoryDirectories = try? FileManager.default
+            .contentsOfDirectory(
+                at: dependencies.syncDestination,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            return false
+        }
+
+        return repositoryDirectories.contains { directory in
+            let values = try? directory.resourceValues(
+                forKeys: [.isDirectoryKey]
+            )
+            guard values?.isDirectory == true else {
+                return false
+            }
+            return FileManager.default.fileExists(
+                atPath: directory
+                    .appending(
+                        path: ".git",
+                        directoryHint: .isDirectory
+                    )
+                    .path
+            )
         }
     }
 
@@ -249,6 +318,7 @@ public final class OnboardingViewModel {
         activeSyncTask?.cancel()
         activeSyncTask = nil
         activeSyncID = nil
+        shouldReturnToWorkspaceAfterReauthorization = state.route == .complete
         isWorking = false
         state.canResumeSync = true
         state.errorMessage = "账户令牌不可用，请重新授权。"
@@ -320,6 +390,7 @@ public final class OnboardingViewModel {
             )
             try dependencies.accountSessionStore.save(account: renewedAccount)
             state.transition(.reauthorized(renewedAccount))
+            finishWorkspaceReauthorizationIfNeeded()
         } catch {
             state.errorMessage = error.localizedDescription
         }
@@ -379,6 +450,7 @@ public final class OnboardingViewModel {
 
             if isReauthorization {
                 state.transition(.reauthorized(account))
+                finishWorkspaceReauthorizationIfNeeded()
             } else {
                 state.transition(.accountVerified(account))
             }
@@ -389,6 +461,14 @@ public final class OnboardingViewModel {
         } catch {
             state.errorMessage = error.localizedDescription
         }
+    }
+
+    private func finishWorkspaceReauthorizationIfNeeded() {
+        guard shouldReturnToWorkspaceAfterReauthorization else {
+            return
+        }
+        shouldReturnToWorkspaceAfterReauthorization = false
+        state.route = .complete
     }
 
     private func runSync(

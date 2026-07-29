@@ -4,19 +4,20 @@ import SwiftUI
 struct WorkspaceRootView: View {
     @State private var session: WorkspaceSession
     @State private var selection: WorkspaceSelection
+    @State private var apiAuthorizationRequired = false
 
     let preferences: [RepositorySyncPreference]
     let runtime: WorkspaceRuntimeDependencies
     let authorization: WorkspaceAuthorization
     let onResync: () -> Void
-    let onReauthorize: () -> Void
+    let onReauthorize: (WorkspaceRoute) -> Void
 
     init(
         session: WorkspaceSession,
         preferences: [RepositorySyncPreference],
         runtime: WorkspaceRuntimeDependencies,
         onResync: @escaping () -> Void,
-        onReauthorize: @escaping () -> Void
+        onReauthorize: @escaping (WorkspaceRoute) -> Void
     ) {
         _session = State(initialValue: session)
         _selection = State(initialValue: WorkspaceSelection(route: session.route))
@@ -35,11 +36,15 @@ struct WorkspaceRootView: View {
                 account: session.account
             )
         } detail: {
-            switch authorization {
-            case let .ready(token):
-                workspaceDetail(token: token)
-            case .reauthorizationRequired:
-                WorkspaceReauthorizationView(action: onReauthorize)
+            if apiAuthorizationRequired {
+                reauthorizationView
+            } else {
+                switch authorization {
+                case let .ready(token):
+                    workspaceDetail(token: token)
+                case .reauthorizationRequired:
+                    reauthorizationView
+                }
             }
         }
         .navigationSplitViewStyle(.balanced)
@@ -67,6 +72,7 @@ struct WorkspaceRootView: View {
                 repositories: session.repositories,
                 token: token,
                 loader: runtime.contentService(for: session.account),
+                onAuthorizationRequired: requireReauthorization,
                 showAllRepositories: {
                     selection.route = .repositories
                 }
@@ -80,7 +86,8 @@ struct WorkspaceRootView: View {
                 content: runtime.contentService(for: session.account),
                 coverCache: runtime.coverCache,
                 coverLoader: runtime.coverLoader,
-                onRoute: onRoute
+                onRoute: onRoute,
+                onAuthorizationRequired: requireReauthorization
             )
         case let .repositoryOverview(repositoryID):
             if let repository = repository(repositoryID) {
@@ -88,7 +95,7 @@ struct WorkspaceRootView: View {
                     repository: repository,
                     account: session.account,
                     token: token,
-                    loader: runtime.contentService(for: session.account),
+                    loader: authorizationObservingLoader,
                     onRoute: onRoute,
                     onResync: {
                         selection.route = .repositories
@@ -104,7 +111,7 @@ struct WorkspaceRootView: View {
                     repository: repository,
                     account: session.account,
                     token: token,
-                    loader: runtime.contentService(for: session.account)
+                    loader: authorizationObservingLoader
                 )
             } else {
                 missingRepositoryView
@@ -130,6 +137,25 @@ struct WorkspaceRootView: View {
         }
     }
 
+    private var authorizationObservingLoader:
+        AuthorizationObservingRepositoryLoader
+    {
+        AuthorizationObservingRepositoryLoader(
+            loader: runtime.contentService(for: session.account),
+            onAuthorizationRequired: requireReauthorization
+        )
+    }
+
+    private func requireReauthorization() {
+        apiAuthorizationRequired = true
+    }
+
+    private var reauthorizationView: some View {
+        WorkspaceReauthorizationView {
+            onReauthorize(selection.route)
+        }
+    }
+
     private func repository(_ id: Int64) -> Repository? {
         session.repositories.first { $0.id == id }
     }
@@ -147,6 +173,7 @@ struct WorkspaceRootView: View {
 
 private struct DashboardPageContainer: View {
     @State private var viewModel: DashboardViewModel
+    let onAuthorizationRequired: () -> Void
     let showAllRepositories: () -> Void
 
     init(
@@ -154,6 +181,7 @@ private struct DashboardPageContainer: View {
         repositories: [Repository],
         token: String,
         loader: any WorkspaceDashboardLoading,
+        onAuthorizationRequired: @escaping () -> Void,
         showAllRepositories: @escaping () -> Void
     ) {
         _viewModel = State(
@@ -164,6 +192,7 @@ private struct DashboardPageContainer: View {
                 loader: loader
             )
         )
+        self.onAuthorizationRequired = onAuthorizationRequired
         self.showAllRepositories = showAllRepositories
     }
 
@@ -172,6 +201,11 @@ private struct DashboardPageContainer: View {
             viewModel: viewModel,
             showAllRepositories: showAllRepositories
         )
+        .onChange(of: viewModel.state.connectivity) { _, connectivity in
+            if connectivity == .authorizationRequired {
+                onAuthorizationRequired()
+            }
+        }
     }
 }
 
@@ -184,6 +218,7 @@ private struct RepositoryWallContainer: View {
     let coverCache: any RepositoryCoverCaching
     let coverLoader: any RepositoryCoverLoading
     let onRoute: (WorkspaceRoute) -> Void
+    let onAuthorizationRequired: () -> Void
 
     @State private var viewModel: RepositoryWallViewModel
     @State private var errorMessage: String?
@@ -196,7 +231,8 @@ private struct RepositoryWallContainer: View {
         content: WorkspaceContentService,
         coverCache: any RepositoryCoverCaching,
         coverLoader: any RepositoryCoverLoading,
-        onRoute: @escaping (WorkspaceRoute) -> Void
+        onRoute: @escaping (WorkspaceRoute) -> Void,
+        onAuthorizationRequired: @escaping () -> Void
     ) {
         self.account = account
         self.repositories = repositories
@@ -206,6 +242,7 @@ private struct RepositoryWallContainer: View {
         self.coverCache = coverCache
         self.coverLoader = coverLoader
         self.onRoute = onRoute
+        self.onAuthorizationRequired = onAuthorizationRequired
 
         let modes = Dictionary(
             uniqueKeysWithValues: preferences.map {
@@ -266,38 +303,66 @@ private struct RepositoryWallContainer: View {
 
     private func load() async {
         do {
-            let dashboard = try await content.dashboard(
+            let updates = content.dashboardUpdates(
                 account: account,
                 repositories: repositories,
                 token: token
             )
-            try Task.checkCancellation()
             let modes = Dictionary(
                 uniqueKeysWithValues: preferences.map {
                     ($0.repositoryID, $0.mode)
                 }
             )
-            let cards = dashboard.repositories.map {
-                RepositoryCardContent(
-                    content: $0,
-                    syncMode: modes[$0.repository.id] ?? .manual
+            for try await dashboard in updates {
+                try Task.checkCancellation()
+                if dashboard.connectivity == .authorizationRequired {
+                    onAuthorizationRequired()
+                    return
+                }
+                let cards = dashboard.repositories.map {
+                    RepositoryCardContent(
+                        content: $0,
+                        syncMode: modes[$0.repository.id] ?? .manual
+                    )
+                }
+                let items = RepositoryPosterBuilder.make(
+                    contents: cards,
+                    extractor: RepositoryCoverExtractor(),
+                    cache: coverCache
                 )
+                try Task.checkCancellation()
+                errorMessage = nil
+                viewModel.updateItems(items)
             }
-            let items = RepositoryPosterBuilder.make(
-                contents: cards,
-                extractor: RepositoryCoverExtractor(),
-                cache: coverCache
-            )
-            try Task.checkCancellation()
-            viewModel = RepositoryWallViewModel(
-                items: items,
-                coverLoader: coverLoader
-            )
         } catch is CancellationError {
             return
         } catch {
             errorMessage = "本地与缓存数据暂时无法读取，请稍后重试。"
         }
+    }
+}
+
+private struct AuthorizationObservingRepositoryLoader:
+    RepositoryContentLoading,
+    @unchecked Sendable
+{
+    let loader: any RepositoryContentLoading
+    let onAuthorizationRequired: @MainActor @Sendable () -> Void
+
+    func repositoryContent(
+        repository: Repository,
+        account: GitHubAccount,
+        token: String
+    ) async throws -> RepositoryContent {
+        let content = try await loader.repositoryContent(
+            repository: repository,
+            account: account,
+            token: token
+        )
+        if content.connectivity == .authorizationRequired {
+            await onAuthorizationRequired()
+        }
+        return content
     }
 }
 
@@ -403,11 +468,14 @@ private struct WorkspaceReauthorizationView: View {
                 systemImage: "person.crop.circle.badge.exclamationmark"
             )
         } description: {
-            Text("无法从 macOS 钥匙串读取当前账户令牌。为保护凭据，工作区不会显示底层错误或令牌内容。")
+            Text("当前账户令牌不存在或 GitHub 已拒绝授权。重新授权后将返回刚才浏览的工作区页面。")
         } actions: {
             Button("重新授权", action: action)
                 .buttonStyle(.borderedProminent)
                 .tint(GitMateTheme.accent)
+                .accessibilityIdentifier(
+                    "workspace.authorization.reauthorize"
+                )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(GitMateTheme.canvas)

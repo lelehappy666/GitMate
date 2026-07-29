@@ -66,7 +66,7 @@ enum WorkspacePreviewFactory {
                     object: nil
                 )
             },
-            onReauthorize: {
+            onReauthorize: { _ in
                 NotificationCenter.default.post(
                     name: .workspacePreviewRequestedReauthorization,
                     object: nil

@@ -48,6 +48,12 @@ struct GitMateApp: App {
 
         let api = URLSessionGitHubAPI()
         let credentialStore = KeychainCredentialStore()
+        let workspaceCache = JSONWorkspaceCache(
+            rootDirectory: cacheDirectory.appending(
+                path: "Workspace",
+                directoryHint: .isDirectory
+            )
+        )
         let dependencies = OnboardingDependencies(
             apiProvider: DefaultGitHubAPIProvider(githubDotComAPI: api),
             enterpriseConnector: EnterpriseConnectionService(),
@@ -55,7 +61,8 @@ struct GitMateApp: App {
             accountSessionStore: UserDefaultsAccountSessionStore(),
             syncService: GitRepositorySyncService(),
             networkMonitor: NWPathNetworkMonitor(),
-            syncDestination: syncDestination
+            syncDestination: syncDestination,
+            workspaceCache: workspaceCache
         )
         _viewModel = State(
             initialValue: OnboardingViewModel(dependencies: dependencies)
@@ -63,7 +70,8 @@ struct GitMateApp: App {
         workspaceRuntime = WorkspaceRuntimeDependencies(
             syncDestination: syncDestination,
             cacheDirectory: cacheDirectory,
-            credentialStore: credentialStore
+            credentialStore: credentialStore,
+            cache: workspaceCache
         )
         workspacePreview = nil
     }

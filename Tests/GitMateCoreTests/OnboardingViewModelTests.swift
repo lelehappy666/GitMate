@@ -63,6 +63,16 @@ private struct SilentNetworkMonitor: NetworkMonitoring {
     }
 }
 
+private struct OfflineGitHubAPI: GitHubAPI {
+    func currentUser(token: String) async throws -> GitHubAccount {
+        throw URLError(.notConnectedToInternet)
+    }
+
+    func repositories(token: String) async throws -> [Repository] {
+        throw URLError(.notConnectedToInternet)
+    }
+}
+
 private final class CancellableSyncService: RepositorySyncService, @unchecked Sendable {
     private let lock = NSLock()
     private var started = false
@@ -129,25 +139,186 @@ private func makeViewModel(
     syncEvents: [SyncEvent] = [.finished],
     credentialStore: InMemoryCredentialStore = InMemoryCredentialStore(),
     sessionStore: InMemoryAccountSessionStore = InMemoryAccountSessionStore(),
-    syncService: (any RepositorySyncService)? = nil
+    syncService: (any RepositorySyncService)? = nil,
+    initialState: OnboardingState = OnboardingState(),
+    syncDestination: URL = FileManager.default.temporaryDirectory
+        .appending(
+            path: "GitMate-Onboarding-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        ),
+    workspaceCache: (any WorkspaceCaching)? = nil,
+    api: (any GitHubAPI)? = nil
 ) throws -> (OnboardingViewModel, InMemoryCredentialStore) {
-    let api = FakeGitHubAPI(
+    let defaultAPI = FakeGitHubAPI(
         account: viewModelAccount,
         repositories: [viewModelRepository]
     )
     let dependencies = OnboardingDependencies(
-        apiProvider: FakeAPIProvider(api: api),
+        apiProvider: FakeAPIProvider(api: api ?? defaultAPI),
         enterpriseConnector: FakeEnterpriseConnector(account: viewModelAccount),
         credentialStore: credentialStore,
         accountSessionStore: sessionStore,
         syncService: syncService ?? FixedSyncService(events: syncEvents),
         networkMonitor: SilentNetworkMonitor(),
-        syncDestination: FileManager.default.temporaryDirectory
+        syncDestination: syncDestination,
+        workspaceCache: workspaceCache
     )
-    return (OnboardingViewModel(dependencies: dependencies), credentialStore)
+    return (
+        OnboardingViewModel(
+            dependencies: dependencies,
+            initialState: initialState
+        ),
+        credentialStore
+    )
 }
 
 let onboardingViewModelTests = [
+    TestCase("工作区重新授权成功后返回工作区而非同步进度") { @MainActor in
+        let initialState = OnboardingState(
+            route: .complete,
+            account: viewModelAccount,
+            repositories: [viewModelRepository],
+            preferences: [
+                RepositorySyncPreference(
+                    repositoryID: viewModelRepository.id,
+                    mode: .manual
+                )
+            ]
+        )
+        let (viewModel, _) = try makeViewModel(
+            initialState: initialState
+        )
+
+        viewModel.prepareReauthorization()
+        await viewModel.reauthorizeGitHub(token: "renewed-secret")
+
+        try expectEqual(
+            viewModel.state.route,
+            .complete,
+            "工作区重新授权成功后应返回页面 10–15"
+        )
+        try expectEqual(
+            viewModel.state.repositories,
+            [viewModelRepository],
+            "重新授权不得清空原工作区仓库"
+        )
+    },
+    TestCase("恢复会话发现本地仓库时直接进入工作区") { @MainActor in
+        let syncDestination = FileManager.default.temporaryDirectory
+            .appending(
+                path: "GitMate-Restore-\(UUID().uuidString)",
+                directoryHint: .isDirectory
+            )
+        defer {
+            try? FileManager.default.removeItem(at: syncDestination)
+        }
+        try FileManager.default.createDirectory(
+            at: syncDestination
+                .appending(path: "mac-client", directoryHint: .isDirectory)
+                .appending(path: ".git", directoryHint: .isDirectory),
+            withIntermediateDirectories: true
+        )
+
+        let credentialStore = InMemoryCredentialStore()
+        let sessionStore = InMemoryAccountSessionStore()
+        try credentialStore.save(
+            token: "secret",
+            accountID: viewModelAccount.id
+        )
+        try sessionStore.save(account: viewModelAccount)
+        let (viewModel, _) = try makeViewModel(
+            credentialStore: credentialStore,
+            sessionStore: sessionStore,
+            syncDestination: syncDestination
+        )
+
+        await viewModel.restoreSession()
+
+        try expectEqual(
+            viewModel.state.route,
+            .complete,
+            "已有本地 Git 仓库时应直接进入页面 10–15"
+        )
+        try expectEqual(
+            viewModel.state.account,
+            viewModelAccount,
+            "本地优先恢复仍应保留有效账户"
+        )
+    },
+    TestCase("离线恢复会话优先使用工作区缓存并直接进入工作区") { @MainActor in
+        let cacheDirectory = FileManager.default.temporaryDirectory
+            .appending(
+                path: "GitMate-Restore-Cache-\(UUID().uuidString)",
+                directoryHint: .isDirectory
+            )
+        defer {
+            try? FileManager.default.removeItem(at: cacheDirectory)
+        }
+        let cache = JSONWorkspaceCache(rootDirectory: cacheDirectory)
+        try cache.save(
+            WorkspaceCacheSnapshot(
+                accountID: viewModelAccount.id,
+                repositoryRecords: [
+                    LocalRepositoryRecord(
+                        repository: viewModelRepository,
+                        localURL: URL(
+                            filePath: "/同步目录/mac-client",
+                            directoryHint: .isDirectory
+                        ),
+                        availability: .available,
+                        localSizeInBytes: 1_024,
+                        lastInspectedAt: Date(
+                            timeIntervalSince1970: 1_000
+                        )
+                    )
+                ],
+                onlineSummaries: [:],
+                savedAt: Date(timeIntervalSince1970: 1_000)
+            )
+        )
+
+        let credentialStore = InMemoryCredentialStore()
+        let sessionStore = InMemoryAccountSessionStore()
+        try credentialStore.save(
+            token: "secret",
+            accountID: viewModelAccount.id
+        )
+        try sessionStore.save(account: viewModelAccount)
+        let (viewModel, _) = try makeViewModel(
+            credentialStore: credentialStore,
+            sessionStore: sessionStore,
+            workspaceCache: cache,
+            api: OfflineGitHubAPI()
+        )
+
+        await viewModel.restoreSession()
+
+        try expectEqual(
+            viewModel.state.route,
+            .complete,
+            "离线时存在缓存应直接进入页面 10–15"
+        )
+        try expectEqual(
+            viewModel.state.repositories,
+            [viewModelRepository],
+            "恢复工作区时应从缓存还原仓库列表"
+        )
+        try expectEqual(
+            viewModel.state.preferences,
+            [
+                RepositorySyncPreference(
+                    repositoryID: viewModelRepository.id,
+                    mode: .manual
+                )
+            ],
+            "缓存仓库应恢复为可手动同步状态"
+        )
+        try expectEqual(
+            viewModel.state.errorMessage,
+            nil,
+            "本地优先恢复不得因离线产生启动错误"
+        )
+    },
     TestCase("工作区重新同步返回仓库选择并保留账户仓库") { @MainActor in
         let (viewModel, _) = try makeViewModel()
         await viewModel.startGitHubLogin()
