@@ -268,7 +268,10 @@ private struct RepositoryWallContainer: View {
             )
         }
         _viewModel = State(
-            initialValue: RepositoryWallViewModel(items: initialItems)
+            initialValue: RepositoryWallViewModel(
+                items: initialItems,
+                coverLoader: coverLoader
+            )
         )
     }
 
@@ -334,6 +337,7 @@ private struct RepositoryWallContainer: View {
                 errorMessage = nil
                 viewModel.updateItems(items)
             }
+            await viewModel.resolvePendingCovers()
         } catch is CancellationError {
             return
         } catch {
