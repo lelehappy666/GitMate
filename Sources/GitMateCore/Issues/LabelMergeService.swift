@@ -31,6 +31,15 @@ public struct LabelMergeProgress: Equatable, Codable, Sendable {
     }
 }
 
+public protocol LabelMerging: Sendable {
+    func merge(
+        source: String,
+        into target: String,
+        token: String,
+        completedIssueNumbers: [Int]
+    ) async throws -> LabelMergeProgress
+}
+
 public enum LabelMergeError: Error, Equatable, Sendable {
     case sourceAndTargetAreEqual
 }
@@ -44,7 +53,7 @@ extension LabelMergeError: LocalizedError {
     }
 }
 
-public final class LabelMergeService: @unchecked Sendable {
+public final class LabelMergeService: LabelMerging, @unchecked Sendable {
     private let api: any LabelMergeAPI
 
     public init(api: any LabelMergeAPI) {
