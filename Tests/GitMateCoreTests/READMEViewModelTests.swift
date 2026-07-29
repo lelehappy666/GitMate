@@ -71,6 +71,29 @@ let readmeViewModelTests = [
             "危险图片协议不得进入块状态"
         )
     },
+    TestCase("恶意嵌套 Markdown 链接只作为纯文本展示") { @MainActor in
+        let viewModel = READMEViewModel(parser: READMEBlockParser())
+        let markdown = "[外链 [嵌套]](file:///etc/passwd)"
+
+        viewModel.load(markdown: markdown, baseURL: nil)
+
+        guard case let .paragraph(content)? =
+            viewModel.state.document?.blocks.first
+        else {
+            throw TestFailure(description: "恶意嵌套链接应保留为段落")
+        }
+        let presentation = READMEInlinePresentation(content: content)
+        try expectEqual(
+            presentation.plainText,
+            markdown,
+            "无法识别的嵌套链接应原样保留为纯文本"
+        )
+        try expectEqual(
+            presentation.externalLinks,
+            [],
+            "纯文本中的 Markdown 语法不得被二次激活为可执行链接"
+        )
+    },
     TestCase("README 空文档显示稳定空状态") { @MainActor in
         let viewModel = READMEViewModel(parser: READMEBlockParser())
 
@@ -121,6 +144,15 @@ let readmeViewModelTests = [
             viewModel.state.loadPhase,
             .failed(message: "暂时无法解析 README，请稍后重试。"),
             "解析失败不得泄露底层错误"
+        )
+        try expectEqual(
+            viewModel.state.retryAction,
+            WorkspaceRetryAction(
+                title: "重试",
+                accessibilityLabel: "重新加载 README",
+                accessibilityIdentifier: "workspace.repository.readme.retry"
+            ),
+            "README 失败状态应提供稳定且可访问的真实重试动作"
         )
 
         viewModel.load(markdown: "# 第二次", baseURL: nil)

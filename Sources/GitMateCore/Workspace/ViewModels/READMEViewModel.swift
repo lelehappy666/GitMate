@@ -10,6 +10,20 @@ public protocol READMEParsing: Sendable {
 
 extension READMEBlockParser: READMEParsing {}
 
+public struct READMEInlinePresentation: Equatable, Sendable {
+    public let plainText: String
+    public let externalLinks: [READMEExternalLink]
+
+    public init(content: READMEInlineContent) {
+        plainText = content.text
+        externalLinks = content.links.compactMap { link in
+            RepositoryPresentationSanitizer.remoteURL(link.url).map {
+                READMEExternalLink(title: link.title, url: $0)
+            }
+        }
+    }
+}
+
 public enum READMELoadPhase: Equatable, Sendable {
     case idle
     case loading
@@ -29,6 +43,17 @@ public struct READMEViewState: Equatable, Sendable {
         document = nil
         outline = []
         self.repositoryID = repositoryID
+    }
+
+    public var retryAction: WorkspaceRetryAction? {
+        guard case .failed = loadPhase else {
+            return nil
+        }
+        return WorkspaceRetryAction(
+            title: "重试",
+            accessibilityLabel: "重新加载 README",
+            accessibilityIdentifier: "workspace.repository.readme.retry"
+        )
     }
 }
 

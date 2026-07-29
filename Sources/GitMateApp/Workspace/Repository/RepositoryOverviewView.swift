@@ -124,6 +124,23 @@ struct RepositoryOverviewView: View {
             Text(message)
                 .font(.system(size: 13))
                 .foregroundStyle(GitMateTheme.textSecondary)
+
+            if let action = viewModel.state.retryAction {
+                Button {
+                    Task {
+                        await viewModel.load()
+                    }
+                } label: {
+                    Label(action.title, systemImage: "arrow.clockwise")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(GitMateTheme.accent)
+                .accessibilityLabel(action.accessibilityLabel)
+                .accessibilityIdentifier(
+                    action.accessibilityIdentifier
+                )
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -243,10 +260,10 @@ struct RepositoryOverviewView: View {
                     : GitMateTheme.warning
             )
             overviewMetric(
-                title: "本地大小",
-                value: byteSize(viewModel.state.localSizeInBytes),
-                detail: lastInspectionDetail,
-                symbol: "internaldrive",
+                title: "最后同步",
+                value: lastSynchronizationTitle,
+                detail: "\(byteSize(viewModel.state.localSizeInBytes)) · \(lastInspectionDetail)",
+                symbol: "clock.arrow.circlepath",
                 color: GitMateTheme.accent
             )
         }
@@ -600,8 +617,14 @@ struct RepositoryOverviewView: View {
 
     private var lastInspectionDetail: String {
         viewModel.state.lastInspectedAt.map {
-            "检查于 \($0.formatted(.relative(presentation: .named)))"
-        } ?? "尚未检查"
+            "最近检查于 \($0.formatted(.relative(presentation: .named)))"
+        } ?? "暂无检查记录"
+    }
+
+    private var lastSynchronizationTitle: String {
+        viewModel.state.lastSynchronizedAt.map {
+            "同步于 \($0.formatted(.relative(presentation: .named)))"
+        } ?? "暂无同步记录"
     }
 
     private func repositorySize(_ kilobytes: Int) -> String {

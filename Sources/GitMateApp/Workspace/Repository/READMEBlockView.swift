@@ -8,7 +8,7 @@ struct READMEBlockView: View {
     var body: some View {
         switch block {
         case let .heading(level, _, text):
-            inlineText(text)
+            Text(verbatim: text)
                 .font(headingFont(level: level))
                 .foregroundStyle(GitMateTheme.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -16,17 +16,18 @@ struct READMEBlockView: View {
                 .accessibilityAddTraits(.isHeader)
 
         case let .paragraph(content):
+            let presentation = READMEInlinePresentation(content: content)
             VStack(alignment: .leading, spacing: 8) {
-                inlineText(content.text)
+                Text(verbatim: presentation.plainText)
                     .font(.system(size: 14))
                     .foregroundStyle(GitMateTheme.textPrimary)
                     .lineSpacing(5)
                     .textSelection(.enabled)
 
-                if !content.links.isEmpty {
+                if !presentation.externalLinks.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(
-                            Array(content.links.enumerated()),
+                            Array(presentation.externalLinks.enumerated()),
                             id: \.offset
                         ) { _, link in
                             externalLink(link)
@@ -53,7 +54,7 @@ struct READMEBlockView: View {
                 RoundedRectangle(cornerRadius: 2)
                     .fill(GitMateTheme.accent)
                     .frame(width: 4)
-                inlineText(value)
+                Text(verbatim: value)
                     .font(.system(size: 14))
                     .italic()
                     .foregroundStyle(GitMateTheme.textSecondary)
@@ -87,7 +88,7 @@ struct READMEBlockView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Text(codeLanguageTitle(language))
+                Text(verbatim: codeLanguageTitle(language))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(GitMateTheme.textSecondary)
                 Spacer(minLength: 0)
@@ -108,7 +109,7 @@ struct READMEBlockView: View {
             Divider()
 
             ScrollView(.horizontal) {
-                Text(value)
+                Text(verbatim: value)
                     .font(.system(size: 12.5, design: .monospaced))
                     .foregroundStyle(GitMateTheme.textPrimary)
                     .textSelection(.enabled)
@@ -260,7 +261,7 @@ struct READMEBlockView: View {
         _ value: String,
         isHeader: Bool
     ) -> some View {
-        inlineText(value)
+        Text(verbatim: value)
             .font(.system(size: 12.5, weight: isHeader ? .semibold : .regular))
             .foregroundStyle(GitMateTheme.textPrimary)
             .textSelection(.enabled)
@@ -287,13 +288,13 @@ struct READMEBlockView: View {
                                 ? GitMateTheme.success
                                 : GitMateTheme.textTertiary
                         )
-                        inlineText(task.text)
+                        Text(verbatim: task.text)
                             .textSelection(.enabled)
                     } else {
                         Text(ordered ? "\(index + 1)." : "•")
                             .fontWeight(.semibold)
                             .foregroundStyle(GitMateTheme.textSecondary)
-                        inlineText(item)
+                        Text(verbatim: item)
                             .textSelection(.enabled)
                     }
                 }
@@ -324,7 +325,7 @@ struct READMEBlockView: View {
     ) -> some View {
         Link(destination: link.url) {
             HStack(spacing: 5) {
-                Text(link.title)
+                Text(verbatim: link.title)
                     .lineLimit(1)
                 Image(systemName: "arrow.up.right")
                     .font(.system(size: 9, weight: .bold))
@@ -343,15 +344,4 @@ struct READMEBlockView: View {
         return language
     }
 
-    private func inlineText(_ value: String) -> Text {
-        guard let attributed = try? AttributedString(
-            markdown: value,
-            options: AttributedString.MarkdownParsingOptions(
-                interpretedSyntax: .inlineOnlyPreservingWhitespace
-            )
-        ) else {
-            return Text(value)
-        }
-        return Text(attributed)
-    }
 }

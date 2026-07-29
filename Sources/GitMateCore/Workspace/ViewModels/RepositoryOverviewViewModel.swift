@@ -18,6 +18,22 @@ public enum RepositoryOverviewLoadPhase: Equatable, Sendable {
     case failed(message: String)
 }
 
+public struct WorkspaceRetryAction: Equatable, Sendable {
+    public let title: String
+    public let accessibilityLabel: String
+    public let accessibilityIdentifier: String
+
+    public init(
+        title: String,
+        accessibilityLabel: String,
+        accessibilityIdentifier: String
+    ) {
+        self.title = title
+        self.accessibilityLabel = accessibilityLabel
+        self.accessibilityIdentifier = accessibilityIdentifier
+    }
+}
+
 public struct RepositoryOverviewState: Equatable, Sendable {
     public var loadPhase: RepositoryOverviewLoadPhase
     public var repository: Repository
@@ -29,6 +45,7 @@ public struct RepositoryOverviewState: Equatable, Sendable {
     public var connectivity: WorkspaceConnectivity
     public var panelErrors: [WorkspacePanelError]
     public var lastInspectedAt: Date?
+    public var lastSynchronizedAt: Date?
     public var localSizeInBytes: Int64
 
     public init(repository: Repository) {
@@ -42,6 +59,7 @@ public struct RepositoryOverviewState: Equatable, Sendable {
         connectivity = .online
         panelErrors = []
         lastInspectedAt = nil
+        lastSynchronizedAt = nil
         localSizeInBytes = 0
     }
 
@@ -63,6 +81,17 @@ public struct RepositoryOverviewState: Equatable, Sendable {
             .filesAndCommits(repositoryID: repository.id),
             .commitGraph(repositoryID: repository.id)
         ]
+    }
+
+    public var retryAction: WorkspaceRetryAction? {
+        guard case .failed = loadPhase else {
+            return nil
+        }
+        return WorkspaceRetryAction(
+            title: "重试",
+            accessibilityLabel: "重新加载仓库总览",
+            accessibilityIdentifier: "workspace.repository.overview.retry"
+        )
     }
 }
 

@@ -109,6 +109,16 @@ let repositoryOverviewViewModelTests = [
             "最近提交应完整保留"
         )
         try expectEqual(
+            viewModel.state.lastInspectedAt,
+            Date(timeIntervalSince1970: 2_000),
+            "本地目录扫描时间应明确保留为最近检查时间"
+        )
+        try expectEqual(
+            viewModel.state.lastSynchronizedAt,
+            nil,
+            "没有真实同步元数据时不得把扫描时间伪装成最后同步时间"
+        )
+        try expectEqual(
             viewModel.state.quickRoutes,
             [
                 .readme(repositoryID: repository.id),
@@ -184,6 +194,15 @@ let repositoryOverviewViewModelTests = [
             viewModel.state.loadPhase,
             .failed(message: "暂时无法加载仓库总览，请稍后重试。"),
             "加载失败应使用不泄露底层信息的稳定提示"
+        )
+        try expectEqual(
+            viewModel.state.retryAction,
+            WorkspaceRetryAction(
+                title: "重试",
+                accessibilityLabel: "重新加载仓库总览",
+                accessibilityIdentifier: "workspace.repository.overview.retry"
+            ),
+            "总览失败状态应提供稳定且可访问的真实重试动作"
         )
 
         await viewModel.load()

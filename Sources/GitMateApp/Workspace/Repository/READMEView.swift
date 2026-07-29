@@ -90,7 +90,9 @@ struct READMEView: View {
                 symbol: "exclamationmark.triangle.fill",
                 title: "README 无法显示",
                 message: message
-            )
+            ) {
+                retryButton
+            }
         case .loaded:
             if let document = viewModel.state.document {
                 documentContent(document)
@@ -239,6 +241,24 @@ struct READMEView: View {
             message: message
         ) {
             EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var retryButton: some View {
+        if let action = viewModel.state.retryAction {
+            Button {
+                Task {
+                    await viewModel.load()
+                }
+            } label: {
+                Label(action.title, systemImage: "arrow.clockwise")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(GitMateTheme.accent)
+            .accessibilityLabel(action.accessibilityLabel)
+            .accessibilityIdentifier(action.accessibilityIdentifier)
         }
     }
 }
