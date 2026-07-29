@@ -71,13 +71,10 @@ struct RepositoryWorkspaceRootView: View {
             IssueDetailView(viewModel: viewModel)
         case .newIssue:
             NewIssueView(viewModel: viewModel)
-        case .milestones, .issueLabels:
-            WorkspaceEmptyView(
-                icon: "hammer",
-                title: "页面正在装配",
-                message: "里程碑和标签页面将在下一阶段接入同一工作区。"
-            )
-            .workspacePanel()
+        case .milestones:
+            MilestonesCanvasView(viewModel: viewModel)
+        case .issueLabels:
+            IssueLabelsView(viewModel: viewModel)
         }
     }
 

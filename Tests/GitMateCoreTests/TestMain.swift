@@ -11,6 +11,7 @@ struct GitMateCoreTestsMain {
             + githubRESTClientTests
             + githubBranchesAPITests
             + githubIssuesAPITests
+            + milestoneTimelineLayoutTests
             + labelMergeServiceTests
             + workspacePersistenceStoreTests
             + repositoryWorkspaceViewModelTests
