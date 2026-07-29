@@ -32,6 +32,11 @@ struct DashboardView: View {
             .padding(.horizontal, 28)
             .padding(.vertical, 24)
         }
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: .infinity,
+            alignment: .top
+        )
         .background(GitMateTheme.canvas)
         .task {
             await viewModel.load()
@@ -118,7 +123,7 @@ struct DashboardView: View {
             Image(systemName: "clock.badge.exclamationmark")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(GitMateTheme.warning)
-            Text("GitHub 请求暂时受限，预计 \(resetAt.formatted(date: .omitted, time: .shortened)) 后恢复。")
+            Text("GitHub 在线信息暂停，预计 \(resetAt.formatted(date: .omitted, time: .shortened)) 后可刷新；本地仓库功能不受影响。")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(GitMateTheme.textPrimary)
             Spacer(minLength: 0)

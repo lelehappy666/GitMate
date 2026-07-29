@@ -289,6 +289,32 @@ public final class OnboardingViewModel {
         }
     }
 
+    public func syncRepositoryFromWorkspace(
+        _ repository: Repository,
+        mode: RepositorySyncMode
+    ) async {
+        guard mode != .never else {
+            return
+        }
+        if !state.repositories.contains(where: { $0.id == repository.id }) {
+            state.repositories.append(repository)
+        }
+        updateSyncMode(repositoryID: repository.id, mode: mode)
+        state.failedRepositoryIDs.removeAll { $0 == repository.id }
+        state.errorMessage = nil
+        state.progress = SyncProgress(completed: 0, total: 1)
+        state.route = .syncProgress
+        await runSync(
+            repositories: [repository],
+            preferences: [
+                RepositorySyncPreference(
+                    repositoryID: repository.id,
+                    mode: mode
+                )
+            ]
+        )
+    }
+
     public func stopSync() {
         activeSyncTask?.cancel()
         activeSyncTask = nil

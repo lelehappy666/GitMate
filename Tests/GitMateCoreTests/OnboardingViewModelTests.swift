@@ -184,6 +184,34 @@ private final class CancellableSyncService: RepositorySyncService, @unchecked Se
     }
 }
 
+private final class RecordingSyncService: RepositorySyncService,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var recordedRepositoryIDs: [Int64] = []
+
+    var repositoryIDs: [Int64] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedRepositoryIDs
+    }
+
+    func sync(
+        repositories: [Repository],
+        preferences _: [RepositorySyncPreference],
+        destination _: URL,
+        accessToken _: String?
+    ) -> AsyncThrowingStream<SyncEvent, Error> {
+        lock.lock()
+        recordedRepositoryIDs = repositories.map(\.id)
+        lock.unlock()
+        return AsyncThrowingStream { continuation in
+            continuation.yield(.finished)
+            continuation.finish()
+        }
+    }
+}
+
 private let viewModelAccount = GitHubAccount(
     id: "github.com:1",
     login: "lele",
@@ -494,6 +522,68 @@ let onboardingViewModelTests = [
             viewModel.state.repositories,
             [viewModelRepository],
             "应保留仓库选择"
+        )
+    },
+    TestCase("工作区下载云端仓库只同步选中的一个仓库") { @MainActor in
+        let cloudRepository = Repository(
+            id: 202,
+            name: "cloud-only",
+            fullName: "GitMate/cloud-only",
+            isPrivate: true,
+            defaultBranch: "main",
+            sizeInKilobytes: 2_048,
+            cloneURL: URL(
+                string: "https://github.com/GitMate/cloud-only.git"
+            )!,
+            ownerAvatarURL: nil
+        )
+        let credentialStore = InMemoryCredentialStore()
+        try credentialStore.save(
+            token: "secret",
+            accountID: viewModelAccount.id
+        )
+        let syncService = RecordingSyncService()
+        let (viewModel, _) = try makeViewModel(
+            credentialStore: credentialStore,
+            syncService: syncService,
+            initialState: OnboardingState(
+                route: .complete,
+                account: viewModelAccount,
+                repositories: [viewModelRepository],
+                preferences: [
+                    RepositorySyncPreference(
+                        repositoryID: viewModelRepository.id,
+                        mode: .automatic
+                    )
+                ]
+            )
+        )
+
+        await viewModel.syncRepositoryFromWorkspace(
+            cloudRepository,
+            mode: .manual
+        )
+
+        try expectEqual(
+            syncService.repositoryIDs,
+            [cloudRepository.id],
+            "单仓库下载不得触发其他仓库同步"
+        )
+        try expect(
+            viewModel.state.repositories.contains(cloudRepository),
+            "下载完成后仓库应进入本地工作区列表"
+        )
+        try expectEqual(
+            viewModel.state.preferences.first {
+                $0.repositoryID == cloudRepository.id
+            }?.mode,
+            .manual,
+            "工作区选择的同步模式必须持久保留"
+        )
+        try expectEqual(
+            viewModel.state.route,
+            .complete,
+            "单仓库下载完成后应返回工作区"
         )
     },
     TestCase("GitHub 登录保存令牌并进入权限确认页") { @MainActor in

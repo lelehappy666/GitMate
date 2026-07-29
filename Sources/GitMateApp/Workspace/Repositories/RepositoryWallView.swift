@@ -2,17 +2,40 @@ import AppKit
 import GitMateCore
 import SwiftUI
 
+enum RepositoryWallScope {
+    case local
+    case cloud
+}
+
 struct RepositoryWallView: View {
     @Bindable var viewModel: RepositoryWallViewModel
-    let onRoute: (WorkspaceRoute) -> Void
+    let scope: RepositoryWallScope
+    let onRoute: ((WorkspaceRoute) -> Void)?
+    let onRefresh: (() -> Void)?
+    let onLoadNextPage: (() -> Void)?
+    let onDownload:
+        ((Repository, RepositorySyncMode) -> Void)?
 
-    private let columns = [
-        GridItem(
-            .adaptive(minimum: 170, maximum: 220),
-            spacing: 18,
-            alignment: .top
-        )
-    ]
+    @State private var visibleRepositoryIDs = Set<Int64>()
+    @State private var coverTask: Task<Void, Never>?
+    @State private var lastColumnCount = 1
+
+    init(
+        viewModel: RepositoryWallViewModel,
+        scope: RepositoryWallScope = .local,
+        onRoute: ((WorkspaceRoute) -> Void)? = nil,
+        onRefresh: (() -> Void)? = nil,
+        onLoadNextPage: (() -> Void)? = nil,
+        onDownload:
+            ((Repository, RepositorySyncMode) -> Void)? = nil
+    ) {
+        self.viewModel = viewModel
+        self.scope = scope
+        self.onRoute = onRoute
+        self.onRefresh = onRefresh
+        self.onLoadNextPage = onLoadNextPage
+        self.onDownload = onDownload
+    }
 
     var body: some View {
         let visibleItems = viewModel.visibleItems
@@ -32,15 +55,15 @@ struct RepositoryWallView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(GitMateTheme.canvas)
-        .task {
-            await viewModel.resolvePendingCovers()
+        .onDisappear {
+            coverTask?.cancel()
         }
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 20) {
             VStack(alignment: .leading, spacing: 5) {
-                Text("仓库封面墙")
+                Text(scope == .local ? "本地仓库" : "云端仓库")
                     .font(.system(size: 26, weight: .bold))
                     .foregroundStyle(GitMateTheme.textPrimary)
                 Text(headerDescription)
@@ -50,34 +73,52 @@ struct RepositoryWallView: View {
 
             Spacer(minLength: 16)
 
-            HStack(spacing: 11) {
-                Image(systemName: "photo.stack")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(GitMateTheme.accent)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("\(readmeCoverCount) / \(viewModel.items.count)")
-                        .font(.system(size: 17, weight: .bold, design: .rounded))
-                        .foregroundStyle(GitMateTheme.textPrimary)
-                    Text("README 封面")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(GitMateTheme.textSecondary)
+            if let onRefresh {
+                Button {
+                    onRefresh()
+                    scheduleCoverLoading(
+                        columnCount: lastColumnCount
+                    )
+                } label: {
+                    Label("刷新云端仓库", systemImage: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .bold))
                 }
-            }
-            .padding(.horizontal, 15)
-            .frame(height: 52)
-            .background(.white)
-            .clipShape(
-                RoundedRectangle(
-                    cornerRadius: GitMateTheme.compactCornerRadius,
-                    style: .continuous
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .tint(GitMateTheme.accent)
+                .accessibilityIdentifier(
+                    "workspace.repositories.cloud.refresh"
                 )
-            )
-            .overlay {
-                RoundedRectangle(
-                    cornerRadius: GitMateTheme.compactCornerRadius,
-                    style: .continuous
+            } else {
+                HStack(spacing: 11) {
+                    Image(systemName: "photo.stack")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(GitMateTheme.accent)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("\(readmeCoverCount) / \(viewModel.items.count)")
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
+                            .foregroundStyle(GitMateTheme.textPrimary)
+                        Text("已缓存封面")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(GitMateTheme.textSecondary)
+                    }
+                }
+                .padding(.horizontal, 15)
+                .frame(height: 52)
+                .background(.white)
+                .clipShape(
+                    RoundedRectangle(
+                        cornerRadius: GitMateTheme.compactCornerRadius,
+                        style: .continuous
+                    )
                 )
-                .stroke(GitMateTheme.border, lineWidth: 1)
+                .overlay {
+                    RoundedRectangle(
+                        cornerRadius: GitMateTheme.compactCornerRadius,
+                        style: .continuous
+                    )
+                    .stroke(GitMateTheme.border, lineWidth: 1)
+                }
             }
         }
         .frame(maxWidth: GitMateTheme.contentMaxWidth, alignment: .leading)
@@ -119,7 +160,8 @@ struct RepositoryWallView: View {
                     title: "排序",
                     selection: $viewModel.sort,
                     options: RepositoryWallSort.allCases,
-                    label: sortTitle
+                    label: sortTitle,
+                    defaultValue: .recentlyUpdated
                 )
                 .frame(width: 142)
             }
@@ -129,17 +171,21 @@ struct RepositoryWallView: View {
                     title: "可见性",
                     selection: $viewModel.visibility,
                     options: RepositoryVisibilityFilter.allCases,
-                    label: visibilityFilterTitle
+                    label: visibilityFilterTitle,
+                    defaultValue: .all
                 )
 
                 languagePicker
 
-                filterPicker(
-                    title: "同步状态",
-                    selection: $viewModel.syncState,
-                    options: RepositorySyncStateFilter.allCases,
-                    label: syncFilterTitle
-                )
+                if scope == .local {
+                    filterPicker(
+                        title: "同步状态",
+                        selection: $viewModel.syncState,
+                        options: RepositorySyncStateFilter.allCases,
+                        label: syncFilterTitle,
+                        defaultValue: .all
+                    )
+                }
 
                 Spacer(minLength: 0)
 
@@ -152,61 +198,131 @@ struct RepositoryWallView: View {
         .frame(maxWidth: GitMateTheme.contentMaxWidth, alignment: .leading)
     }
 
-    private func filterPicker<Value: Hashable>(
+    private func filterPicker<Value: Hashable & Equatable>(
         title: String,
         selection: Binding<Value>,
         options: [Value],
-        label: @escaping (Value) -> String
+        label: @escaping (Value) -> String,
+        defaultValue: Value
     ) -> some View {
-        Picker(title, selection: selection) {
+        Menu {
             ForEach(options, id: \.self) { option in
-                Text(label(option)).tag(option)
+                Button {
+                    selection.wrappedValue = option
+                } label: {
+                    if selection.wrappedValue == option {
+                        Label(label(option), systemImage: "checkmark")
+                    } else {
+                        Text(label(option))
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(label(selection.wrappedValue))
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(
+                selection.wrappedValue == defaultValue
+                    ? GitMateTheme.textSecondary
+                    : GitMateTheme.accent
+            )
+            .padding(.horizontal, 12)
+            .frame(minWidth: 118, minHeight: 34)
+            .background(
+                selection.wrappedValue == defaultValue
+                    ? Color.white
+                    : GitMateTheme.accent.opacity(0.11)
+            )
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: GitMateTheme.compactCornerRadius,
+                    style: .continuous
+                )
+            )
+            .overlay {
+                RoundedRectangle(
+                    cornerRadius: GitMateTheme.compactCornerRadius,
+                    style: .continuous
+                )
+                .stroke(
+                    selection.wrappedValue == defaultValue
+                        ? GitMateTheme.border
+                        : GitMateTheme.accent.opacity(0.38),
+                    lineWidth: 1
+                )
             }
         }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .frame(minWidth: 118, minHeight: 34, alignment: .leading)
-        .background(.white)
-        .clipShape(
-            RoundedRectangle(
-                cornerRadius: GitMateTheme.compactCornerRadius,
-                style: .continuous
-            )
-        )
-        .overlay {
-            RoundedRectangle(
-                cornerRadius: GitMateTheme.compactCornerRadius,
-                style: .continuous
-            )
-            .stroke(GitMateTheme.border, lineWidth: 1)
-        }
+        .menuStyle(.borderlessButton)
         .accessibilityLabel(title)
     }
 
     private var languagePicker: some View {
-        Picker("语言", selection: $viewModel.language) {
-            Text("全部语言").tag(String?.none)
+        Menu {
+            Button {
+                viewModel.language = nil
+            } label: {
+                if viewModel.language == nil {
+                    Label("全部语言", systemImage: "checkmark")
+                } else {
+                    Text("全部语言")
+                }
+            }
             ForEach(viewModel.availableLanguages, id: \.self) { language in
-                Text(language).tag(Optional(language))
+                Button {
+                    viewModel.language = language
+                } label: {
+                    if viewModel.language == language {
+                        Label(language, systemImage: "checkmark")
+                    } else {
+                        Text(language)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(viewModel.language ?? "全部语言")
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(
+                viewModel.language == nil
+                    ? GitMateTheme.textSecondary
+                    : GitMateTheme.accent
+            )
+            .padding(.horizontal, 12)
+            .frame(minWidth: 118, minHeight: 34)
+            .background(
+                viewModel.language == nil
+                    ? Color.white
+                    : GitMateTheme.accent.opacity(0.11)
+            )
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: GitMateTheme.compactCornerRadius,
+                    style: .continuous
+                )
+            )
+            .overlay {
+                RoundedRectangle(
+                    cornerRadius: GitMateTheme.compactCornerRadius,
+                    style: .continuous
+                )
+                .stroke(
+                    viewModel.language == nil
+                        ? GitMateTheme.border
+                        : GitMateTheme.accent.opacity(0.38),
+                    lineWidth: 1
+                )
             }
         }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .frame(minWidth: 118, minHeight: 34, alignment: .leading)
-        .background(.white)
-        .clipShape(
-            RoundedRectangle(
-                cornerRadius: GitMateTheme.compactCornerRadius,
-                style: .continuous
-            )
-        )
-        .overlay {
-            RoundedRectangle(
-                cornerRadius: GitMateTheme.compactCornerRadius,
-                style: .continuous
-            )
-            .stroke(GitMateTheme.border, lineWidth: 1)
-        }
+        .menuStyle(.borderlessButton)
         .accessibilityLabel("语言")
     }
 
@@ -227,32 +343,128 @@ struct RepositoryWallView: View {
                 message: "尝试清除搜索内容或调整筛选条件。"
             )
         } else {
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 18) {
-                    ForEach(visibleItems) { item in
-                        Button {
-                            onRoute(item.destination)
-                        } label: {
-                            RepositoryPosterCard(item: item)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityElement(children: .combine)
-                        .accessibilityLabel(repositoryAccessibilityLabel(item))
-                        .accessibilityHint("打开仓库总览")
-                        .accessibilityIdentifier(
-                            item.accessibilityIdentifier
-                        )
-                    }
-                }
-                .frame(
-                    maxWidth: GitMateTheme.contentMaxWidth,
-                    alignment: .topLeading
+            GeometryReader { geometry in
+                let columnCount = max(
+                    Int((geometry.size.width - 38) / 208),
+                    1
                 )
-                .padding(.horizontal, 28)
-                .padding(.vertical, 20)
+                let columns = Array(
+                    repeating: GridItem(
+                        .flexible(minimum: 170, maximum: 220),
+                        spacing: 18,
+                        alignment: .top
+                    ),
+                    count: columnCount
+                )
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 18) {
+                        ForEach(visibleItems) { item in
+                            ZStack(alignment: .bottomTrailing) {
+                                RepositoryPosterCard(item: item)
+
+                                if let onDownload {
+                                    downloadMenu(
+                                        repository: item.repository,
+                                        action: onDownload
+                                    )
+                                    .padding(12)
+                                }
+                            }
+                            .frame(maxWidth: 220)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                onRoute?(item.destination)
+                            }
+                            .onAppear {
+                                visibleRepositoryIDs.insert(item.id)
+                                scheduleCoverLoading(
+                                    columnCount: columnCount
+                                )
+                            }
+                            .onDisappear {
+                                visibleRepositoryIDs.remove(item.id)
+                            }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel(repositoryAccessibilityLabel(item))
+                            .accessibilityHint(
+                                scope == .local
+                                    ? "打开仓库总览"
+                                    : "可选择下载到本地"
+                            )
+                            .accessibilityIdentifier(
+                                item.accessibilityIdentifier
+                            )
+                        }
+                        if let onLoadNextPage {
+                            Color.clear
+                                .frame(height: 1)
+                                .onAppear(perform: onLoadNextPage)
+                        }
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 20)
+                    .frame(
+                        maxWidth: .infinity,
+                        alignment: .topLeading
+                    )
+                }
+                .scrollIndicators(.visible)
+                .onAppear {
+                    lastColumnCount = columnCount
+                }
+                .onChange(of: columnCount) { _, columnCount in
+                    lastColumnCount = columnCount
+                    scheduleCoverLoading(
+                        columnCount: columnCount
+                    )
+                }
             }
-            .scrollIndicators(.visible)
         }
+    }
+
+    private func scheduleCoverLoading(columnCount: Int) {
+        coverTask?.cancel()
+        let visibleRepositoryIDs = self.visibleRepositoryIDs
+        coverTask = Task {
+            try? await Task.sleep(for: .milliseconds(45))
+            guard !Task.isCancelled else {
+                return
+            }
+            await viewModel.updateVisibleCovers(
+                visibleRepositoryIDs: visibleRepositoryIDs,
+                columnCount: columnCount
+            )
+        }
+    }
+
+    private func downloadMenu(
+        repository: Repository,
+        action:
+            @escaping (Repository, RepositorySyncMode) -> Void
+    ) -> some View {
+        Menu {
+            Button("手动同步") {
+                action(repository, .manual)
+            }
+            Button("自动同步") {
+                action(repository, .automatic)
+            }
+        } label: {
+            Label("下载", systemImage: "arrow.down.to.line")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 11)
+                .frame(height: 30)
+                .background(GitMateTheme.accent)
+                .clipShape(Capsule())
+                .shadow(
+                    color: GitMateTheme.accent.opacity(0.25),
+                    radius: 8,
+                    y: 3
+                )
+        }
+        .menuStyle(.borderlessButton)
+        .accessibilityLabel("下载 \(repository.fullName)")
     }
 
     private func emptyState(
@@ -275,11 +487,10 @@ struct RepositoryWallView: View {
     }
 
     private var headerDescription: String {
-        let fallbackCount = viewModel.items.count - readmeCoverCount
-        if fallbackCount == 0 {
-            return "\(viewModel.items.count) 个仓库 · 封面全部来自 README"
+        if scope == .cloud {
+            return "\(viewModel.items.count) 个云端仓库 · 滚动时按需加载封面"
         }
-        return "\(viewModel.items.count) 个仓库 · \(fallbackCount) 个使用稳定回退封面"
+        return "\(viewModel.items.count) 个本地仓库 · 优先使用本地缓存封面"
     }
 
     private var readmeCoverCount: Int {
@@ -482,11 +693,16 @@ private struct RepositoryPosterCard: View {
     }
 
     private func posterImage(_ image: Image) -> some View {
-        image
-            .resizable()
-            .scaledToFill()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
+        GeometryReader { geometry in
+            image
+                .resizable()
+                .scaledToFill()
+                .frame(
+                    width: geometry.size.width,
+                    height: geometry.size.height
+                )
+                .clipped()
+        }
     }
 
     private func metadataChip(

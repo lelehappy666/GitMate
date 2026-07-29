@@ -35,6 +35,9 @@ enum WorkspacePreviewFactory {
             catalog: catalog,
             localGit: PreviewLocalGitReader(),
             workspaceAPI: PreviewGitHubWorkspaceAPI(state: state),
+            repositoryAPIProvider: PreviewGitHubAPIProvider(
+                repositories: repositories
+            ),
             cache: cache,
             coverCache: coverCache,
             coverLoader: PreviewRepositoryCoverLoader()
@@ -148,6 +151,47 @@ enum WorkspacePreviewFactory {
     ]
 }
 
+private struct PreviewGitHubAPIProvider: GitHubAPIProviding {
+    let repositories: [Repository]
+
+    func api(for _: GitHubAccount) throws -> any GitHubAPI {
+        PreviewGitHubAPI(repositories: repositories)
+    }
+}
+
+private struct PreviewGitHubAPI: GitHubAPI {
+    let repositories: [Repository]
+
+    func currentUser(token _: String) async throws -> GitHubAccount {
+        throw GitHubAPIError.invalidResponse
+    }
+
+    func repositories(token _: String) async throws -> [Repository] {
+        repositories
+    }
+
+    func repositoryPage(
+        token _: String,
+        page: Int,
+        perPage: Int
+    ) async throws -> GitHubRepositoryPage {
+        let start = max(page - 1, 0) * max(perPage, 1)
+        let result: [Repository]
+        if start < repositories.count {
+            result = Array(
+                repositories.dropFirst(start).prefix(perPage)
+            )
+        } else {
+            result = []
+        }
+        return GitHubRepositoryPage(
+            repositories: result,
+            page: page,
+            hasNextPage: start + result.count < repositories.count
+        )
+    }
+}
+
 private extension Notification.Name {
     static let workspacePreviewRequestedResync = Notification.Name(
         "GitMate.WorkspacePreview.RequestedResync"
@@ -233,7 +277,8 @@ private struct PreviewRepositoryCoverLoader: RepositoryCoverLoading {
                 contentType: "image/png",
                 storedAt: Date(timeIntervalSince1970: 1_753_747_200),
                 pixelWidth: 640,
-                pixelHeight: 360
+                pixelHeight: 360,
+                sourceURL: sourceURL
             )
         )
     }

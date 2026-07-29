@@ -364,6 +364,40 @@ let repositoryWallViewModelTests = [
             item.cover,
             "取消不得把尚未完成的远程封面错误标记为失败"
         )
+    },
+    TestCase("仓库墙只把当前窗口调度结果写回对应海报") { @MainActor in
+        let repositories = (1...12).map {
+            repositoryPosterFixture(
+                id: Int64($0),
+                fullName: String(
+                    format: "owner/repository-%02d",
+                    $0
+                )
+            )
+        }
+        let resolver = ViewportCoverResolverStub(
+            data: validRepositoryWallCoverData()
+        )
+        let scheduler = RepositoryCoverViewportScheduler(
+            resolver: resolver,
+            maximumConcurrentLoads: 3
+        )
+        let viewModel = RepositoryWallViewModel(
+            items: repositories,
+            coverScheduler: scheduler,
+            token: "secret"
+        )
+
+        await viewModel.updateVisibleCovers(
+            visibleRepositoryIDs: [1, 2, 3, 4],
+            columnCount: 4
+        )
+
+        try expectEqual(
+            Set(viewModel.items.filter(\.cover.usesREADMEImage).map(\.id)),
+            Set(Array(1...8).map(Int64.init)),
+            "只应写回当前窗口与下一行的封面"
+        )
     }
 ]
 
@@ -399,6 +433,33 @@ private actor SuspendingRepositoryWallLoader: RepositoryCoverLoading {
         hasStarted = true
         try await Task.sleep(for: .seconds(30))
         throw RepositoryWallLoaderError.failed
+    }
+}
+
+private actor ViewportCoverResolverStub: RepositoryCoverResolving {
+    let data: Data
+
+    init(data: Data) {
+        self.data = data
+    }
+
+    func resolve(
+        repository: Repository,
+        token _: String,
+        policy _: RepositoryCoverResolvePolicy
+    ) async throws -> RepositoryCoverCacheEntry? {
+        RepositoryCoverCacheEntry(
+            data: data,
+            metadata: RepositoryCoverCacheMetadata(
+                contentType: "image/png",
+                storedAt: Date(timeIntervalSince1970: 100),
+                pixelWidth: 320,
+                pixelHeight: 280,
+                sourceURL: URL(
+                    string: "https://images.example/\(repository.id).png"
+                )
+            )
+        )
     }
 }
 

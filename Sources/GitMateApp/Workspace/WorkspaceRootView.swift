@@ -12,13 +12,17 @@ struct WorkspaceRootView: View {
     let authorization: WorkspaceAuthorization
     let onResync: () -> Void
     let onReauthorize: (WorkspaceRoute) -> Void
+    let onDownloadRepository:
+        (Repository, RepositorySyncMode) -> Void
 
     init(
         session: WorkspaceSession,
         preferences: [RepositorySyncPreference],
         runtime: WorkspaceRuntimeDependencies,
         onResync: @escaping () -> Void,
-        onReauthorize: @escaping (WorkspaceRoute) -> Void
+        onReauthorize: @escaping (WorkspaceRoute) -> Void,
+        onDownloadRepository:
+            @escaping (Repository, RepositorySyncMode) -> Void = { _, _ in }
     ) {
         _session = State(initialValue: session)
         _selection = State(initialValue: WorkspaceSelection(route: session.route))
@@ -52,6 +56,7 @@ struct WorkspaceRootView: View {
         authorization = runtime.authorization(for: session.account)
         self.onResync = onResync
         self.onReauthorize = onReauthorize
+        self.onDownloadRepository = onDownloadRepository
     }
 
     var body: some View {
@@ -80,7 +85,7 @@ struct WorkspaceRootView: View {
             minHeight: 680,
             idealHeight: 760
         )
-        .background(GitMateTheme.background)
+        .background(GitMateTheme.canvas.ignoresSafeArea())
         .onChange(of: selection) { _, selection in
             session.route = selection.route
         }
@@ -111,8 +116,12 @@ struct WorkspaceRootView: View {
                 token: token,
                 content: runtime.contentService(for: session.account),
                 coverCache: runtime.coverCache,
-                coverLoader: runtime.coverLoader,
+                coverScheduler: runtime.coverScheduler(for: session.account),
+                cloudAPI: try? runtime.repositoryAPI(
+                    for: session.account
+                ),
                 onRoute: onRoute,
+                onDownloadRepository: onDownloadRepository,
                 onAuthorizationRequired: requireReauthorization
             )
         case let .repositoryOverview(repositoryID):
@@ -235,6 +244,11 @@ private struct DashboardPageContainer: View {
     }
 }
 
+private enum RepositoryLibraryTab {
+    case local
+    case cloud
+}
+
 private struct RepositoryWallContainer: View {
     let account: GitHubAccount
     let repositories: [Repository]
@@ -242,11 +256,17 @@ private struct RepositoryWallContainer: View {
     let token: String
     let content: WorkspaceContentService
     let coverCache: any RepositoryCoverCaching
-    let coverLoader: any RepositoryCoverLoading
+    let coverScheduler: RepositoryCoverViewportScheduler
+    let cloudAPI: (any GitHubAPI)?
     let onRoute: (WorkspaceRoute) -> Void
+    let onDownloadRepository:
+        (Repository, RepositorySyncMode) -> Void
     let onAuthorizationRequired: () -> Void
 
-    @State private var viewModel: RepositoryWallViewModel
+    @State private var selectedTab: RepositoryLibraryTab = .local
+    @State private var localViewModel: RepositoryWallViewModel
+    @State private var cloudViewModel: CloudRepositoryViewModel?
+    @State private var cloudWallViewModel: RepositoryWallViewModel
     @State private var errorMessage: String?
 
     init(
@@ -256,8 +276,11 @@ private struct RepositoryWallContainer: View {
         token: String,
         content: WorkspaceContentService,
         coverCache: any RepositoryCoverCaching,
-        coverLoader: any RepositoryCoverLoading,
+        coverScheduler: RepositoryCoverViewportScheduler,
+        cloudAPI: (any GitHubAPI)?,
         onRoute: @escaping (WorkspaceRoute) -> Void,
+        onDownloadRepository:
+            @escaping (Repository, RepositorySyncMode) -> Void,
         onAuthorizationRequired: @escaping () -> Void
     ) {
         self.account = account
@@ -266,8 +289,10 @@ private struct RepositoryWallContainer: View {
         self.token = token
         self.content = content
         self.coverCache = coverCache
-        self.coverLoader = coverLoader
+        self.coverScheduler = coverScheduler
+        self.cloudAPI = cloudAPI
         self.onRoute = onRoute
+        self.onDownloadRepository = onDownloadRepository
         self.onAuthorizationRequired = onAuthorizationRequired
 
         let modes = Dictionary(
@@ -293,44 +318,204 @@ private struct RepositoryWallContainer: View {
                 )
             )
         }
-        _viewModel = State(
+        _localViewModel = State(
             initialValue: RepositoryWallViewModel(
                 items: initialItems,
-                coverLoader: coverLoader
+                coverScheduler: coverScheduler,
+                token: token
             )
+        )
+        _cloudWallViewModel = State(
+            initialValue: RepositoryWallViewModel(
+                items: [],
+                coverScheduler: coverScheduler,
+                token: token
+            )
+        )
+        _cloudViewModel = State(
+            initialValue: cloudAPI.map {
+                CloudRepositoryViewModel(
+                    api: $0,
+                    token: token,
+                    excludedRepositoryIDs: Set(
+                        repositories.map(\.id)
+                    )
+                )
+            }
         )
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            if let errorMessage {
-                Label(
-                    errorMessage,
-                    systemImage: "exclamationmark.triangle.fill"
+            repositoryTabs
+
+            if selectedTab == .local {
+                if let errorMessage {
+                    statusBanner(
+                        errorMessage,
+                        symbol: "exclamationmark.triangle.fill",
+                        color: GitMateTheme.warning
+                    )
+                }
+                RepositoryWallView(
+                    viewModel: localViewModel,
+                    scope: .local,
+                    onRoute: onRoute
                 )
-                .font(.system(size: 12.5, weight: .semibold))
-                .foregroundStyle(GitMateTheme.textPrimary)
-                .padding(.horizontal, 18)
-                .frame(
-                    maxWidth: .infinity,
-                    minHeight: 42,
-                    alignment: .leading
+            } else if let cloudViewModel {
+                cloudStatus(for: cloudViewModel.phase)
+                RepositoryWallView(
+                    viewModel: cloudWallViewModel,
+                    scope: .cloud,
+                    onRefresh: refreshCloud,
+                    onLoadNextPage: {
+                        guard cloudViewModel.hasNextPage else {
+                            return
+                        }
+                        loadNextCloudPage()
+                    },
+                    onDownload: onDownloadRepository
                 )
-                .background(GitMateTheme.warning.opacity(0.13))
+            } else {
+                ContentUnavailableView(
+                    "云端仓库暂不可用",
+                    systemImage: "icloud.slash",
+                    description: Text("请重新授权 GitHub 账户后再试。")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(GitMateTheme.canvas)
             }
-            RepositoryWallView(
-                viewModel: viewModel,
-                onRoute: onRoute
-            )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(GitMateTheme.canvas)
         .task(id: account.id) {
-            await load()
+            await loadLocal()
+        }
+        .onChange(of: selectedTab) { _, tab in
+            guard tab == .cloud,
+                  cloudViewModel?.repositories.isEmpty == true
+            else {
+                return
+            }
+            loadNextCloudPage()
         }
     }
 
-    private func load() async {
+    private var repositoryTabs: some View {
+        HStack(spacing: 6) {
+            tabButton(
+                title: "本地仓库",
+                count: repositories.count,
+                tab: .local
+            )
+            tabButton(
+                title: "云端仓库",
+                count: cloudViewModel?.repositories.count ?? 0,
+                tab: .cloud
+            )
+            Spacer()
+            Text("本地仓库优先，云端仓库按需下载")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(GitMateTheme.textSecondary)
+        }
+        .padding(.horizontal, 28)
+        .frame(minHeight: 54)
+        .background(Color.white)
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+    }
+
+    private func tabButton(
+        title: String,
+        count: Int,
+        tab: RepositoryLibraryTab
+    ) -> some View {
+        Button {
+            selectedTab = tab
+        } label: {
+            HStack(spacing: 7) {
+                Text(title)
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .bold))
+                    .padding(.horizontal, 6)
+                    .frame(height: 20)
+                    .background(
+                        selectedTab == tab
+                            ? Color.white.opacity(0.82)
+                            : GitMateTheme.panel
+                    )
+                    .clipShape(Capsule())
+            }
+            .font(.system(size: 12.5, weight: .bold))
+            .foregroundStyle(
+                selectedTab == tab
+                    ? GitMateTheme.accent
+                    : GitMateTheme.textSecondary
+            )
+            .padding(.horizontal, 14)
+            .frame(height: 36)
+            .background(
+                selectedTab == tab
+                    ? GitMateTheme.accent.opacity(0.12)
+                    : Color.clear
+            )
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: 10,
+                    style: .continuous
+                )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func cloudStatus(
+        for phase: CloudRepositoryLoadPhase
+    ) -> some View {
+        switch phase {
+        case .idle, .loaded:
+            EmptyView()
+        case .loading:
+            statusBanner(
+                "正在加载下一批云端仓库…",
+                symbol: "arrow.triangle.2.circlepath",
+                color: GitMateTheme.accent
+            )
+        case let .rateLimited(resetAt):
+            statusBanner(
+                "GitHub 在线信息暂停，预计 \(resetAt.formatted(date: .omitted, time: .shortened)) 后可刷新；本地仓库功能不受影响。",
+                symbol: "clock.badge.exclamationmark",
+                color: GitMateTheme.warning
+            )
+        case let .failed(message):
+            statusBanner(
+                "云端仓库加载失败：\(message)",
+                symbol: "icloud.slash",
+                color: GitMateTheme.danger
+            )
+        }
+    }
+
+    private func statusBanner(
+        _ message: String,
+        symbol: String,
+        color: Color
+    ) -> some View {
+        Label(message, systemImage: symbol)
+            .font(.system(size: 12.5, weight: .semibold))
+            .foregroundStyle(GitMateTheme.textPrimary)
+            .padding(.horizontal, 18)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: 42,
+                alignment: .leading
+            )
+            .background(color.opacity(0.12))
+    }
+
+    private func loadLocal() async {
         do {
             let updates = content.dashboardUpdates(
                 account: account,
@@ -361,14 +546,60 @@ private struct RepositoryWallContainer: View {
                 )
                 try Task.checkCancellation()
                 errorMessage = nil
-                viewModel.updateItems(items)
+                localViewModel.updateItems(items)
             }
-            await viewModel.resolvePendingCovers()
         } catch is CancellationError {
             return
         } catch {
             errorMessage = "本地与缓存数据暂时无法读取，请稍后重试。"
         }
+    }
+
+    private func loadNextCloudPage() {
+        guard let cloudViewModel else {
+            return
+        }
+        Task {
+            await cloudViewModel.loadNextPage()
+            synchronizeCloudWall(cloudViewModel.repositories)
+        }
+    }
+
+    private func refreshCloud() {
+        guard let cloudViewModel else {
+            return
+        }
+        let knownIDs = Set(cloudViewModel.repositories.map(\.id))
+        try? coverCache.markNeedsRefresh(repositoryIDs: knownIDs)
+        cloudWallViewModel.markCoversForRefresh(
+            repositoryIDs: knownIDs
+        )
+        Task {
+            await cloudViewModel.refresh()
+            synchronizeCloudWall(cloudViewModel.repositories)
+        }
+    }
+
+    private func synchronizeCloudWall(
+        _ repositories: [Repository]
+    ) {
+        cloudWallViewModel.updateItems(
+            repositories.map { repository in
+                RepositoryPosterItem(
+                    repository: repository,
+                    language: nil,
+                    syncMode: .never,
+                    syncState: .notSynchronized,
+                    updatedAt: nil,
+                    cover: .fallback(
+                        FallbackRepositoryCover.make(
+                            repository: repository,
+                            language: nil
+                        )
+                    )
+                )
+            }
+        )
     }
 }
 

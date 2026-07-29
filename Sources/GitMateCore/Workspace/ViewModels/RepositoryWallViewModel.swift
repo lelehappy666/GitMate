@@ -366,12 +366,25 @@ public final class RepositoryWallViewModel {
     @ObservationIgnored
     private let coverLoader: (any RepositoryCoverLoading)?
 
+    @ObservationIgnored
+    private let coverScheduler: RepositoryCoverViewportScheduler?
+
+    @ObservationIgnored
+    private let token: String?
+
+    @ObservationIgnored
+    private var coverRefreshIDs: Set<Int64> = []
+
     public init(
         items: [RepositoryPosterItem],
-        coverLoader: (any RepositoryCoverLoading)? = nil
+        coverLoader: (any RepositoryCoverLoading)? = nil,
+        coverScheduler: RepositoryCoverViewportScheduler? = nil,
+        token: String? = nil
     ) {
         self.items = items
         self.coverLoader = coverLoader
+        self.coverScheduler = coverScheduler
+        self.token = token
     }
 
     public var visibleItems: [RepositoryPosterItem] {
@@ -402,7 +415,76 @@ public final class RepositoryWallViewModel {
     }
 
     public func updateItems(_ items: [RepositoryPosterItem]) {
-        self.items = items
+        let existingCovers = Dictionary(
+            uniqueKeysWithValues: self.items.map { ($0.id, $0.cover) }
+        )
+        self.items = items.map { item in
+            guard
+                !item.cover.usesREADMEImage,
+                let existing = existingCovers[item.id],
+                existing.usesREADMEImage
+            else {
+                return item
+            }
+            return item.replacingCover(existing)
+        }
+    }
+
+    public func markCoversForRefresh(
+        repositoryIDs: Set<Int64>
+    ) {
+        coverRefreshIDs.formUnion(repositoryIDs)
+    }
+
+    public func updateVisibleCovers(
+        visibleRepositoryIDs: Set<Int64>,
+        columnCount: Int
+    ) async {
+        guard let coverScheduler, let token else {
+            return
+        }
+        let visibleItems = self.visibleItems
+        let repositories = Dictionary(
+            uniqueKeysWithValues: visibleItems.map {
+                ($0.id, $0.repository)
+            }
+        )
+        let demand = RepositoryCoverViewportDemand.make(
+            orderedRepositoryIDs: visibleItems.map(\.id),
+            visibleRepositoryIDs: visibleRepositoryIDs,
+            columnCount: columnCount
+        )
+        let results = await coverScheduler.load(
+            demand: demand,
+            repositories: repositories,
+            token: token,
+            refreshIDs: coverRefreshIDs
+        )
+        guard !Task.isCancelled else {
+            return
+        }
+        let entries = Dictionary(
+            uniqueKeysWithValues: results.compactMap { result in
+                result.entry.map { (result.repositoryID, $0) }
+            }
+        )
+        let resolvedIDs = Set(entries.keys)
+        items = items.map { item in
+            guard
+                let entry = entries[item.id],
+                let sourceURL = entry.metadata.sourceURL
+            else {
+                return item
+            }
+            return item.replacingCover(
+                .cached(
+                    data: entry.data,
+                    sourceURL: sourceURL,
+                    fallback: item.cover.fallback
+                )
+            )
+        }
+        coverRefreshIDs.subtract(resolvedIDs)
     }
 
     public func resolvePendingCovers() async {

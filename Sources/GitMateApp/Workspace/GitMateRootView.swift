@@ -21,6 +21,14 @@ struct GitMateRootView: View {
                 onReauthorize: { route in
                     workspaceRoute = route
                     onboarding.prepareReauthorization()
+                },
+                onDownloadRepository: { repository, mode in
+                    Task {
+                        await onboarding.syncRepositoryFromWorkspace(
+                            repository,
+                            mode: mode
+                        )
+                    }
                 }
             )
             .id(account.id)
