@@ -86,9 +86,10 @@ private let viewModelRepository = Repository(
 
 @MainActor
 private func makeViewModel(
-    syncEvents: [SyncEvent] = [.finished]
+    syncEvents: [SyncEvent] = [.finished],
+    credentialStore: InMemoryCredentialStore = InMemoryCredentialStore(),
+    sessionStore: InMemoryAccountSessionStore = InMemoryAccountSessionStore()
 ) throws -> (OnboardingViewModel, InMemoryCredentialStore) {
-    let credentialStore = InMemoryCredentialStore()
     let api = FakeGitHubAPI(
         account: viewModelAccount,
         repositories: [viewModelRepository]
@@ -97,6 +98,7 @@ private func makeViewModel(
         apiProvider: FakeAPIProvider(api: api),
         enterpriseConnector: FakeEnterpriseConnector(account: viewModelAccount),
         credentialStore: credentialStore,
+        accountSessionStore: sessionStore,
         syncService: FixedSyncService(events: syncEvents),
         networkMonitor: SilentNetworkMonitor(),
         syncDestination: FileManager.default.temporaryDirectory
@@ -106,7 +108,10 @@ private func makeViewModel(
 
 let onboardingViewModelTests = [
     TestCase("GitHub 登录保存令牌并进入权限确认页") { @MainActor in
-        let (viewModel, credentialStore) = try makeViewModel()
+        let sessionStore = InMemoryAccountSessionStore()
+        let (viewModel, credentialStore) = try makeViewModel(
+            sessionStore: sessionStore
+        )
 
         await viewModel.startGitHubLogin()
         await viewModel.connectGitHub(token: "secret")
@@ -115,8 +120,14 @@ let onboardingViewModelTests = [
         try expectEqual(viewModel.state.account?.login, "lele", "应保存 GitHub 账户")
         let token = try credentialStore.token(accountID: viewModelAccount.id)
         try expectEqual(token, "secret", "访问令牌应保存到凭据存储")
+        let savedAccount = try sessionStore.account()
+        try expectEqual(
+            savedAccount,
+            viewModelAccount,
+            "账户元数据应保存到会话存储"
+        )
     },
-    TestCase("确认权限后加载仓库和默认自动同步偏好") { @MainActor in
+    TestCase("确认权限后加载仓库并默认全部不同步") { @MainActor in
         let (viewModel, _) = try makeViewModel()
         await viewModel.startGitHubLogin()
         await viewModel.connectGitHub(token: "secret")
@@ -127,8 +138,28 @@ let onboardingViewModelTests = [
         try expectEqual(viewModel.state.repositories, [viewModelRepository], "应加载账户仓库")
         try expectEqual(
             viewModel.state.preferences,
-            [RepositorySyncPreference(repositoryID: 101, mode: .automatic)],
-            "首次加载应默认开启自动同步"
+            [RepositorySyncPreference(repositoryID: 101, mode: .never)],
+            "首次加载应默认全部不同步"
+        )
+    },
+    TestCase("重新启动后恢复账户并直接进入仓库页") { @MainActor in
+        let credentialStore = InMemoryCredentialStore()
+        let sessionStore = InMemoryAccountSessionStore()
+        try credentialStore.save(token: "secret", accountID: viewModelAccount.id)
+        try sessionStore.save(account: viewModelAccount)
+        let (viewModel, _) = try makeViewModel(
+            credentialStore: credentialStore,
+            sessionStore: sessionStore
+        )
+
+        await viewModel.restoreSession()
+
+        try expectEqual(viewModel.state.account, viewModelAccount, "应恢复已登录账户")
+        try expectEqual(viewModel.state.route, .repositorySync, "应跳过登录并进入仓库页")
+        try expectEqual(
+            viewModel.state.preferences,
+            [RepositorySyncPreference(repositoryID: 101, mode: .never)],
+            "恢复会话后仓库也应默认不同步"
         )
     },
     TestCase("同步事件实时更新当前文件与长条进度") { @MainActor in

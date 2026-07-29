@@ -6,12 +6,14 @@ GitMate 是一款原生 macOS GitHub 管理工具。本阶段已实现第 01–0
 
 - GitHub.com Personal Access Token 登录
 - GitHub Enterprise Server 地址与 Personal Access Token 验证
+- 重新启动后自动恢复已登录账户
 - 访问令牌存入 macOS 钥匙串
 - 读取真实用户头像与仓库列表
 - 显示仓库可见性、默认分支和仓库大小
-- 每仓库选择不同步、手动同步或自动同步
+- 仓库默认全部不同步，可逐个选择手动同步或自动同步
 - 使用系统 Git 执行 clone 与 fetch
-- 横向进度条和实时文件显示
+- 大量仓库惰性渲染、头像缓存与后台同步
+- 横向进度条、Git 实时进度和当前文件显示
 - 单仓库失败、网络中断和授权失效恢复
 
 ## 运行要求

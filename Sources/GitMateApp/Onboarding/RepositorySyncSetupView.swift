@@ -4,22 +4,18 @@ import SwiftUI
 struct RepositorySyncSetupView: View {
     let viewModel: OnboardingViewModel
 
-    private var selectedCount: Int {
-        viewModel.state.preferences.filter(\.shouldSyncInitially).count
-    }
-
-    private var selectedSize: Int64 {
-        let selectedIDs = Set(
-            viewModel.state.preferences
-                .filter(\.shouldSyncInitially)
-                .map(\.repositoryID)
+    private var syncModes: [Int64: RepositorySyncMode] {
+        Dictionary(
+            uniqueKeysWithValues: viewModel.state.preferences.map {
+                ($0.repositoryID, $0.mode)
+            }
         )
-        return viewModel.state.repositories
-            .filter { selectedIDs.contains($0.id) }
-            .reduce(0) { $0 + Int64($1.sizeInKilobytes) * 1_024 }
     }
 
     var body: some View {
+        let modes = syncModes
+        let summary = selectionSummary(modes: modes)
+
         VStack(spacing: 16) {
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 5) {
@@ -45,8 +41,8 @@ struct RepositorySyncSetupView: View {
                     value: "\(viewModel.state.repositories.count)",
                     label: "仓库总数"
                 )
-                summaryMetric(value: "\(selectedCount)", label: "本次同步")
-                summaryMetric(value: formattedSize(selectedSize), label: "预计占用")
+                summaryMetric(value: "\(summary.count)", label: "本次同步")
+                summaryMetric(value: formattedSize(summary.size), label: "预计占用")
             }
 
             VStack(spacing: 0) {
@@ -65,7 +61,16 @@ struct RepositorySyncSetupView: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(viewModel.state.repositories) { repository in
-                            repositoryRow(repository)
+                            RepositorySyncRow(
+                                repository: repository,
+                                mode: modes[repository.id] ?? .never,
+                                onModeChanged: { mode in
+                                    viewModel.updateSyncMode(
+                                        repositoryID: repository.id,
+                                        mode: mode
+                                    )
+                                }
+                            )
                             Divider().padding(.leading, 64)
                         }
                     }
@@ -86,7 +91,7 @@ struct RepositorySyncSetupView: View {
 
                 Spacer()
 
-                Text("\(selectedCount) 个仓库 · \(formattedSize(selectedSize))")
+                Text("\(summary.count) 个仓库 · \(formattedSize(summary.size))")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(GitMateTheme.textSecondary)
 
@@ -94,7 +99,7 @@ struct RepositorySyncSetupView: View {
                     Task { await viewModel.startSync() }
                 } label: {
                     HStack {
-                        Text(selectedCount == 0 ? "跳过首次同步" : "开始首次同步")
+                        Text(summary.count == 0 ? "跳过首次同步" : "开始首次同步")
                         Image(systemName: "arrow.right")
                     }
                 }
@@ -104,58 +109,16 @@ struct RepositorySyncSetupView: View {
         .frame(maxHeight: .infinity)
     }
 
-    private func repositoryRow(_ repository: Repository) -> some View {
-        HStack(spacing: 13) {
-            GitMateAvatar(url: repository.ownerAvatarURL, size: 34)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 7) {
-                    Text(repository.fullName)
-                        .font(.system(size: 14, weight: .semibold))
-                    Text(repository.isPrivate ? "私有" : "公开")
-                        .font(.system(size: 10, weight: .bold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(GitMateTheme.panel)
-                        .clipShape(Capsule())
-                }
-                HStack(spacing: 12) {
-                    Label(repository.defaultBranch, systemImage: "arrow.triangle.branch")
-                    Text(formattedSize(Int64(repository.sizeInKilobytes) * 1_024))
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(GitMateTheme.textSecondary)
-            }
-            Spacer()
-            Picker(
-                "同步方式",
-                selection: Binding(
-                    get: { preference(for: repository.id).mode },
-                    set: {
-                        viewModel.updateSyncMode(
-                            repositoryID: repository.id,
-                            mode: $0
-                        )
-                    }
-                )
-            ) {
-                Text("不同步").tag(RepositorySyncMode.never)
-                Text("手动").tag(RepositorySyncMode.manual)
-                Text("自动").tag(RepositorySyncMode.automatic)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 300)
-            .accessibilityLabel("\(repository.fullName) 同步方式")
-            .accessibilityIdentifier(
-                "onboarding.repository.syncMode.\(repository.id)"
-            )
+    private func selectionSummary(
+        modes: [Int64: RepositorySyncMode]
+    ) -> (count: Int, size: Int64) {
+        viewModel.state.repositories.reduce(into: (count: 0, size: 0)) {
+            result,
+            repository in
+            guard (modes[repository.id] ?? .never) != .never else { return }
+            result.count += 1
+            result.size += Int64(repository.sizeInKilobytes) * 1_024
         }
-        .padding(.horizontal, 18)
-        .frame(height: 68)
-    }
-
-    private func preference(for repositoryID: Int64) -> RepositorySyncPreference {
-        viewModel.state.preferences.first { $0.repositoryID == repositoryID }
-            ?? RepositorySyncPreference(repositoryID: repositoryID, mode: .automatic)
     }
 
     private func summaryMetric(value: String, label: String) -> some View {
@@ -184,9 +147,7 @@ struct RepositorySyncSetupView: View {
         mode: RepositorySyncMode
     ) -> some View {
         Button(title) {
-            for repository in viewModel.state.repositories {
-                viewModel.updateSyncMode(repositoryID: repository.id, mode: mode)
-            }
+            viewModel.setSyncModeForAllRepositories(mode)
         }
     }
 
@@ -195,5 +156,65 @@ struct RepositorySyncSetupView: View {
             fromByteCount: bytes,
             countStyle: .file
         )
+    }
+}
+
+private struct RepositorySyncRow: View {
+    let repository: Repository
+    let mode: RepositorySyncMode
+    let onModeChanged: (RepositorySyncMode) -> Void
+
+    var body: some View {
+        HStack(spacing: 13) {
+            GitMateAvatar(url: repository.ownerAvatarURL, size: 34)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    Text(repository.fullName)
+                        .font(.system(size: 14, weight: .semibold))
+                    Text(repository.isPrivate ? "私有" : "公开")
+                        .font(.system(size: 10, weight: .bold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(GitMateTheme.panel)
+                        .clipShape(Capsule())
+                }
+                HStack(spacing: 12) {
+                    Label(
+                        repository.defaultBranch,
+                        systemImage: "arrow.triangle.branch"
+                    )
+                    Text(
+                        ByteCountFormatter.string(
+                            fromByteCount: Int64(repository.sizeInKilobytes) * 1_024,
+                            countStyle: .file
+                        )
+                    )
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(GitMateTheme.textSecondary)
+            }
+            Spacer()
+            Picker(
+                "同步方式",
+                selection: Binding(
+                    get: { mode },
+                    set: { newMode in
+                        onModeChanged(newMode)
+                    }
+                )
+            ) {
+                Text("不同步").tag(RepositorySyncMode.never)
+                Text("手动").tag(RepositorySyncMode.manual)
+                Text("自动").tag(RepositorySyncMode.automatic)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 300)
+            .accessibilityLabel("\(repository.fullName) 同步方式")
+            .accessibilityIdentifier(
+                "onboarding.repository.syncMode.\(repository.id)"
+            )
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 68)
     }
 }

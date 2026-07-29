@@ -27,6 +27,7 @@ struct GitMateApp: App {
             apiProvider: DefaultGitHubAPIProvider(githubDotComAPI: api),
             enterpriseConnector: EnterpriseConnectionService(),
             credentialStore: KeychainCredentialStore(),
+            accountSessionStore: UserDefaultsAccountSessionStore(),
             syncService: GitRepositorySyncService(),
             networkMonitor: NWPathNetworkMonitor(),
             syncDestination: syncDestination
@@ -50,12 +51,6 @@ struct GitMateApp: App {
     var body: some Scene {
         WindowGroup {
             OnboardingRootView(viewModel: viewModel)
-                .onAppear {
-                    viewModel.startNetworkMonitoring()
-                }
-                .onDisappear {
-                    viewModel.stopNetworkMonitoring()
-                }
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)

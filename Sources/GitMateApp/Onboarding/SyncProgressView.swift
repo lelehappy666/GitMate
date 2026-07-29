@@ -5,6 +5,16 @@ struct SyncProgressView: View {
     let viewModel: OnboardingViewModel
 
     private var progress: SyncProgress { viewModel.state.progress }
+    private var selectedRepositories: [Repository] {
+        let selectedIDs = Set(
+            viewModel.state.preferences
+                .filter(\.shouldSyncInitially)
+                .map(\.repositoryID)
+        )
+        return viewModel.state.repositories.filter {
+            selectedIDs.contains($0.id)
+        }
+    }
 
     var body: some View {
         VStack(spacing: 18) {
@@ -71,7 +81,7 @@ struct SyncProgressView: View {
 
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(viewModel.state.repositories) { repository in
+                        ForEach(selectedRepositories) { repository in
                             repositoryStatusRow(repository)
                             Divider().padding(.leading, 58)
                         }

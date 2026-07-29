@@ -13,6 +13,9 @@ public final class OnboardingViewModel {
     @ObservationIgnored
     private var networkTask: Task<Void, Never>?
 
+    @ObservationIgnored
+    private var hasAttemptedSessionRestore = false
+
     public init(
         dependencies: OnboardingDependencies,
         initialState: OnboardingState = OnboardingState()
@@ -34,7 +37,37 @@ public final class OnboardingViewModel {
     }
 
     public func returnToWelcome() {
+        if let account = state.account {
+            try? dependencies.credentialStore.deleteToken(accountID: account.id)
+        }
+        try? dependencies.accountSessionStore.clear()
         state = OnboardingState()
+    }
+
+    public func restoreSession() async {
+        guard !hasAttemptedSessionRestore, state.route == .welcome else {
+            return
+        }
+        hasAttemptedSessionRestore = true
+
+        do {
+            guard let account = try dependencies.accountSessionStore.account()
+            else {
+                return
+            }
+            guard let token = try dependencies.credentialStore.token(
+                accountID: account.id
+            ), !token.isEmpty else {
+                try dependencies.accountSessionStore.clear()
+                return
+            }
+
+            state.account = account
+            state.route = .repositorySync
+            await loadRepositories()
+        } catch {
+            state.errorMessage = error.localizedDescription
+        }
     }
 
     public func connectGitHub(token: String) async {
@@ -81,6 +114,7 @@ public final class OnboardingViewModel {
                 token: token,
                 accountID: account.id
             )
+            try dependencies.accountSessionStore.save(account: account)
             state.transition(.accountVerified(account))
         } catch {
             state.errorMessage = error.localizedDescription
@@ -115,7 +149,7 @@ public final class OnboardingViewModel {
             state.preferences = repositories.map {
                 RepositorySyncPreference(
                     repositoryID: $0.id,
-                    mode: .automatic
+                    mode: .never
                 )
             }
         } catch GitHubAPIError.httpStatus(401, _) {
@@ -140,6 +174,12 @@ public final class OnboardingViewModel {
                     mode: mode
                 )
             )
+        }
+    }
+
+    public func setSyncModeForAllRepositories(_ mode: RepositorySyncMode) {
+        state.preferences = state.repositories.map {
+            RepositorySyncPreference(repositoryID: $0.id, mode: mode)
         }
     }
 
@@ -214,6 +254,7 @@ public final class OnboardingViewModel {
                 token: token,
                 accountID: renewedAccount.id
             )
+            try dependencies.accountSessionStore.save(account: renewedAccount)
             state.transition(.reauthorized(renewedAccount))
         } catch {
             state.errorMessage = error.localizedDescription
@@ -270,6 +311,7 @@ public final class OnboardingViewModel {
                 token: token,
                 accountID: account.id
             )
+            try dependencies.accountSessionStore.save(account: account)
 
             if isReauthorization {
                 state.transition(.reauthorized(account))

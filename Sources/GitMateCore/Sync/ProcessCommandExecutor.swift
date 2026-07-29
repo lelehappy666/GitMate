@@ -164,11 +164,20 @@ private final class ProcessOutputState: @unchecked Sendable {
 
     private func extractLines(from data: inout Data) -> [String] {
         var lines: [String] = []
-        while let newline = data.firstIndex(of: 0x0A) {
-            let lineData = data[..<newline]
-            data.removeSubrange(...newline)
+        while let separator = data.firstIndex(
+            where: { $0 == 0x0A || $0 == 0x0D }
+        ) {
+            let lineData = data[..<separator]
+            data.removeSubrange(...separator)
+            while data.first == 0x0A || data.first == 0x0D {
+                data.removeFirst()
+            }
             if let line = String(data: lineData, encoding: .utf8) {
-                lines.append(line.trimmingCharacters(in: .newlines))
+                let normalized = line
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !normalized.isEmpty {
+                    lines.append(normalized)
+                }
             }
         }
         return lines

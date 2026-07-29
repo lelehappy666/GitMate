@@ -44,6 +44,13 @@ struct OnboardingRootView: View {
         .frame(minWidth: 1_040, idealWidth: 1_180, minHeight: 680, idealHeight: 760)
         .background(GitMateTheme.background)
         .foregroundStyle(GitMateTheme.textPrimary)
+        .task {
+            viewModel.startNetworkMonitoring()
+            await viewModel.restoreSession()
+        }
+        .onDisappear {
+            viewModel.stopNetworkMonitoring()
+        }
     }
 
     private var applicationHeader: some View {

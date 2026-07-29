@@ -25,10 +25,13 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
         )
         let selectedRepositories = repositories.filter { selectedIDs.contains($0.id) }
 
-        return AsyncThrowingStream { continuation in
-            let task = Task {
+        return AsyncThrowingStream(
+            SyncEvent.self,
+            bufferingPolicy: .bufferingNewest(64)
+        ) { continuation in
+            let task = Task.detached(priority: .utility) {
                 do {
-                    try fileManager.createDirectory(
+                    try self.fileManager.createDirectory(
                         at: destination,
                         withIntermediateDirectories: true
                     )
@@ -43,13 +46,21 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
                         )
 
                         do {
-                            try await runGit(
+                            try await self.runGit(
                                 for: repository,
                                 at: repositoryDirectory,
-                                accessToken: accessToken
+                                accessToken: accessToken,
+                                onActivity: { activity in
+                                    continuation.yield(
+                                        .fileChanged(
+                                            repositoryID: repository.id,
+                                            path: activity
+                                        )
+                                    )
+                                }
                             )
                             try Task.checkCancellation()
-                            for file in files(in: repositoryDirectory) {
+                            try self.reportFiles(in: repositoryDirectory) { file in
                                 continuation.yield(
                                     .fileChanged(
                                         repositoryID: repository.id,
@@ -128,7 +139,8 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
     private func runGit(
         for repository: Repository,
         at directory: URL,
-        accessToken: String?
+        accessToken: String?,
+        onActivity: @escaping @Sendable (String) -> Void
     ) async throws {
         let gitDirectory = directory.appending(path: ".git", directoryHint: .isDirectory)
         let arguments: [String]
@@ -151,19 +163,38 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
         }
 
         do {
-            var environment: [String: String] = [:]
+            var environment: [String: String] = [
+                "GIT_TERMINAL_PROMPT": "0",
+                "GCM_INTERACTIVE": "never",
+                "GIT_ASKPASS": "/usr/bin/false"
+            ]
             if let accessToken, !accessToken.isEmpty {
-                environment = [
-                    "GIT_CONFIG_COUNT": "1",
-                    "GIT_CONFIG_KEY_0": "http.extraHeader",
-                    "GIT_CONFIG_VALUE_0": "Authorization: " + "Bearer " + accessToken
-                ]
+                environment["GIT_CONFIG_COUNT"] = "1"
+                environment["GIT_CONFIG_KEY_0"] = "http.extraHeader"
+                environment["GIT_CONFIG_VALUE_0"] = "Authorization: Bearer \(accessToken)"
             }
-            for try await _ in executor.execute(
+
+            let clock = ContinuousClock()
+            var lastUpdate: ContinuousClock.Instant?
+            for try await output in executor.execute(
                 arguments: arguments,
                 environment: environment
             ) {
                 try Task.checkCancellation()
+                let value: String
+                switch output {
+                case let .standardOutput(text), let .standardError(text):
+                    value = text
+                }
+                let activity = Self.normalizedActivity(value)
+                guard !activity.isEmpty else { continue }
+
+                let now = clock.now
+                if lastUpdate == nil
+                    || now - lastUpdate! >= .milliseconds(120) {
+                    onActivity(activity)
+                    lastUpdate = now
+                }
             }
         } catch let CommandExecutionError.exitStatus(_, message) {
             throw Self.mapFailure(message: message)
@@ -172,7 +203,10 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
         }
     }
 
-    private func files(in repositoryDirectory: URL) -> [String] {
+    private func reportFiles(
+        in repositoryDirectory: URL,
+        onFile: (String) -> Void
+    ) throws {
         let resolvedRepositoryPath = repositoryDirectory
             .resolvingSymlinksInPath()
             .path
@@ -181,25 +215,53 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
             includingPropertiesForKeys: [.isRegularFileKey],
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else {
-            return []
+            return
         }
 
-        return enumerator.compactMap { item -> String? in
+        var regularFileCount = 0
+        var lastReportedPath: String?
+        var lastVisitedPath: String?
+        let clock = ContinuousClock()
+        var lastUpdate: ContinuousClock.Instant?
+
+        while let item = enumerator.nextObject() {
+            if regularFileCount.isMultiple(of: 128) {
+                try Task.checkCancellation()
+            }
             guard let url = item as? URL,
                   (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
             else {
-                return nil
+                continue
             }
             let resolvedFilePath = url.resolvingSymlinksInPath().path
             let prefix = resolvedRepositoryPath.hasSuffix("/")
                 ? resolvedRepositoryPath
                 : resolvedRepositoryPath + "/"
-            guard resolvedFilePath.hasPrefix(prefix) else {
-                return url.lastPathComponent
+            let relativePath = resolvedFilePath.hasPrefix(prefix)
+                ? String(resolvedFilePath.dropFirst(prefix.count))
+                : url.lastPathComponent
+            regularFileCount += 1
+            lastVisitedPath = relativePath
+
+            let now = clock.now
+            if lastUpdate == nil
+                || now - lastUpdate! >= .milliseconds(120) {
+                onFile(relativePath)
+                lastReportedPath = relativePath
+                lastUpdate = now
             }
-            return String(resolvedFilePath.dropFirst(prefix.count))
         }
-        .sorted()
+
+        if let lastVisitedPath, lastVisitedPath != lastReportedPath {
+            onFile(lastVisitedPath)
+        }
+    }
+
+    private static func normalizedActivity(_ value: String) -> String {
+        let normalized = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return "" }
+        return String(normalized.prefix(180))
     }
 
     private static func safeDirectoryName(_ name: String) -> String {

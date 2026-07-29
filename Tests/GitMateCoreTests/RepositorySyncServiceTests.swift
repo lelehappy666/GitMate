@@ -77,7 +77,43 @@ let repositorySyncServiceTests = [
             "Authorization: Bearer private-token",
             "私有仓库令牌应通过临时 Git 环境传入"
         )
+        try expectEqual(
+            executor.environments[0]["GIT_TERMINAL_PROMPT"],
+            "0",
+            "同步不得等待终端凭据输入"
+        )
         try expect(events.contains(.finished), "选中仓库完成后应结束同步")
+    },
+    TestCase("Git 进度输出会实时传到同步页面") {
+        let executor = FakeCommandExecutor(results: [
+            .success([
+                .standardError("Receiving objects: 42%")
+            ])
+        ])
+        let service = GitRepositorySyncService(executor: executor)
+        let destination = try temporarySyncDirectory()
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let events = try await collect(
+            service.sync(
+                repositories: [syncRepositoryOne],
+                preferences: [
+                    RepositorySyncPreference(repositoryID: 1, mode: .manual)
+                ],
+                destination: destination,
+                accessToken: "private-token"
+            )
+        )
+
+        try expect(
+            events.contains(
+                .fileChanged(
+                    repositoryID: 1,
+                    path: "Receiving objects: 42%"
+                )
+            ),
+            "同步页应收到 Git 的实时进度文本，实际事件：\(events)"
+        )
     },
     TestCase("已存在仓库使用 fetch 并实时上报文件") {
         let executor = FakeCommandExecutor()

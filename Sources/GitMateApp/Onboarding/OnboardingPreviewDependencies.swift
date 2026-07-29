@@ -42,6 +42,7 @@ enum OnboardingPreviewFactory {
             apiProvider: PreviewAPIProvider(),
             enterpriseConnector: PreviewEnterpriseConnector(),
             credentialStore: InMemoryCredentialStore(),
+            accountSessionStore: InMemoryAccountSessionStore(),
             syncService: PreviewSyncService(),
             networkMonitor: PreviewNetworkMonitor(),
             syncDestination: FileManager.default.temporaryDirectory

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum GitMateTheme {
@@ -22,15 +23,15 @@ enum GitMateTheme {
 struct GitMateAvatar: View {
     let url: URL?
     var size: CGFloat = 48
+    @State private var image: NSImage?
 
     var body: some View {
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case let .success(image):
-                image
+        Group {
+            if let image {
+                Image(nsImage: image)
                     .resizable()
                     .scaledToFill()
-            default:
+            } else {
                 Image(systemName: "person.crop.circle.fill")
                     .resizable()
                     .symbolRenderingMode(.hierarchical)
@@ -43,5 +44,55 @@ struct GitMateAvatar: View {
             Circle().stroke(GitMateTheme.border, lineWidth: 1)
         }
         .accessibilityHidden(true)
+        .task(id: url) {
+            guard let url,
+                  let data = await AvatarDataCache.shared.data(for: url)
+            else {
+                image = nil
+                return
+            }
+            image = NSImage(data: data)
+        }
+    }
+}
+
+private actor AvatarDataCache {
+    static let shared = AvatarDataCache()
+
+    private let maximumEntryCount = 256
+    private var cachedData: [URL: Data] = [:]
+    private var insertionOrder: [URL] = []
+    private var inFlightTasks: [URL: Task<Data?, Never>] = [:]
+
+    func data(for url: URL) async -> Data? {
+        if let data = cachedData[url] {
+            return data
+        }
+        if let task = inFlightTasks[url] {
+            return await task.value
+        }
+
+        let task = Task<Data?, Never> {
+            guard let (data, response) = try? await URLSession.shared.data(from: url),
+                  let response = response as? HTTPURLResponse,
+                  (200..<300).contains(response.statusCode)
+            else {
+                return nil
+            }
+            return data
+        }
+        inFlightTasks[url] = task
+        let data = await task.value
+        inFlightTasks[url] = nil
+
+        if let data {
+            cachedData[url] = data
+            insertionOrder.append(url)
+            if insertionOrder.count > maximumEntryCount {
+                let expiredURL = insertionOrder.removeFirst()
+                cachedData[expiredURL] = nil
+            }
+        }
+        return data
     }
 }
