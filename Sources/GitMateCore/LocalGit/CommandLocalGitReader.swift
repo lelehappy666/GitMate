@@ -2,7 +2,7 @@ import Foundation
 
 public final class CommandLocalGitReader: LocalGitReading, @unchecked Sendable {
     private static let logFormat =
-        "--format=%h%x1f%H%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%P%x1f%D%x1e"
+        "--format=%h%x00%H%x00%s%x00%an%x00%ae%x00%aI%x00%P%x00%D%x00"
     private static let detailFormat =
         "--format=%h%x00%H%x00%s%x00%an%x00%ae%x00%aI%x00%P%x00%D%x00%G?%x00%GS%x00%B%x00"
     private static let diffFormat = "--format=%H%x00"

@@ -3,6 +3,7 @@ import SwiftUI
 
 struct RepositoryOverviewView: View {
     @Bindable var viewModel: RepositoryOverviewViewModel
+    let imageAccessToken: String
     let onRoute: (WorkspaceRoute) -> Void
     let onResync: () -> Void
 
@@ -372,7 +373,10 @@ struct RepositoryOverviewView: View {
                         Array(document.blocks.prefix(5).enumerated()),
                         id: \.offset
                     ) { _, block in
-                        READMEBlockView(block: block)
+                        READMEBlockView(
+                            block: block,
+                            imageAccessToken: imageAccessToken
+                        )
                     }
 
                     Button {

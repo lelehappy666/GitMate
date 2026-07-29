@@ -3,6 +3,7 @@ import SwiftUI
 
 struct READMEView: View {
     @Bindable var viewModel: READMEViewModel
+    let imageAccessToken: String
 
     var body: some View {
         VStack(spacing: 0) {
@@ -119,7 +120,10 @@ struct READMEView: View {
                             Array(document.blocks.enumerated()),
                             id: \.offset
                         ) { index, block in
-                            READMEBlockView(block: block)
+                            READMEBlockView(
+                                block: block,
+                                imageAccessToken: imageAccessToken
+                            )
                                 .id(
                                     blockAnchor(block)
                                         ?? "readme-block-\(index)"

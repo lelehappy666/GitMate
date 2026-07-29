@@ -779,6 +779,7 @@ private struct AuthorizationObservingRepositoryLoader:
 
 private struct RepositoryOverviewPageContainer: View {
     @State private var viewModel: RepositoryOverviewViewModel
+    let imageAccessToken: String
     let onRoute: (WorkspaceRoute) -> Void
     let onResync: () -> Void
 
@@ -798,6 +799,7 @@ private struct RepositoryOverviewPageContainer: View {
                 loader: loader
             )
         )
+        imageAccessToken = token
         self.onRoute = onRoute
         self.onResync = onResync
     }
@@ -805,6 +807,7 @@ private struct RepositoryOverviewPageContainer: View {
     var body: some View {
         RepositoryOverviewView(
             viewModel: viewModel,
+            imageAccessToken: imageAccessToken,
             onRoute: onRoute,
             onResync: onResync
         )
@@ -813,6 +816,7 @@ private struct RepositoryOverviewPageContainer: View {
 
 private struct READMEPageContainer: View {
     @State private var viewModel: READMEViewModel
+    let imageAccessToken: String
 
     init(
         repository: Repository,
@@ -828,10 +832,14 @@ private struct READMEPageContainer: View {
                 loader: loader
             )
         )
+        imageAccessToken = token
     }
 
     var body: some View {
-        READMEView(viewModel: viewModel)
+        READMEView(
+            viewModel: viewModel,
+            imageAccessToken: imageAccessToken
+        )
     }
 }
 

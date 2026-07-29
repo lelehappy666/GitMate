@@ -2,7 +2,10 @@ import Foundation
 
 public enum GitOutputParser {
     public static func parseCommits(_ output: String) throws -> [GitCommit] {
-        try output
+        if output.contains("\u{0}") {
+            return try parseNullTerminatedCommits(output)
+        }
+        return try output
             .split(separator: "\u{1e}", omittingEmptySubsequences: true)
             .map { record in
                 let normalized = record.trimmingCharacters(in: .newlines)
@@ -38,6 +41,54 @@ public enum GitOutputParser {
                         : []
                 )
             }
+    }
+
+    private static func parseNullTerminatedCommits(
+        _ output: String
+    ) throws -> [GitCommit] {
+        var fields = output
+            .split(
+                separator: "\u{0}",
+                omittingEmptySubsequences: false
+            )
+            .map {
+                $0.trimmingCharacters(in: .newlines)
+            }
+        if fields.last?.isEmpty == true {
+            fields.removeLast()
+        }
+        guard fields.count.isMultiple(of: 8) else {
+            throw GitOutputParsingError.malformedCommit(output)
+        }
+
+        return try stride(from: 0, to: fields.count, by: 8).map {
+            index in
+            let record = Array(fields[index..<(index + 8)])
+            guard let authoredAt = ISO8601DateFormatter().date(
+                from: String(record[5])
+            ) else {
+                throw GitOutputParsingError.malformedCommit(
+                    record.joined(separator: "\u{0}")
+                )
+            }
+            return GitCommit(
+                shortHash: String(record[0]),
+                fullHash: String(record[1]),
+                subject: String(record[2]),
+                authorName: String(record[3]),
+                authorEmail: String(record[4]),
+                authoredAt: authoredAt,
+                parentHashes: record[6]
+                    .split(separator: " ")
+                    .map(String.init),
+                decorations: record[7]
+                    .split(separator: ",")
+                    .map {
+                        $0.trimmingCharacters(in: .whitespaces)
+                    }
+                    .filter { !$0.isEmpty }
+            )
+        }
     }
 
     public static func parseTree(_ output: String) throws -> [GitFileEntry] {

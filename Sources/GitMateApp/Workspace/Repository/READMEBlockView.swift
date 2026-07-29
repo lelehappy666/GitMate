@@ -1,9 +1,19 @@
 import AppKit
 import GitMateCore
 import SwiftUI
+import WebKit
 
 struct READMEBlockView: View {
     let block: READMEBlock
+    let imageAccessToken: String?
+
+    init(
+        block: READMEBlock,
+        imageAccessToken: String? = nil
+    ) {
+        self.block = block
+        self.imageAccessToken = imageAccessToken
+    }
 
     var body: some View {
         switch block {
@@ -137,36 +147,11 @@ struct READMEBlockView: View {
         url: URL,
         alt: String
     ) -> some View {
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case let .success(image):
-                image
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: 760, maxHeight: 380)
-                    .accessibilityLabel(
-                        alt.isEmpty ? "README 图片" : alt
-                    )
-            case .empty:
-                imagePlaceholder(
-                    symbol: "photo",
-                    title: alt.isEmpty ? "正在加载图片" : alt,
-                    showsProgress: true
-                )
-            case .failure:
-                imagePlaceholder(
-                    symbol: "photo.badge.exclamationmark",
-                    title: alt.isEmpty ? "图片加载失败" : "\(alt) · 加载失败",
-                    showsProgress: false
-                )
-            @unknown default:
-                imagePlaceholder(
-                    symbol: "photo",
-                    title: "无法显示图片",
-                    showsProgress: false
-                )
-            }
-        }
+        READMEImageView(
+            url: url,
+            alt: alt,
+            accessToken: imageAccessToken
+        )
         .frame(maxWidth: 760, alignment: .leading)
         .clipShape(
             RoundedRectangle(
@@ -344,4 +329,230 @@ struct READMEBlockView: View {
         return language
     }
 
+}
+
+private struct READMEImageView: View {
+    private enum Phase {
+        case loading
+        case raster(NSImage)
+        case vector(Data)
+        case failed
+    }
+
+    let url: URL
+    let alt: String
+    let accessToken: String?
+
+    @State private var phase = Phase.loading
+
+    var body: some View {
+        Group {
+            switch phase {
+            case .loading:
+                placeholder(
+                    symbol: "photo",
+                    title: alt.isEmpty ? "正在加载图片" : alt,
+                    showsProgress: true
+                )
+            case let .raster(image):
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 760, maxHeight: 380)
+            case let .vector(data):
+                READMEVectorImageView(data: data, baseURL: url)
+                    .frame(
+                        width: isCompactBadge
+                            ? compactBadgeWidth
+                            : nil,
+                        height: isCompactBadge ? 30 : 380
+                    )
+                    .frame(maxWidth: 760, alignment: .leading)
+            case .failed:
+                placeholder(
+                    symbol: "photo.badge.exclamationmark",
+                    title: alt.isEmpty
+                        ? "图片加载失败"
+                        : "\(alt) · 加载失败",
+                    showsProgress: false
+                )
+            }
+        }
+        .accessibilityLabel(alt.isEmpty ? "README 图片" : alt)
+        .task(id: url) {
+            await load()
+        }
+    }
+
+    @MainActor
+    private func load() async {
+        phase = .loading
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 30
+            request.setValue(
+                "GitMate/1.0",
+                forHTTPHeaderField: "User-Agent"
+            )
+            if shouldAuthorize,
+               let accessToken,
+               !accessToken.isEmpty {
+                request.setValue(
+                    "Bearer \(accessToken)",
+                    forHTTPHeaderField: "Authorization"
+                )
+            }
+            let (data, response) = try await URLSession.shared.data(
+                for: request
+            )
+            guard let response = response as? HTTPURLResponse,
+                  (200..<300).contains(response.statusCode),
+                  !data.isEmpty else {
+                phase = .failed
+                return
+            }
+            let mimeType = response.mimeType?.lowercased() ?? ""
+            if mimeType.contains("svg")
+                || url.pathExtension.lowercased() == "svg"
+                || Data(data.prefix(256)).containsSVGMarkup {
+                phase = .vector(data)
+            } else if let image = NSImage(data: data) {
+                phase = .raster(image)
+            } else {
+                phase = .failed
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            phase = .failed
+        }
+    }
+
+    private var shouldAuthorize: Bool {
+        guard let host = url.host?.lowercased() else {
+            return false
+        }
+        return host == "github.com"
+            || host == "api.github.com"
+            || host == "raw.githubusercontent.com"
+            || host.hasSuffix(".githubusercontent.com")
+    }
+
+    private var isCompactBadge: Bool {
+        url.host?.caseInsensitiveCompare("img.shields.io")
+            == .orderedSame
+    }
+
+    private var compactBadgeWidth: CGFloat {
+        CGFloat(min(max(110, alt.count * 9 + 46), 260))
+    }
+
+    private func placeholder(
+        symbol: String,
+        title: String,
+        showsProgress: Bool
+    ) -> some View {
+        HStack(spacing: 10) {
+            if showsProgress {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: symbol)
+                    .foregroundStyle(GitMateTheme.textTertiary)
+            }
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(GitMateTheme.textSecondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 14)
+        .frame(maxWidth: 760, minHeight: 88, alignment: .leading)
+        .background(GitMateTheme.panel)
+        .overlay {
+            RoundedRectangle(
+                cornerRadius: GitMateTheme.compactCornerRadius,
+                style: .continuous
+            )
+            .stroke(GitMateTheme.border, lineWidth: 1)
+        }
+    }
+}
+
+private struct READMEVectorImageView: NSViewRepresentable {
+    let data: Data
+    let baseURL: URL
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences
+            .allowsContentJavaScript = false
+        let webView = WKWebView(
+            frame: .zero,
+            configuration: configuration
+        )
+        webView.underPageBackgroundColor = .clear
+        return webView
+    }
+
+    func updateNSView(
+        _ webView: WKWebView,
+        context: Context
+    ) {
+        guard context.coordinator.loadedData != data else {
+            return
+        }
+        context.coordinator.loadedData = data
+        let encoded = data.base64EncodedString()
+        let html = """
+        <!doctype html>
+        <html>
+        <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+        html, body {
+          margin: 0;
+          width: 100%;
+          height: 100%;
+          overflow: hidden;
+          background: transparent;
+        }
+        img {
+          display: block;
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+          object-position: left center;
+        }
+        </style>
+        </head>
+        <body>
+        <img alt="" src="data:image/svg+xml;base64,\(encoded)">
+        </body>
+        </html>
+        """
+        webView.loadHTMLString(
+            html,
+            baseURL: baseURL.deletingLastPathComponent()
+        )
+    }
+
+    final class Coordinator {
+        var loadedData: Data?
+    }
+}
+
+private extension Data {
+    var containsSVGMarkup: Bool {
+        guard let prefix = String(
+            data: self,
+            encoding: .utf8
+        )?.lowercased() else {
+            return false
+        }
+        return prefix.contains("<svg")
+    }
 }
