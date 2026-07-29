@@ -141,6 +141,87 @@ let localRepositoryImporterTests = [
         )
         try expectEqual(executor.commands.count, 2, "主机不匹配后不应继续读取分支")
     },
+    TestCase("导入器支持带协议的 SSH 远端地址") {
+        let repositoryURL = try importerTestRepository()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        let executor = FakeCommandExecutor(results: [
+            importerOutput("\(repositoryURL.path)\n"),
+            importerOutput(
+                "ssh://git@github.com:22/gitmate/mac-client.git\n"
+            ),
+            importerOutput("feature/import\n")
+        ])
+
+        let record = try await LocalRepositoryImporter(
+            executor: executor
+        ).importRepository(
+            at: repositoryURL,
+            account: importerAccountFixture
+        )
+
+        try expectEqual(
+            record.repository.fullName,
+            "gitmate/mac-client",
+            "SSH URL 应解析所有者与仓库名"
+        )
+        try expectEqual(
+            record.repository.defaultBranch,
+            "feature/import",
+            "应保留当前分支名称"
+        )
+    },
+    TestCase("非 Git 目录返回稳定中文错误") {
+        let selectedURL = URL(fileURLWithPath: "/tmp/not-a-repository")
+        let executor = FakeCommandExecutor(results: [
+            .failure(.commandFailed("fatal: not a git repository"))
+        ])
+        var errorMessage = ""
+
+        do {
+            _ = try await LocalRepositoryImporter(
+                executor: executor
+            ).importRepository(
+                at: selectedURL,
+                account: importerAccountFixture
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+
+        try expectEqual(
+            errorMessage,
+            "所选文件夹不是有效的 Git 仓库。",
+            "不应向界面透出底层 Git 错误"
+        )
+        try expectEqual(executor.commands.count, 1, "识别失败后不应继续读取远端")
+    },
+    TestCase("缺少 origin 时停止导入") {
+        let repositoryURL = try importerTestRepository()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        let executor = FakeCommandExecutor(results: [
+            importerOutput("\(repositoryURL.path)\n"),
+            .failure(.commandFailed("No such remote 'origin'"))
+        ])
+        var errorMessage = ""
+
+        do {
+            _ = try await LocalRepositoryImporter(
+                executor: executor
+            ).importRepository(
+                at: repositoryURL,
+                account: importerAccountFixture
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+
+        try expectEqual(
+            errorMessage,
+            "仓库没有名为 origin 的远端地址。",
+            "应明确提示配置 origin"
+        )
+        try expectEqual(executor.commands.count, 2, "缺少远端后不应继续读取分支")
+    },
     TestCase("仓库目录登记后覆盖默认同步路径") {
         let catalog = LocalRepositoryCatalog(
             rootDirectory: URL(fileURLWithPath: "/managed"),

@@ -151,6 +151,8 @@ struct WorkspaceRootView: View {
                 onRoute: onRoute,
                 onDownloadRepository: onDownloadRepository,
                 onImportLocalRepository: importLocalRepository,
+                onReconcileLocalRepository:
+                    reconcileLocalRepositoryMetadata,
                 onAuthorizationRequired: requireReauthorization
             )
             .id("repositories-\(repositoryRevision)")
@@ -230,6 +232,7 @@ struct WorkspaceRootView: View {
             at: selectedURL,
             account: session.account
         )
+        let localRepository: Repository
         if let matchingIndex = session.repositories.firstIndex(
             where: {
                 $0.fullName.caseInsensitiveCompare(
@@ -241,38 +244,68 @@ struct WorkspaceRootView: View {
                 localURL: imported.localURL,
                 repositoryID: session.repositories[matchingIndex].id
             )
+            localRepository = session.repositories[matchingIndex]
         } else if !session.repositories.contains(
             where: { $0.id == imported.repository.id }
         ) {
             session.repositories.append(imported.repository)
+            localRepository = imported.repository
+        } else {
+            localRepository = imported.repository
         }
-        refreshRepositoryGroups()
+        promoteToLocal(repository: localRepository)
         repositoryRevision += 1
     }
 
-    private func refreshRepositoryGroups() {
-        let cachedRecords = (
-            try? runtime.cache.load(accountID: session.account.id)
-        )?.repositoryRecords ?? []
-        let cachedRecordsByID = Dictionary(
-            cachedRecords.map { ($0.repository.id, $0) },
-            uniquingKeysWith: { _, newest in newest }
-        )
-        let records = session.repositories.map { repository in
-            (try? runtime.catalog.record(for: repository))
-                ?? cachedRecordsByID[repository.id]
-                ?? LocalRepositoryRecord(
-                    repository: repository,
-                    localURL: runtime.catalog.localURL(for: repository),
-                    availability: .missing,
-                    localSizeInBytes: 0,
-                    lastInspectedAt: .distantPast
-                )
+    private func reconcileLocalRepositoryMetadata(
+        _ remoteRepository: Repository
+    ) {
+        guard let matchingIndex = session.repositories.firstIndex(
+            where: {
+                $0.fullName.caseInsensitiveCompare(
+                    remoteRepository.fullName
+                ) == .orderedSame
+            }
+        ) else {
+            return
         }
-        repositoryGroups = WorkspaceRepositoryClassifier.classify(
-            repositories: session.repositories,
-            records: records,
-            preferences: preferences
+        let existingRepository = session.repositories[matchingIndex]
+        guard existingRepository != remoteRepository else {
+            return
+        }
+        let localURL = runtime.catalog.localURL(
+            for: existingRepository
+        )
+        session.repositories[matchingIndex] = remoteRepository
+        runtime.catalog.register(
+            localURL: localURL,
+            repositoryID: remoteRepository.id
+        )
+        try? runtime.updateImportedRepositoryMetadata(
+            remoteRepository,
+            localURL: localURL,
+            account: session.account
+        )
+        promoteToLocal(repository: remoteRepository)
+        repositoryRevision += 1
+    }
+
+    private func promoteToLocal(repository: Repository) {
+        var localFullNames = Set(
+            repositoryGroups.local.map {
+                $0.fullName.lowercased()
+            }
+        )
+        localFullNames.insert(repository.fullName.lowercased())
+        let local = session.repositories.filter {
+            localFullNames.contains($0.fullName.lowercased())
+        }
+        let localIDs = Set(local.map(\.id))
+        repositoryGroups = WorkspaceRepositoryGroups(
+            local: local,
+            cloud: session.repositories.filter {
+                !localIDs.contains($0.id)
+            }
         )
     }
 
@@ -343,6 +376,7 @@ private struct RepositoryWallContainer: View {
     let onDownloadRepository:
         (Repository, RepositorySyncMode) -> Void
     let onImportLocalRepository: (URL) async throws -> Void
+    let onReconcileLocalRepository: (Repository) -> Void
     let onAuthorizationRequired: () -> Void
 
     @State private var selectedTab: RepositoryLibraryTab = .local
@@ -366,6 +400,8 @@ private struct RepositoryWallContainer: View {
             @escaping (Repository, RepositorySyncMode) -> Void,
         onImportLocalRepository:
             @escaping (URL) async throws -> Void,
+        onReconcileLocalRepository:
+            @escaping (Repository) -> Void,
         onAuthorizationRequired: @escaping () -> Void
     ) {
         self.account = account
@@ -379,6 +415,7 @@ private struct RepositoryWallContainer: View {
         self.onRoute = onRoute
         self.onDownloadRepository = onDownloadRepository
         self.onImportLocalRepository = onImportLocalRepository
+        self.onReconcileLocalRepository = onReconcileLocalRepository
         self.onAuthorizationRequired = onAuthorizationRequired
 
         let modes = Dictionary(
@@ -426,6 +463,9 @@ private struct RepositoryWallContainer: View {
                     token: token,
                     excludedRepositoryIDs: Set(
                         repositories.map(\.id)
+                    ),
+                    excludedRepositoryFullNames: Set(
+                        repositories.map(\.fullName)
                     )
                 )
             }
@@ -650,6 +690,9 @@ private struct RepositoryWallContainer: View {
         }
         Task {
             await cloudViewModel.loadNextPage()
+            cloudViewModel.matchedExcludedRepositories.forEach(
+                onReconcileLocalRepository
+            )
             synchronizeCloudWall(cloudViewModel.repositories)
         }
     }
@@ -665,6 +708,9 @@ private struct RepositoryWallContainer: View {
         )
         Task {
             await cloudViewModel.refresh()
+            cloudViewModel.matchedExcludedRepositories.forEach(
+                onReconcileLocalRepository
+            )
             synchronizeCloudWall(cloudViewModel.repositories)
         }
     }

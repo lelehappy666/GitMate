@@ -13,6 +13,7 @@ public enum CloudRepositoryLoadPhase: Equatable, Sendable {
 @Observable
 public final class CloudRepositoryViewModel {
     public private(set) var repositories: [Repository] = []
+    public private(set) var matchedExcludedRepositories: [Repository] = []
     public private(set) var hasNextPage = true
     public private(set) var phase: CloudRepositoryLoadPhase = .idle
     public var searchText = ""
@@ -26,6 +27,9 @@ public final class CloudRepositoryViewModel {
 
     @ObservationIgnored
     private let excludedRepositoryIDs: Set<Int64>
+
+    @ObservationIgnored
+    private let excludedRepositoryFullNames: Set<String>
 
     @ObservationIgnored
     private let pageSize: Int
@@ -43,11 +47,15 @@ public final class CloudRepositoryViewModel {
         api: any GitHubAPI,
         token: String,
         excludedRepositoryIDs: Set<Int64>,
+        excludedRepositoryFullNames: Set<String> = [],
         pageSize: Int = 30
     ) {
         self.api = api
         self.token = token
         self.excludedRepositoryIDs = excludedRepositoryIDs
+        self.excludedRepositoryFullNames = Set(
+            excludedRepositoryFullNames.map(Self.normalizedFullName)
+        )
         self.pageSize = min(max(pageSize, 1), 100)
     }
 
@@ -98,9 +106,18 @@ public final class CloudRepositoryViewModel {
             guard generation == requestGeneration else {
                 return
             }
+            var matchedIDs = Set(
+                matchedExcludedRepositories.map(\.id)
+            )
+            matchedExcludedRepositories.append(
+                contentsOf: page.repositories.filter {
+                    isExcluded($0)
+                        && matchedIDs.insert($0.id).inserted
+                }
+            )
             var knownIDs = Set(repositories.map(\.id))
             let additions = page.repositories.filter {
-                !excludedRepositoryIDs.contains($0.id)
+                !isExcluded($0)
                     && knownIDs.insert($0.id).inserted
             }
             repositories.append(contentsOf: additions)
@@ -130,10 +147,26 @@ public final class CloudRepositoryViewModel {
         activeLoadTask?.cancel()
         activeLoadTask = nil
         repositories = []
+        matchedExcludedRepositories = []
         currentPage = 0
         hasNextPage = true
         phase = .idle
         await loadNextPage()
     }
 
+    private func isExcluded(_ repository: Repository) -> Bool {
+        excludedRepositoryIDs.contains(repository.id)
+            || excludedRepositoryFullNames.contains(
+                Self.normalizedFullName(repository.fullName)
+            )
+    }
+
+    private static func normalizedFullName(_ fullName: String) -> String {
+        fullName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: Locale(identifier: "en_US_POSIX")
+            )
+    }
 }

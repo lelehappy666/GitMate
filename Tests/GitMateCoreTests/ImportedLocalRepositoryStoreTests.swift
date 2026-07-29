@@ -42,7 +42,10 @@ let importedLocalRepositoryStoreTests = [
         let record = importedRepositoryFixture()
 
         try store.save([record], accountID: "octo-cat")
-        let loaded = try store.load(accountID: "octo-cat")
+        let reloadedStore = JSONImportedLocalRepositoryStore(
+            rootDirectory: directory
+        )
+        let loaded = try reloadedStore.load(accountID: "octo-cat")
 
         try expectEqual(loaded, [record], "应恢复仓库元数据与原始本地路径")
     },

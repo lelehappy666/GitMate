@@ -4,27 +4,62 @@ import GitMateCore
 
 let repositoryWallViewModelTests = [
     TestCase("云端仓库海报保留 GitHub 返回的主要语言") {
-        let repository = Repository(
-            id: 99,
-            name: "mac-client",
-            fullName: "gitmate/mac-client",
-            isPrivate: true,
-            defaultBranch: "main",
-            sizeInKilobytes: 2_048,
-            cloneURL: URL(
-                string: "https://github.com/gitmate/mac-client.git"
-            )!,
-            ownerAvatarURL: nil,
-            primaryLanguage: "Swift"
+        let repositories = [
+            Repository(
+                id: 99,
+                name: "mac-client",
+                fullName: "gitmate/mac-client",
+                isPrivate: true,
+                defaultBranch: "main",
+                sizeInKilobytes: 2_048,
+                cloneURL: URL(
+                    string: "https://github.com/gitmate/mac-client.git"
+                )!,
+                ownerAvatarURL: nil,
+                primaryLanguage: "Swift"
+            ),
+            Repository(
+                id: 100,
+                name: "web-client",
+                fullName: "gitmate/web-client",
+                isPrivate: false,
+                defaultBranch: "main",
+                sizeInKilobytes: 1_024,
+                cloneURL: URL(
+                    string: "https://github.com/gitmate/web-client.git"
+                )!,
+                ownerAvatarURL: nil,
+                primaryLanguage: "TypeScript"
+            )
+        ]
+        let items = RepositoryPosterBuilder.makeCloud(
+            repositories: repositories
         )
+        let viewModel = await MainActor.run {
+            RepositoryWallViewModel(items: items)
+        }
 
-        let item = RepositoryPosterBuilder.makeCloud(
-            repositories: [repository]
-        )[0]
-
-        try expectEqual(item.language, "Swift", "语言菜单应获得真实的主要语言")
-        try expectEqual(item.syncMode, .never, "云端仓库默认不自动下载")
-        try expectEqual(item.syncState, .notSynchronized, "云端仓库应标记为尚未同步")
+        try expectEqual(
+            items.map(\.language),
+            ["Swift", "TypeScript"],
+            "语言菜单应获得真实的主要语言"
+        )
+        try expect(items.allSatisfy { $0.syncMode == .never }, "云端仓库默认不自动下载")
+        try expect(
+            items.allSatisfy { $0.syncState == .notSynchronized },
+            "云端仓库应标记为尚未同步"
+        )
+        await MainActor.run {
+            viewModel.language = "TypeScript"
+        }
+        let visibleRepositoryIDs = await MainActor.run {
+            viewModel.visibleItems.map(\.id)
+        }
+        try expectEqual(
+            visibleRepositoryIDs,
+            [100],
+            "选择语言后只应显示对应云端仓库"
+        )
     },
     TestCase("仓库墙组合搜索可见性语言和同步状态筛选") { @MainActor in
         let items = [

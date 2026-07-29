@@ -118,6 +118,39 @@ private func waitForCloudRequest(
 }
 
 let cloudRepositoryViewModelTests = [
+    TestCase("云端分页按仓库全名排除晚登记的本地仓库") { @MainActor in
+        let api = PagedRepositoryAPI(
+            pages: [
+                1: GitHubRepositoryPage(
+                    repositories: [
+                        cloudRepository(1),
+                        cloudRepository(2)
+                    ],
+                    page: 1,
+                    hasNextPage: false
+                )
+            ]
+        )
+        let viewModel = CloudRepositoryViewModel(
+            api: api,
+            token: "secret",
+            excludedRepositoryIDs: [],
+            excludedRepositoryFullNames: ["LELE/CLOUD-2"]
+        )
+
+        await viewModel.loadNextPage()
+
+        try expectEqual(
+            viewModel.repositories.map(\.id),
+            [1],
+            "稳定编号不同但全名相同的本地仓库不得重复显示"
+        )
+        try expectEqual(
+            viewModel.matchedExcludedRepositories.map(\.id),
+            [2],
+            "应保留 GitHub 元数据供本地仓库更新"
+        )
+    },
     TestCase("云端仓库首次只加载三十条并排除本地仓库") { @MainActor in
         let api = PagedRepositoryAPI(
             pages: [

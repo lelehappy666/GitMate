@@ -120,6 +120,44 @@ final class WorkspaceRuntimeDependencies {
         return record
     }
 
+    func updateImportedRepositoryMetadata(
+        _ repository: Repository,
+        localURL: URL,
+        account: GitHubAccount
+    ) throws {
+        var records = try importedRepositoryStore.load(
+            accountID: account.id
+        )
+        guard let index = records.firstIndex(
+            where: {
+                $0.repository.fullName.caseInsensitiveCompare(
+                    repository.fullName
+                ) == .orderedSame
+            }
+        ) else {
+            return
+        }
+        let stableID = records[index].repository.id
+        records[index] = ImportedLocalRepository(
+            repository: Repository(
+                id: stableID,
+                name: repository.name,
+                fullName: repository.fullName,
+                isPrivate: repository.isPrivate,
+                defaultBranch: repository.defaultBranch,
+                sizeInKilobytes: repository.sizeInKilobytes,
+                cloneURL: repository.cloneURL,
+                ownerAvatarURL: repository.ownerAvatarURL,
+                primaryLanguage: repository.primaryLanguage
+            ),
+            localURL: localURL
+        )
+        try importedRepositoryStore.save(
+            records,
+            accountID: account.id
+        )
+    }
+
     func authorization(for account: GitHubAccount) -> WorkspaceAuthorization {
         if account.kind == .enterprise {
             do {
