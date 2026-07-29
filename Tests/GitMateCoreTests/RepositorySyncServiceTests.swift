@@ -116,7 +116,7 @@ let repositorySyncServiceTests = [
             "同步页应收到 Git 的实时进度文本，实际事件：\(events)"
         )
     },
-    TestCase("已存在仓库使用 fetch 并实时上报文件") {
+    TestCase("已存在仓库会跳过且不执行 Fetch") {
         let executor = FakeCommandExecutor()
         let service = GitRepositorySyncService(executor: executor)
         let destination = try temporarySyncDirectory()
@@ -139,14 +139,14 @@ let repositorySyncServiceTests = [
             )
         )
 
-        try expect(executor.commands[0].contains("fetch"), "已有仓库应执行 fetch")
-        try expect(
-            events.contains(.fileChanged(repositoryID: 1, path: "README.md")),
-            "同步页应收到当前文件路径，实际事件：\(events)"
+        try expectEqual(
+            executor.commands.count,
+            0,
+            "首次下载不得对已有仓库执行 Fetch"
         )
         try expect(
             events.contains(.progress(SyncProgress(completed: 1, total: 1))),
-            "完成仓库后应更新长条进度"
+            "已有仓库应安全跳过并计入完成"
         )
     },
     TestCase("单仓库失败后继续同步其他仓库") {

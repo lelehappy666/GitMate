@@ -44,27 +44,44 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
                         )
 
                         do {
-                            try await self.runGit(
-                                for: repository,
-                                at: repositoryDirectory,
-                                accessToken: accessToken,
-                                onActivity: { activity in
-                                    continuation.yield(
-                                        .fileChanged(
-                                            repositoryID: repository.id,
-                                            path: activity
-                                        )
-                                    )
-                                }
+                            let gitDirectory = repositoryDirectory.appending(
+                                path: ".git",
+                                directoryHint: .isDirectory
                             )
-                            try Task.checkCancellation()
-                            try self.reportFiles(in: repositoryDirectory) { file in
+                            if self.fileManager.fileExists(
+                                atPath: gitDirectory.path
+                            ) {
                                 continuation.yield(
                                     .fileChanged(
                                         repositoryID: repository.id,
-                                        path: file
+                                        path: "仓库已存在，已跳过首次下载"
                                     )
                                 )
+                            } else {
+                                try await self.runGit(
+                                    for: repository,
+                                    at: repositoryDirectory,
+                                    accessToken: accessToken,
+                                    onActivity: { activity in
+                                        continuation.yield(
+                                            .fileChanged(
+                                                repositoryID: repository.id,
+                                                path: activity
+                                            )
+                                        )
+                                    }
+                                )
+                                try Task.checkCancellation()
+                                try self.reportFiles(
+                                    in: repositoryDirectory
+                                ) { file in
+                                    continuation.yield(
+                                        .fileChanged(
+                                            repositoryID: repository.id,
+                                            path: file
+                                        )
+                                    )
+                                }
                             }
                             completed += 1
                             continuation.yield(
@@ -142,25 +159,13 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
         accessToken: String?,
         onActivity: @escaping @Sendable (String) -> Void
     ) async throws {
-        let gitDirectory = directory.appending(path: ".git", directoryHint: .isDirectory)
-        let arguments: [String]
-        if fileManager.fileExists(atPath: gitDirectory.path) {
-            arguments = [
-                "-C",
-                directory.path,
-                "fetch",
-                "--prune",
-                "--progress"
-            ]
-        } else {
-            arguments = [
-                "clone",
-                "--progress",
-                "--recurse-submodules",
-                repository.cloneURL.absoluteString,
-                directory.path
-            ]
-        }
+        let arguments = [
+            "clone",
+            "--progress",
+            "--recurse-submodules",
+            repository.cloneURL.absoluteString,
+            directory.path
+        ]
 
         do {
             var environment: [String: String] = [
