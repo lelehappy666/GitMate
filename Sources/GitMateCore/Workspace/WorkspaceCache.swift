@@ -153,7 +153,8 @@ public final class JSONWorkspaceCache: WorkspaceCaching, @unchecked Sendable {
             defaultBranch: record.repository.defaultBranch,
             sizeInKilobytes: record.repository.sizeInKilobytes,
             cloneURL: sanitizedURL(record.repository.cloneURL),
-            ownerAvatarURL: record.repository.ownerAvatarURL.map(sanitizedURL)
+            ownerAvatarURL: record.repository.ownerAvatarURL.map(sanitizedURL),
+            primaryLanguage: record.repository.primaryLanguage
         )
 
         return LocalRepositoryRecord(
