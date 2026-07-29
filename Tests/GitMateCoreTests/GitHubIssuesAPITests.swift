@@ -137,6 +137,161 @@ let githubIssuesAPITests = [
         try expect(query?.contains("is:issue") == true, "搜索必须排除 PR")
         try expect(query?.contains("author:lele 网络恢复") == true, "应保留高级语法")
     },
+    TestCase("企业版搜索分页继续按搜索响应解码") {
+        let recorder = LockedRecorder<URLRequest>()
+        URLProtocolStub.handler = { request in
+            recorder.append(request)
+            let isSecondPage = request.url?.query?.contains("page=2") == true
+            return try stubResponse(
+                for: request,
+                headers: isSecondPage ? [:] : [
+                    "Link":
+                        "<https://ghe.example/api/v3/search/issues?page=2>; rel=\"next\""
+                ],
+                body: """
+                {
+                  "total_count": 2,
+                  "incomplete_results": false,
+                  "items": [{
+                    "id": \(isSecondPage ? 2 : 1),
+                    "number": \(isSecondPage ? 92 : 91),
+                    "title": "企业议题",
+                    "state": "open",
+                    "user": {"login": "lele"},
+                    "labels": []
+                  }]
+                }
+                """
+            )
+        }
+        let api = URLSessionGitHubIssuesAPI(
+            client: GitHubRESTClient(
+                session: makeStubSession(),
+                apiBaseURL: URL(string: "https://ghe.example/api/v3/")!
+            ),
+            repositoryFullName: "GitMate/mac-client"
+        )
+        let query = IssueQuery(search: "企业")
+
+        let first = try await api.issues(
+            query: query,
+            pageURL: nil,
+            token: "secret"
+        )
+        let second = try await api.issues(
+            query: query,
+            pageURL: first.nextPageURL,
+            token: "secret"
+        )
+
+        try expectEqual(second.items.map(\.number), [92], "企业版第二页应按搜索对象解析")
+        try expectEqual(
+            recorder.snapshot[1].url?.path,
+            "/api/v3/search/issues",
+            "企业版分页路径应保留 API 前缀"
+        )
+    },
+    TestCase("标签名称作为路径参数时完整编码") {
+        let recorder = LockedRecorder<URLRequest>()
+        URLProtocolStub.handler = { request in
+            recorder.append(request)
+            if request.httpMethod == "DELETE" {
+                return try stubResponse(for: request, statusCode: 204, body: "")
+            }
+            return try stubResponse(
+                for: request,
+                body: """
+                {
+                  "id": 10,
+                  "name": "needs/triage",
+                  "color": "ff0000"
+                }
+                """
+            )
+        }
+        let api = URLSessionGitHubIssuesAPI(
+            client: GitHubRESTClient(session: makeStubSession()),
+            repositoryFullName: "GitMate/mac-client"
+        )
+
+        _ = try await api.updateLabel(
+            name: "needs/triage",
+            input: IssueLabelInput(
+                name: "needs/triage",
+                color: "ff0000",
+                description: nil
+            ),
+            token: "secret"
+        )
+        try await api.deleteLabel(name: "needs/triage", token: "secret")
+
+        try expect(
+            recorder.snapshot.allSatisfy {
+                $0.url?.absoluteString.contains("/labels/needs%2Ftriage") == true
+            },
+            "标签名中的斜杠不得改变 REST 路由层级"
+        )
+    },
+    TestCase("标签使用统计排除拉取请求并区分议题状态") {
+        URLProtocolStub.handler = { request in
+            try stubResponse(
+                for: request,
+                body: """
+                [
+                  {
+                    "id": 1,
+                    "number": 91,
+                    "title": "打开议题",
+                    "state": "open",
+                    "user": {"login": "lele"},
+                    "labels": [
+                      {"id": 10, "name": "bug", "color": "ff0000"},
+                      {"id": 11, "name": "macOS", "color": "0000ff"}
+                    ]
+                  },
+                  {
+                    "id": 2,
+                    "number": 92,
+                    "title": "关闭议题",
+                    "state": "closed",
+                    "user": {"login": "lele"},
+                    "labels": [
+                      {"id": 10, "name": "bug", "color": "ff0000"}
+                    ]
+                  },
+                  {
+                    "id": 3,
+                    "number": 214,
+                    "title": "拉取请求",
+                    "state": "open",
+                    "user": {"login": "lele"},
+                    "labels": [
+                      {"id": 10, "name": "bug", "color": "ff0000"}
+                    ],
+                    "pull_request": {}
+                  }
+                ]
+                """
+            )
+        }
+        let api = URLSessionGitHubIssuesAPI(
+            client: GitHubRESTClient(session: makeStubSession()),
+            repositoryFullName: "GitMate/mac-client"
+        )
+
+        let usage = try await api.labelUsage(token: "secret")
+
+        try expectEqual(
+            usage["bug"],
+            IssueLabelUsage(openIssueCount: 1, closedIssueCount: 1),
+            "标签统计应只计算议题并区分状态"
+        )
+        try expectEqual(
+            usage["macOS"],
+            IssueLabelUsage(openIssueCount: 1, closedIssueCount: 0),
+            "单个打开议题应计入进行中使用数"
+        )
+    },
     TestCase("议题详情时间线和评论使用真实端点") {
         let recorder = LockedRecorder<URLRequest>()
         URLProtocolStub.handler = { request in

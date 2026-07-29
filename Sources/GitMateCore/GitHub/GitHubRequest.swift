@@ -58,4 +58,11 @@ public struct GitHubRequest: Sendable {
         self.body = nil
         self.additionalAccept = additionalAccept
     }
+
+    public static func pathComponent(_ value: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed)
+            ?? value
+    }
 }

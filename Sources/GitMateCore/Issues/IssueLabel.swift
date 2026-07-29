@@ -1,5 +1,15 @@
 import Foundation
 
+public struct IssueLabelUsage: Equatable, Codable, Sendable {
+    public var openIssueCount: Int
+    public var closedIssueCount: Int
+
+    public init(openIssueCount: Int = 0, closedIssueCount: Int = 0) {
+        self.openIssueCount = max(0, openIssueCount)
+        self.closedIssueCount = max(0, closedIssueCount)
+    }
+}
+
 public struct IssueLabel: Identifiable, Equatable, Codable, Sendable {
     public let id: Int64
     public var name: String

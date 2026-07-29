@@ -42,6 +42,7 @@ struct IssuesOverviewView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .onSubmit(applyFilters)
+                .accessibilityIdentifier("workspace.issues.search")
             }
             .padding(.horizontal, 12)
             .frame(height: 40)
@@ -176,6 +177,7 @@ struct IssuesOverviewView: View {
             Button("应用筛选", action: applyFilters)
                 .buttonStyle(GitMateButtonStyle(role: .primary))
                 .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("workspace.issues.filter")
 
             Divider()
 
@@ -280,6 +282,7 @@ struct IssuesOverviewView: View {
                             }
                             .buttonStyle(.plain)
                             .foregroundStyle(GitMateTheme.accent)
+                            .accessibilityIdentifier("workspace.issues.loadMore")
                         }
                     }
                 }

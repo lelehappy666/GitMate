@@ -38,6 +38,19 @@ public final class URLSessionGitHubBranchesAPI:
         }
     }
 
+    public func remoteTags(token: String) async throws -> [GitTag] {
+        let payloads: [GitReferencePayload] = try await client.send(
+            GitHubRequest(
+                method: .get,
+                path: "\(repositoryPath)/git/matching-refs/tags"
+            ),
+            token: token
+        )
+        return payloads.compactMap(\.tagModel).sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
+
     public func branchProtection(
         name: String,
         token: String
@@ -46,7 +59,8 @@ public final class URLSessionGitHubBranchesAPI:
             let payload: BranchProtectionPayload = try await client.send(
                 GitHubRequest(
                     method: .get,
-                    path: "\(repositoryPath)/branches/\(name)/protection"
+                    path: "\(repositoryPath)/branches/"
+                        + "\(GitHubRequest.pathComponent(name))/protection"
                 ),
                 token: token
             )
@@ -154,7 +168,8 @@ public final class URLSessionGitHubBranchesAPI:
             let payload: TagReleasePayload = try await client.send(
                 GitHubRequest(
                     method: .get,
-                    path: "\(repositoryPath)/releases/tags/\(name)"
+                    path: "\(repositoryPath)/releases/tags/"
+                        + GitHubRequest.pathComponent(name)
                 ),
                 token: token
             )

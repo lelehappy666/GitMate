@@ -7,6 +7,7 @@ struct NewIssueView: View {
     @State private var selectedTab = "write"
     @State private var assigneesText = ""
     @State private var loadedDraft = false
+    @State private var draftSaveTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 12) {
@@ -30,7 +31,17 @@ struct NewIssueView: View {
             loadedDraft = true
         }
         .onChange(of: draft) { _, value in
-            viewModel.saveDraft(value)
+            draftSaveTask?.cancel()
+            draftSaveTask = Task { @MainActor in
+                do {
+                    try await Task.sleep(for: .milliseconds(500))
+                    try Task.checkCancellation()
+                    viewModel.saveDraft(value)
+                } catch {}
+            }
+        }
+        .onDisappear {
+            draftSaveTask?.cancel()
         }
     }
 
@@ -60,6 +71,7 @@ struct NewIssueView: View {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                     .isEmpty
             )
+            .accessibilityIdentifier("workspace.issue.publish.top")
         }
     }
 
@@ -292,6 +304,7 @@ struct NewIssueView: View {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                     .isEmpty
             )
+            .accessibilityIdentifier("workspace.issue.publish")
         }
         .frame(maxHeight: .infinity)
         .workspacePanel()
@@ -344,7 +357,11 @@ struct NewIssueView: View {
 
     private func applyTemplate(name: String, body: String) {
         draft.templateName = name
-        draft.body = body
+        if draft.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            draft.body = body
+        } else {
+            draft.body += "\n\n---\n\n" + body
+        }
     }
 
     private func publish() {

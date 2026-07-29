@@ -166,6 +166,7 @@ public final class ProcessLocalRepositoryGitService:
                 ":refs/heads/\(name)"
             ])
         } else {
+            try await ensureClean(directory)
             _ = try await run([
                 "-C",
                 directory.path,
@@ -185,9 +186,9 @@ public final class ProcessLocalRepositoryGitService:
         try await validateTag(name, at: directory)
         var arguments = ["-C", directory.path, "tag"]
         if let message, !message.isEmpty {
-            arguments += ["-a", name, target, "-m", message]
+            arguments += ["-a", "-m", message, "--", name, target]
         } else {
-            arguments += [name, target]
+            arguments += ["--", name, target]
         }
         _ = try await run(arguments)
     }
@@ -241,6 +242,7 @@ public final class ProcessLocalRepositoryGitService:
                 directory.path,
                 "tag",
                 "-d",
+                "--",
                 name
             ])
         }

@@ -49,7 +49,7 @@ public final class URLSessionGitHubIssuesAPI:
         pageURL: URL?,
         token: String
     ) async throws -> GitHubPage<GitHubIssue> {
-        let isSearch = pageURL?.path == "/search/issues"
+        let isSearch = pageURL?.path.hasSuffix("/search/issues") == true
             || (pageURL == nil && query.usesSearchEndpoint)
         let request: GitHubRequest
         if let pageURL {
@@ -324,6 +324,42 @@ public final class URLSessionGitHubIssuesAPI:
         return models
     }
 
+    public func labelUsage(
+        token: String
+    ) async throws -> [String: IssueLabelUsage] {
+        let query = IssueQuery(state: nil)
+        var page = try await issues(
+            query: query,
+            pageURL: nil,
+            token: token
+        )
+        var usage: [String: IssueLabelUsage] = [:]
+
+        while true {
+            for issue in page.items {
+                for label in issue.labels {
+                    var counts = usage[label.name] ?? IssueLabelUsage()
+                    if issue.state == .open {
+                        counts.openIssueCount += 1
+                    } else {
+                        counts.closedIssueCount += 1
+                    }
+                    usage[label.name] = counts
+                }
+            }
+            guard let nextPageURL = page.nextPageURL else {
+                break
+            }
+            try Task.checkCancellation()
+            page = try await issues(
+                query: query,
+                pageURL: nextPageURL,
+                token: token
+            )
+        }
+        return usage
+    }
+
     public func createLabel(
         _ input: IssueLabelInput,
         token: String
@@ -347,7 +383,8 @@ public final class URLSessionGitHubIssuesAPI:
         let payload: IssueLabelPayload = try await client.send(
             try GitHubRequest(
                 method: .patch,
-                path: "\(repositoryPath)/labels/\(name)",
+                path: "\(repositoryPath)/labels/"
+                    + GitHubRequest.pathComponent(name),
                 encodableBody: UpdateLabelBody(
                     newName: input.name,
                     color: input.color,
@@ -363,7 +400,8 @@ public final class URLSessionGitHubIssuesAPI:
         try await client.sendWithoutResponse(
             GitHubRequest(
                 method: .delete,
-                path: "\(repositoryPath)/labels/\(name)"
+                path: "\(repositoryPath)/labels/"
+                    + GitHubRequest.pathComponent(name)
             ),
             token: token
         )
@@ -411,7 +449,8 @@ public final class URLSessionGitHubIssuesAPI:
         let _: [IssueLabelPayload] = try await client.send(
             GitHubRequest(
                 method: .delete,
-                path: "\(repositoryPath)/issues/\(issueNumber)/labels/\(name)"
+                path: "\(repositoryPath)/issues/\(issueNumber)/labels/"
+                    + GitHubRequest.pathComponent(name)
             ),
             token: token
         )

@@ -44,9 +44,49 @@ let githubBranchesAPITests = [
             "每页应请求 100 条"
         )
     },
-    TestCase("分支保护接口映射审查与状态检查") {
+    TestCase("远端标签接口映射轻量与附注标签") {
+        let recorder = LockedRecorder<URLRequest>()
         URLProtocolStub.handler = { request in
-            try stubResponse(
+            recorder.append(request)
+            return try stubResponse(
+                for: request,
+                body: """
+                [
+                  {
+                    "ref": "refs/tags/v2.4.0",
+                    "object": {"type": "tag", "sha": "tag-object"}
+                  },
+                  {
+                    "ref": "refs/tags/nightly",
+                    "object": {"type": "commit", "sha": "commit-object"}
+                  }
+                ]
+                """
+            )
+        }
+        let api = URLSessionGitHubBranchesAPI(
+            client: GitHubRESTClient(session: makeStubSession()),
+            repositoryFullName: "GitMate/mac-client"
+        )
+
+        let tags = try await api.remoteTags(token: "secret")
+
+        try expectEqual(tags.map(\.name), ["nightly", "v2.4.0"], "应按名称返回远端标签")
+        try expectEqual(tags[0].kind, .lightweight, "提交引用应映射为轻量标签")
+        try expectEqual(tags[1].kind, .annotated, "标签对象应映射为附注标签")
+        try expect(!tags[0].existsLocally, "远端接口不得误报本地存在")
+        try expect(tags[0].existsRemotely, "远端接口应标记远端存在")
+        try expectEqual(
+            recorder.snapshot.first?.url?.path,
+            "/repos/GitMate/mac-client/git/matching-refs/tags",
+            "应使用 GitHub 的标签引用端点"
+        )
+    },
+    TestCase("分支保护接口映射审查与状态检查") {
+        let recorder = LockedRecorder<URLRequest>()
+        URLProtocolStub.handler = { request in
+            recorder.append(request)
+            return try stubResponse(
                 for: request,
                 body: """
                 {
@@ -71,7 +111,7 @@ let githubBranchesAPITests = [
         )
 
         let protection = try await api.branchProtection(
-            name: "main",
+            name: "feature/sync",
             token: "secret"
         )
 
@@ -79,6 +119,12 @@ let githubBranchesAPITests = [
         try expectEqual(protection?.requiredStatusChecks, ["build", "test"], "应解析状态检查")
         try expect(protection?.enforcesAdmins == true, "应解析管理员执行状态")
         try expect(protection?.requiresCodeOwnerReview == true, "应解析代码所有者审查")
+        try expect(
+            recorder.snapshot[0].url?.absoluteString.contains(
+                "/branches/feature%2Fsync/protection"
+            ) == true,
+            "包含斜杠的分支名必须编码为单个路径参数"
+        )
     },
     TestCase("Ruleset 接口识别组织继承来源和规则条件") {
         URLProtocolStub.handler = { request in

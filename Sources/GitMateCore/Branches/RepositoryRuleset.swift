@@ -91,7 +91,7 @@ public struct RepositoryRuleset: Identifiable, Equatable, Codable, Sendable {
     public var includedRefs: [String]
     public var excludedRefs: [String]
     public var rules: [RepositoryRule]
-    public var bypassActors: [String]
+    public var bypassActors: [RulesetBypassActorInput]
 
     public init(
         id: Int64,
@@ -102,7 +102,7 @@ public struct RepositoryRuleset: Identifiable, Equatable, Codable, Sendable {
         includedRefs: [String] = [],
         excludedRefs: [String] = [],
         rules: [RepositoryRule] = [],
-        bypassActors: [String] = []
+        bypassActors: [RulesetBypassActorInput] = []
     ) {
         self.id = id
         self.name = name

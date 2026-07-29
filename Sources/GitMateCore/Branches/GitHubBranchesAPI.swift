@@ -72,6 +72,10 @@ public struct RulesetBypassActorInput: Equatable, Codable, Sendable {
         case actorType = "actor_type"
         case bypassMode = "bypass_mode"
     }
+
+    public var displayText: String {
+        "\(actorType):\(actorID):\(bypassMode)"
+    }
 }
 
 public struct RepositoryRulesetInput: Equatable, Sendable {
@@ -100,6 +104,93 @@ public struct RepositoryRulesetInput: Equatable, Sendable {
         self.rules = rules
         self.bypassActors = bypassActors
     }
+
+    public static func preservingUneditedConfiguration(
+        from original: RepositoryRuleset?,
+        name: String,
+        enforcement: RulesetEnforcement,
+        target: RulesetTarget,
+        includedRefs: [String],
+        excludedRefs: [String],
+        editableRules: [RepositoryRule],
+        editableRuleTypes: Set<String>
+    ) -> RepositoryRulesetInput {
+        let retainedRules = (original?.rules ?? []).filter {
+            !editableRuleTypes.contains($0.type)
+        }
+        let mergedEditableRules = editableRules.map { edited in
+            guard let existing = original?.rules.first(where: {
+                $0.type == edited.type
+            }) else {
+                return edited
+            }
+            var parameters = existing.parameters
+            parameters.merge(edited.parameters) { _, editedValue in
+                editedValue
+            }
+            return RepositoryRule(
+                type: edited.type,
+                summary: existing.summary,
+                parameters: parameters
+            )
+        }
+        return RepositoryRulesetInput(
+            name: name,
+            enforcement: enforcement,
+            target: target,
+            includedRefs: includedRefs,
+            excludedRefs: excludedRefs,
+            rules: retainedRules + mergedEditableRules,
+            bypassActors: original?.bypassActors ?? []
+        )
+    }
+
+    public func weakensProtection(
+        comparedTo original: RepositoryRuleset
+    ) -> Bool {
+        let enforcementRank: [RulesetEnforcement: Int] = [
+            .disabled: 0,
+            .evaluate: 1,
+            .active: 2
+        ]
+        if
+            enforcementRank[enforcement, default: 0]
+                < enforcementRank[original.enforcement, default: 0]
+        {
+            return true
+        }
+        if
+            target != original.target
+                || includedRefs != original.includedRefs
+                || excludedRefs != original.excludedRefs
+                || bypassActors != original.bypassActors
+        {
+            return true
+        }
+
+        let updatedByType = Dictionary(
+            uniqueKeysWithValues: rules.map { ($0.type, $0) }
+        )
+        for originalRule in original.rules {
+            guard let updated = updatedByType[originalRule.type] else {
+                return true
+            }
+            for (key, oldValue) in originalRule.parameters {
+                guard let newValue = updated.parameters[key] else {
+                    return true
+                }
+                switch (oldValue, newValue) {
+                case let (.integer(old), .integer(new)) where new < old:
+                    return true
+                case (.boolean(true), .boolean(false)):
+                    return true
+                default:
+                    continue
+                }
+            }
+        }
+        return false
+    }
 }
 
 public enum RulesetOperationError: Error, Equatable, Sendable {
@@ -117,6 +208,7 @@ extension RulesetOperationError: LocalizedError {
 
 public protocol GitHubBranchesAPI: Sendable {
     func remoteBranches(token: String) async throws -> [GitBranch]
+    func remoteTags(token: String) async throws -> [GitTag]
     func branchProtection(
         name: String,
         token: String

@@ -529,7 +529,13 @@ private enum WorkspacePreviewData {
                 RepositoryRule(type: "required_signatures"),
                 RepositoryRule(type: "code_scanning")
             ],
-            bypassActors: ["GitMate/security-admins"]
+            bypassActors: [
+                RulesetBypassActorInput(
+                    actorID: 42,
+                    actorType: "Team",
+                    bypassMode: "always"
+                )
+            ]
         )
     ]
 
@@ -555,7 +561,7 @@ private struct WorkspacePreviewLocalGit: LocalRepositoryGitService {
     }
 
     func tags(at directory: URL) async throws -> [GitTag] {
-        WorkspacePreviewData.tags
+        WorkspacePreviewData.tags.filter(\.existsLocally)
     }
 
     func workingTreeStatus(
@@ -625,6 +631,14 @@ private struct WorkspacePreviewLocalGit: LocalRepositoryGitService {
 private struct WorkspacePreviewBranchesAPI: GitHubBranchesAPI {
     func remoteBranches(token: String) async throws -> [GitBranch] {
         WorkspacePreviewData.remoteBranches
+    }
+
+    func remoteTags(token: String) async throws -> [GitTag] {
+        WorkspacePreviewData.tags.filter(\.existsRemotely).map { existing in
+            var tag = existing
+            tag.existsLocally = false
+            return tag
+        }
     }
 
     func branchProtection(
@@ -895,6 +909,20 @@ private struct WorkspacePreviewIssuesAPI: GitHubIssuesAPI {
         WorkspacePreviewData.labels
     }
 
+    func labelUsage(token: String) async throws -> [String: IssueLabelUsage] {
+        Dictionary(
+            uniqueKeysWithValues: WorkspacePreviewData.labels.map {
+                (
+                    $0.name,
+                    IssueLabelUsage(
+                        openIssueCount: $0.openIssueCount,
+                        closedIssueCount: $0.closedIssueCount
+                    )
+                )
+            }
+        )
+    }
+
     func createLabel(
         _ input: IssueLabelInput,
         token: String
@@ -933,6 +961,8 @@ private struct WorkspacePreviewLabelMerger: LabelMerging {
         completedIssueNumbers: [Int]
     ) async throws -> LabelMergeProgress {
         LabelMergeProgress(
+            source: source,
+            target: target,
             completedIssueNumbers: Array(
                 Set(completedIssueNumbers + [68, 73, 79])
             ).sorted(),

@@ -6,6 +6,7 @@ struct IssueDetailView: View {
     @Environment(\.openURL) private var openURL
     @State private var commentBody = ""
     @State private var showsEditSheet = false
+    @State private var editingComment: IssueComment?
 
     var body: some View {
         if let issue = viewModel.state.selectedIssue {
@@ -26,6 +27,18 @@ struct IssueDetailView: View {
                         Task {
                             await viewModel.updateIssue(input)
                         }
+                    }
+                )
+            }
+            .sheet(item: $editingComment) { comment in
+                EditCommentSheet(
+                    comment: comment,
+                    onCancel: { editingComment = nil },
+                    onSave: { body in
+                        await viewModel.updateComment(
+                            id: comment.id,
+                            body: body
+                        )
                     }
                 )
             }
@@ -90,11 +103,12 @@ struct IssueDetailView: View {
                     ForEach(viewModel.state.comments) {
                         commentCard($0)
                     }
-
-                    commentEditor
                 }
                 .padding(16)
             }
+            Divider()
+            commentEditor
+                .padding(14)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .workspacePanel()
@@ -187,6 +201,17 @@ struct IssueDetailView: View {
                         .font(.system(size: 9))
                         .foregroundStyle(GitMateTheme.textSecondary)
                     Spacer()
+                    if comment.author.login == viewModel.context.account.login {
+                        Menu {
+                            Button("编辑评论") {
+                                editingComment = comment
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .frame(width: 24, height: 20)
+                        }
+                        .menuStyle(.borderlessButton)
+                    }
                 }
                 Divider()
                 IssueMarkdownView(markdown: comment.body)
@@ -209,7 +234,7 @@ struct IssueDetailView: View {
                 .font(.system(size: 12))
                 .scrollContentBackground(.hidden)
                 .padding(8)
-                .frame(minHeight: 96)
+                .frame(height: 72)
                 .background(.white)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay {
@@ -223,12 +248,15 @@ struct IssueDetailView: View {
                 Spacer()
                 Button("发表评论") {
                     let body = commentBody
-                    commentBody = ""
                     Task {
-                        await viewModel.addComment(body: body)
+                        if await viewModel.addComment(body: body),
+                           commentBody == body {
+                            commentBody = ""
+                        }
                     }
                 }
                 .buttonStyle(GitMateButtonStyle(role: .primary))
+                .accessibilityIdentifier("workspace.issue.comment")
                 .disabled(
                     commentBody
                         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -236,7 +264,7 @@ struct IssueDetailView: View {
                 )
             }
         }
-        .padding(14)
+        .fixedSize(horizontal: false, vertical: true)
         .background(GitMateTheme.panel)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
@@ -390,6 +418,11 @@ struct IssueDetailView: View {
                 }
                 .menuStyle(.borderlessButton)
             }
+
+            Text("GitHub 不提供删除议题接口；可关闭议题或在 GitHub 网页中管理。")
+                .font(.system(size: 9))
+                .foregroundStyle(GitMateTheme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -475,6 +508,9 @@ private struct EditIssueSheet: View {
     let onSave: (UpdateIssueInput) -> Void
     @State private var title: String
     @State private var issueBodyText: String
+    @State private var assigneeLogins: String
+    @State private var labelNames: String
+    @State private var milestoneNumber: String
 
     init(
         issue: GitHubIssue,
@@ -486,22 +522,66 @@ private struct EditIssueSheet: View {
         self.onSave = onSave
         _title = State(initialValue: issue.title)
         _issueBodyText = State(initialValue: issue.body ?? "")
+        _assigneeLogins = State(
+            initialValue: issue.assignees.map(\.login).joined(separator: "\n")
+        )
+        _labelNames = State(
+            initialValue: issue.labels.map(\.name).joined(separator: "\n")
+        )
+        _milestoneNumber = State(
+            initialValue: issue.milestone.map { String($0.number) } ?? ""
+        )
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("编辑议题 #\(issue.number)")
                 .font(.system(size: 18, weight: .bold))
-            TextField("标题", text: $title)
-                .textFieldStyle(.roundedBorder)
-            TextEditor(text: $issueBodyText)
-                .font(.system(size: 12))
-                .padding(8)
-                .frame(height: 300)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(GitMateTheme.border)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    editorField("标题") {
+                        TextField("标题", text: $title)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    editorField("正文") {
+                        TextEditor(text: $issueBodyText)
+                            .font(.system(size: 12))
+                            .padding(8)
+                            .frame(height: 220)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(GitMateTheme.border)
+                            }
+                    }
+                    HStack(alignment: .top, spacing: 12) {
+                        editorField("负责人（每行一个登录名）") {
+                            TextEditor(text: $assigneeLogins)
+                                .font(.system(size: 11, design: .monospaced))
+                                .frame(height: 76)
+                                .padding(7)
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 7)
+                                        .stroke(GitMateTheme.border)
+                                }
+                        }
+                        editorField("标签（每行一个）") {
+                            TextEditor(text: $labelNames)
+                                .font(.system(size: 11))
+                                .frame(height: 76)
+                                .padding(7)
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 7)
+                                        .stroke(GitMateTheme.border)
+                                }
+                        }
+                    }
+                    editorField("里程碑编号（留空表示移除）") {
+                        TextField("例如 3", text: $milestoneNumber)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 180)
+                    }
                 }
+            }
             HStack {
                 Spacer()
                 Button("取消", action: onCancel)
@@ -512,9 +592,13 @@ private struct EditIssueSheet: View {
                             title: title,
                             body: issueBodyText,
                             state: issue.state,
-                            assigneeLogins: issue.assignees.map(\.login),
-                            labelNames: issue.labels.map(\.name),
-                            milestoneNumber: issue.milestone?.number
+                            assigneeLogins: parsedLines(assigneeLogins),
+                            labelNames: parsedLines(labelNames),
+                            milestoneNumber: Int(
+                                milestoneNumber.trimmingCharacters(
+                                    in: .whitespacesAndNewlines
+                                )
+                            )
                         )
                     )
                 }
@@ -526,7 +610,95 @@ private struct EditIssueSheet: View {
             }
         }
         .padding(22)
-        .frame(width: 640, height: 470)
+        .frame(width: 680, height: 650)
+    }
+
+    private func editorField<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(GitMateTheme.textSecondary)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func parsedLines(_ value: String) -> [String] {
+        value.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+}
+
+private struct EditCommentSheet: View {
+    let comment: IssueComment
+    let onCancel: () -> Void
+    let onSave: (String) async -> Bool
+
+    @State private var bodyText: String
+    @State private var isSaving = false
+    @State private var saveFailed = false
+
+    init(
+        comment: IssueComment,
+        onCancel: @escaping () -> Void,
+        onSave: @escaping (String) async -> Bool
+    ) {
+        self.comment = comment
+        self.onCancel = onCancel
+        self.onSave = onSave
+        _bodyText = State(initialValue: comment.body)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("编辑评论")
+                .font(.system(size: 18, weight: .bold))
+            TextEditor(text: $bodyText)
+                .font(.system(size: 12))
+                .padding(8)
+                .frame(height: 240)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(GitMateTheme.border)
+                }
+            if saveFailed {
+                Text("保存失败，正文仍保留在编辑器中，请检查权限或网络后重试。")
+                    .font(.system(size: 10))
+                    .foregroundStyle(GitMateTheme.danger)
+            }
+            HStack {
+                Spacer()
+                Button("取消", action: onCancel)
+                    .buttonStyle(.bordered)
+                Button(isSaving ? "正在保存…" : "保存评论") {
+                    let submitted = bodyText
+                    isSaving = true
+                    saveFailed = false
+                    Task {
+                        if await onSave(submitted) {
+                            onCancel()
+                        } else {
+                            saveFailed = true
+                            isSaving = false
+                        }
+                    }
+                }
+                .buttonStyle(GitMateButtonStyle(role: .primary))
+                .disabled(
+                    isSaving
+                        || bodyText
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                            .isEmpty
+                )
+                .accessibilityIdentifier("workspace.issue.comment.edit")
+            }
+        }
+        .padding(22)
+        .frame(width: 560, height: 390)
     }
 }
 

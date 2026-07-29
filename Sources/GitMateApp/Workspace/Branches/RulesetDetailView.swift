@@ -134,7 +134,9 @@ struct RulesetDetailView: View {
             Text(
                 ruleset.bypassActors.isEmpty
                     ? "没有用户或团队可以绕过此规则集。"
-                    : ruleset.bypassActors.joined(separator: "、")
+                    : ruleset.bypassActors
+                        .map(\.displayText)
+                        .joined(separator: "、")
             )
             .font(.system(size: 11))
             .foregroundStyle(GitMateTheme.textSecondary)

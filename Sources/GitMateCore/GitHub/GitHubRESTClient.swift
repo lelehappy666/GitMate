@@ -107,9 +107,29 @@ public final class GitHubRESTClient: @unchecked Sendable {
             }
             base = absoluteURL
         } else if let path = request.path {
-            base = apiBaseURL.appending(
-                path: path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard var baseComponents = URLComponents(
+                url: apiBaseURL,
+                resolvingAgainstBaseURL: false
+            ) else {
+                throw GitHubAPIError.invalidConfiguration(
+                    "GitHub API 地址无效。"
+                )
+            }
+            let basePath = baseComponents.percentEncodedPath
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let requestPath = path.trimmingCharacters(
+                in: CharacterSet(charactersIn: "/")
             )
+            baseComponents.percentEncodedPath = "/"
+                + [basePath, requestPath]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "/")
+            guard let encodedURL = baseComponents.url else {
+                throw GitHubAPIError.invalidConfiguration(
+                    "GitHub API 请求地址无效。"
+                )
+            }
+            base = encodedURL
         } else {
             throw GitHubAPIError.invalidConfiguration("GitHub API 请求缺少地址。")
         }

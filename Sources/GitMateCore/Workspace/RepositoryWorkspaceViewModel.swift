@@ -31,6 +31,12 @@ public final class RepositoryWorkspaceViewModel {
     private var loadTask: Task<Void, Never>?
 
     @ObservationIgnored
+    private var loadMoreTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var loadMoreID: UUID?
+
+    @ObservationIgnored
     private var loadID = UUID()
 
     public init(
@@ -45,11 +51,15 @@ public final class RepositoryWorkspaceViewModel {
 
     deinit {
         loadTask?.cancel()
+        loadMoreTask?.cancel()
     }
 
     public func navigate(to route: RepositoryWorkspaceRoute) {
         loadTask?.cancel()
+        loadMoreTask?.cancel()
         loadTask = nil
+        loadMoreTask = nil
+        loadMoreID = nil
         loadID = UUID()
         state.route = route
         state.status = .idle
@@ -69,7 +79,7 @@ public final class RepositoryWorkspaceViewModel {
                 return
             }
             do {
-                try await load(route: route)
+                try await load(route: route, identifier: identifier)
                 try Task.checkCancellation()
                 guard loadID == identifier, state.route == route else {
                     return
@@ -103,20 +113,50 @@ public final class RepositoryWorkspaceViewModel {
     public func loadMoreIssues() async {
         guard
             state.route == .issues,
-            let nextPageURL = state.nextIssuesPageURL
+            let nextPageURL = state.nextIssuesPageURL,
+            loadMoreTask == nil
         else {
             return
         }
-        do {
-            let page = try await dependencies.issuesAPI.issues(
-                query: state.issueQuery,
-                pageURL: nextPageURL,
-                token: try accessToken()
-            )
-            state.issues.append(contentsOf: page.items)
-            state.nextIssuesPageURL = page.nextPageURL
-        } catch {
-            handle(error)
+        let query = state.issueQuery
+        let identifier = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            do {
+                let page = try await dependencies.issuesAPI.issues(
+                    query: query,
+                    pageURL: nextPageURL,
+                    token: try accessToken()
+                )
+                try Task.checkCancellation()
+                guard
+                    state.route == .issues,
+                    state.issueQuery == query,
+                    state.nextIssuesPageURL == nextPageURL
+                else {
+                    return
+                }
+                let existingIDs = Set(state.issues.map(\.id))
+                state.issues.append(
+                    contentsOf: page.items.filter {
+                        !existingIDs.contains($0.id)
+                    }
+                )
+                state.nextIssuesPageURL = page.nextPageURL
+            } catch is CancellationError {
+                return
+            } catch {
+                handle(error)
+            }
+        }
+        loadMoreID = identifier
+        loadMoreTask = task
+        await task.value
+        if loadMoreID == identifier {
+            loadMoreTask = nil
+            loadMoreID = nil
         }
     }
 
@@ -277,17 +317,23 @@ public final class RepositoryWorkspaceViewModel {
         }
     }
 
-    public func addComment(body: String) async {
+    @discardableResult
+    public func addComment(body: String) async -> Bool {
         guard let issue = state.selectedIssue else {
-            return
+            return false
         }
-        await performAction {
+        do {
             let comment = try await dependencies.issuesAPI.createComment(
                 number: issue.number,
                 body: body,
                 token: try accessToken()
             )
             state.comments.append(comment)
+            state.errorMessage = nil
+            return true
+        } catch {
+            handle(error)
+            return false
         }
     }
 
@@ -301,6 +347,25 @@ public final class RepositoryWorkspaceViewModel {
                 input: input,
                 token: try accessToken()
             )
+        }
+    }
+
+    @discardableResult
+    public func updateComment(id: Int64, body: String) async -> Bool {
+        do {
+            let updated = try await dependencies.issuesAPI.updateComment(
+                id: id,
+                body: body,
+                token: try accessToken()
+            )
+            if let index = state.comments.firstIndex(where: { $0.id == id }) {
+                state.comments[index] = updated
+            }
+            state.errorMessage = nil
+            return true
+        } catch {
+            handle(error)
+            return false
         }
     }
 
@@ -406,6 +471,15 @@ public final class RepositoryWorkspaceViewModel {
         )
     }
 
+    public func requestUpdateRuleset(
+        _ ruleset: RepositoryRuleset,
+        input: RepositoryRulesetInput
+    ) {
+        pendingDangerousOperation = DangerousOperationRequest(
+            action: .updateRuleset(current: ruleset, input: input)
+        )
+    }
+
     public func requestDeleteMilestone(
         number: Int,
         affectedIssues: Int
@@ -494,6 +568,18 @@ public final class RepositoryWorkspaceViewModel {
                 )
                 state.rulesets.removeAll { $0.id == id }
 
+            case let .updateRuleset(current, input):
+                let updated = try await dependencies.branchesAPI.updateRuleset(
+                    current,
+                    input: input,
+                    token: try accessToken()
+                )
+                if let index = state.rulesets.firstIndex(
+                    where: { $0.id == updated.id }
+                ) {
+                    state.rulesets[index] = updated
+                }
+
             case let .deleteMilestone(number, _):
                 try await dependencies.issuesAPI.deleteMilestone(
                     number: number,
@@ -509,14 +595,24 @@ public final class RepositoryWorkspaceViewModel {
                 state.labels.removeAll { $0.name == name }
 
             case let .mergeLabels(source, target, _):
+                let previousCompleted: [Int]
+                if
+                    state.labelMergeProgress?.source == source,
+                    state.labelMergeProgress?.target == target
+                {
+                    previousCompleted =
+                        state.labelMergeProgress?.completedIssueNumbers ?? []
+                } else {
+                    previousCompleted = []
+                    state.labelMergeProgress = nil
+                }
                 state.labelMergeProgress = try await dependencies
                     .labelMergeService
                     .merge(
                         source: source,
                         into: target,
                         token: try accessToken(),
-                        completedIssueNumbers:
-                            state.labelMergeProgress?.completedIssueNumbers ?? []
+                        completedIssueNumbers: previousCompleted
                     )
                 if state.labelMergeProgress?.failedIssueNumbers.isEmpty == true {
                     state.labels.removeAll { $0.name == source }
@@ -529,10 +625,14 @@ public final class RepositoryWorkspaceViewModel {
         }
     }
 
-    private func load(route: RepositoryWorkspaceRoute) async throws {
+    private func load(
+        route: RepositoryWorkspaceRoute,
+        identifier: UUID
+    ) async throws {
         try Task.checkCancellation()
         let token = try accessToken()
         if state.savedIssueViews.isEmpty {
+            try ensureCurrent(route: route, identifier: identifier)
             state.savedIssueViews = try dependencies.persistenceStore.savedViews(
                 accountID: context.account.id,
                 repositoryID: context.repository.id
@@ -541,23 +641,46 @@ public final class RepositoryWorkspaceViewModel {
 
         switch route {
         case .branches:
-            try await loadBranches(token: token)
+            let result = try await loadBranches(token: token)
+            try ensureCurrent(route: route, identifier: identifier)
+            state.branches = result.branches
+            state.workingTreeStatus = result.workingTreeStatus
         case .tags:
+            let tags: [GitTag]
             if let directory = context.localDirectory {
-                state.tags = try await dependencies.localGit.tags(at: directory)
+                async let localTags = dependencies.localGit.tags(at: directory)
+                async let remoteTags = dependencies.branchesAPI.remoteTags(
+                    token: token
+                )
+                let values = try await (localTags, remoteTags)
+                tags = Self.merge(
+                    local: values.0,
+                    remote: values.1
+                )
             } else {
-                state.tags = []
+                tags = try await dependencies.branchesAPI.remoteTags(
+                    token: token
+                )
             }
+            try ensureCurrent(route: route, identifier: identifier)
+            state.tags = tags
         case .branchRules:
-            state.rulesets = try await dependencies.branchesAPI.rulesets(
+            let rulesets = try await dependencies.branchesAPI.rulesets(
                 token: token
             )
+            try ensureCurrent(route: route, identifier: identifier)
+            state.rulesets = rulesets
         case .issues:
+            let query = state.issueQuery
             let page = try await dependencies.issuesAPI.issues(
-                query: state.issueQuery,
+                query: query,
                 pageURL: nil,
                 token: token
             )
+            try ensureCurrent(route: route, identifier: identifier)
+            guard state.issueQuery == query else {
+                throw CancellationError()
+            }
             state.issues = page.items
             state.nextIssuesPageURL = page.nextPageURL
         case let .issueDetail(number):
@@ -574,6 +697,7 @@ public final class RepositoryWorkspaceViewModel {
                 token: token
             )
             let values = try await (issue, timeline, comments)
+            try ensureCurrent(route: route, identifier: identifier)
             state.selectedIssue = values.0
             state.timeline = values.1
             state.comments = values.2
@@ -584,23 +708,43 @@ public final class RepositoryWorkspaceViewModel {
             )
             async let labels = dependencies.issuesAPI.labels(token: token)
             let values = try await (milestones, labels)
-            state.milestones = values.0
-            state.labels = values.1
-            state.issueDraft = try dependencies.persistenceStore.issueDraft(
+            let draft = try dependencies.persistenceStore.issueDraft(
                 accountID: context.account.id,
                 repositoryID: context.repository.id
             )
+            try ensureCurrent(route: route, identifier: identifier)
+            state.milestones = values.0
+            state.labels = values.1
+            state.issueDraft = draft
         case .milestones:
-            state.milestones = try await dependencies.issuesAPI.milestones(
+            let milestones = try await dependencies.issuesAPI.milestones(
                 state: nil,
                 token: token
             )
+            try ensureCurrent(route: route, identifier: identifier)
+            state.milestones = milestones
         case .issueLabels:
-            state.labels = try await dependencies.issuesAPI.labels(token: token)
+            async let labels = dependencies.issuesAPI.labels(token: token)
+            async let usage = dependencies.issuesAPI.labelUsage(token: token)
+            let values = try await (labels, usage)
+            let enrichedLabels = values.0.map { label in
+                var enriched = label
+                let counts = values.1[label.name] ?? IssueLabelUsage()
+                enriched.openIssueCount = counts.openIssueCount
+                enriched.closedIssueCount = counts.closedIssueCount
+                return enriched
+            }
+            try ensureCurrent(route: route, identifier: identifier)
+            state.labels = enrichedLabels
         }
     }
 
-    private func loadBranches(token: String) async throws {
+    private func loadBranches(
+        token: String
+    ) async throws -> (
+        branches: [GitBranch],
+        workingTreeStatus: WorkingTreeStatus?
+    ) {
         if let directory = context.localDirectory {
             async let localBranches = dependencies.localGit.branches(at: directory)
             async let remoteBranches = dependencies.branchesAPI.remoteBranches(
@@ -613,16 +757,56 @@ public final class RepositoryWorkspaceViewModel {
                 remoteBranches,
                 workingTreeStatus
             )
-            state.branches = Self.merge(
+            var branches = Self.merge(
                 local: values.0,
                 remote: values.1
             )
-            state.workingTreeStatus = values.2
+            for index in branches.indices {
+                try Task.checkCancellation()
+                guard
+                    let localSHA = branches[index].localSHA,
+                    let remoteSHA = branches[index].remoteSHA,
+                    localSHA != remoteSHA
+                else {
+                    continue
+                }
+                do {
+                    branches[index].comparison = try await dependencies.localGit
+                        .comparison(
+                        local: localSHA,
+                        remote: remoteSHA,
+                        at: directory
+                    )
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    branches[index].comparison = nil
+                }
+            }
+            for index in branches.indices {
+                branches[index].isDefault =
+                    branches[index].name == context.repository.defaultBranch
+            }
+            return (branches, values.2)
         } else {
-            state.branches = try await dependencies.branchesAPI.remoteBranches(
+            var branches = try await dependencies.branchesAPI.remoteBranches(
                 token: token
             )
-            state.workingTreeStatus = nil
+            for index in branches.indices {
+                branches[index].isDefault =
+                    branches[index].name == context.repository.defaultBranch
+            }
+            return (branches, nil)
+        }
+    }
+
+    private func ensureCurrent(
+        route: RepositoryWorkspaceRoute,
+        identifier: UUID
+    ) throws {
+        try Task.checkCancellation()
+        guard loadID == identifier, state.route == route else {
+            throw CancellationError()
         }
     }
 
@@ -695,6 +879,35 @@ public final class RepositoryWorkspaceViewModel {
             }
         }
         return branches.values.sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
+
+    private static func merge(
+        local: [GitTag],
+        remote: [GitTag]
+    ) -> [GitTag] {
+        var tags: [String: GitTag] = [:]
+        for var tag in local {
+            tag.existsLocally = true
+            tag.existsRemotely = false
+            tags[tag.name] = tag
+        }
+        for remoteTag in remote {
+            if var existing = tags[remoteTag.name] {
+                existing.existsRemotely = true
+                if existing.releaseURL == nil {
+                    existing.releaseURL = remoteTag.releaseURL
+                }
+                tags[remoteTag.name] = existing
+            } else {
+                var tag = remoteTag
+                tag.existsLocally = false
+                tag.existsRemotely = true
+                tags[tag.name] = tag
+            }
+        }
+        return tags.values.sorted {
             $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
     }

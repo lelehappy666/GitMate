@@ -68,22 +68,24 @@ struct GitMateApp: App {
 
     var body: some Scene {
         WindowGroup {
-            if let previewWorkspaceViewModel {
-                RepositoryWorkspaceRootView(
-                    viewModel: previewWorkspaceViewModel
-                )
-            } else if let onboardingViewModel, let workspaceFactory {
-                GitMateApplicationRootView(
-                    onboardingViewModel: onboardingViewModel,
-                    workspaceFactory: workspaceFactory
-                )
-            } else {
-                ProgressView("正在准备 GitMate…")
-                    .frame(width: 1_040, height: 680)
+            Group {
+                if let previewWorkspaceViewModel {
+                    RepositoryWorkspaceRootView(
+                        viewModel: previewWorkspaceViewModel
+                    )
+                } else if let onboardingViewModel, let workspaceFactory {
+                    GitMateApplicationRootView(
+                        onboardingViewModel: onboardingViewModel,
+                        workspaceFactory: workspaceFactory
+                    )
+                } else {
+                    ProgressView("正在准备 GitMate…")
+                }
             }
+            .frame(width: 1_180, height: 760)
         }
         .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentMinSize)
+        .windowResizability(.contentSize)
         .defaultSize(width: 1_180, height: 760)
     }
 }

@@ -69,11 +69,18 @@ struct RulesetPayload: Decodable {
                     parameters: $0.parameters ?? [:]
                 )
             },
-            bypassActors: (bypassActors ?? []).map { actor in
-                let type = actor.actorType ?? "未知"
-                let identifier = actor.actorID.map(String.init) ?? "未知"
-                let mode = actor.bypassMode ?? "always"
-                return "\(type):\(identifier):\(mode)"
+            bypassActors: (bypassActors ?? []).compactMap { actor in
+                guard
+                    let actorID = actor.actorID,
+                    let actorType = actor.actorType
+                else {
+                    return nil
+                }
+                return RulesetBypassActorInput(
+                    actorID: actorID,
+                    actorType: actorType,
+                    bypassMode: actor.bypassMode ?? "always"
+                )
             }
         )
     }

@@ -54,6 +54,34 @@ let milestoneTimelineLayoutTests = [
             "节点应交错分布以形成清晰的视觉节奏"
         )
     },
+    TestCase("里程碑横向距离体现真实日期间隔") {
+        let day: TimeInterval = 86_400
+        let milestones = [
+            testMilestone(
+                id: 1,
+                title: "起点",
+                dueOn: Date(timeIntervalSince1970: 0)
+            ),
+            testMilestone(
+                id: 2,
+                title: "一天后",
+                dueOn: Date(timeIntervalSince1970: day)
+            ),
+            testMilestone(
+                id: 3,
+                title: "一年后",
+                dueOn: Date(timeIntervalSince1970: day * 365)
+            )
+        ]
+
+        let nodes = MilestoneTimelineLayout(
+            horizontalSpacing: 240
+        ).makeLayout(milestones: milestones).nodes
+        let shortGap = nodes[1].position.x - nodes[0].position.x
+        let longGap = nodes[2].position.x - nodes[1].position.x
+
+        try expect(longGap > shortGap * 2, "一年间隔必须显著大于一天间隔")
+    },
     TestCase("里程碑画布边界完整包含全部节点") {
         let milestones = (1...4).map {
             testMilestone(

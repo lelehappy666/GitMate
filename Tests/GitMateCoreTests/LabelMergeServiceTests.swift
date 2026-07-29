@@ -89,6 +89,8 @@ let labelMergeServiceTests = [
             "成功进度应保留旧结果并追加新结果"
         )
         try expectEqual(progress.failedIssueNumbers, [92], "应记录失败议题")
+        try expectEqual(progress.source, "legacy", "进度必须绑定来源标签")
+        try expectEqual(progress.target, "bug", "进度必须绑定目标标签")
         try expectEqual(snapshot.2, [], "存在失败时不得删除来源标签")
     },
     TestCase("标签合并全部成功后才删除来源标签") {

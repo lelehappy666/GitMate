@@ -109,6 +109,29 @@ let localRepositoryGitServiceTests = [
             "签出前应检查工作区状态"
         )
     },
+    TestCase("脏工作区阻止删除本地分支") {
+        let executor = FakeCommandExecutor(results: [
+            .success([]),
+            .success([.standardOutput(" M Sources/App.swift\n")])
+        ])
+        let service = ProcessLocalRepositoryGitService(executor: executor)
+
+        do {
+            try await service.deleteBranch(
+                "old",
+                remote: nil,
+                force: true,
+                at: localGitFixtureDirectory
+            )
+            throw TestFailure(description: "脏工作区不应删除本地分支")
+        } catch is BranchOperationError {}
+        try expect(
+            !executor.commands.contains {
+                $0.contains("branch") && $0.contains("-D")
+            },
+            "检查失败后不得执行分支删除命令"
+        )
+    },
     TestCase("干净工作区使用结构化参数签出分支") {
         let executor = FakeCommandExecutor(results: [
             .success([]),
@@ -183,12 +206,59 @@ let localRepositoryGitServiceTests = [
                 localGitFixtureDirectory.path,
                 "tag",
                 "-a",
-                "v2.5.0",
-                "main",
                 "-m",
-                "稳定版本"
+                "稳定版本",
+                "--",
+                "v2.5.0",
+                "main"
             ],
-            "附注标签名称、目标和消息必须分开传递"
+            "附注标签选项必须在参数终止符之前"
+        )
+    },
+    TestCase("选项形式的标签名不能被 Git 解释为命令参数") {
+        let executor = FakeCommandExecutor(results: [
+            .success([]),
+            .success([]),
+            .success([]),
+            .success([])
+        ])
+        let service = ProcessLocalRepositoryGitService(executor: executor)
+
+        try await service.createTag(
+            "-d",
+            target: "safe-target",
+            message: nil,
+            at: localGitFixtureDirectory
+        )
+        try await service.deleteTag(
+            "-d",
+            remote: nil,
+            at: localGitFixtureDirectory
+        )
+
+        try expectEqual(
+            executor.commands[1],
+            [
+                "-C",
+                localGitFixtureDirectory.path,
+                "tag",
+                "--",
+                "-d",
+                "safe-target"
+            ],
+            "创建标签必须用参数终止符隔离标签名"
+        )
+        try expectEqual(
+            executor.commands[3],
+            [
+                "-C",
+                localGitFixtureDirectory.path,
+                "tag",
+                "-d",
+                "--",
+                "-d"
+            ],
+            "删除标签必须用参数终止符隔离标签名"
         )
     },
     TestCase("分支与标签写操作限制在指定引用") {

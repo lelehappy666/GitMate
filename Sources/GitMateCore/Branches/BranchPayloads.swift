@@ -21,6 +21,34 @@ struct BranchPayload: Decodable {
     }
 }
 
+struct GitReferencePayload: Decodable {
+    struct ObjectPayload: Decodable {
+        let type: String
+        let sha: String
+    }
+
+    let ref: String
+    let object: ObjectPayload
+
+    var tagModel: GitTag? {
+        let prefix = "refs/tags/"
+        guard ref.hasPrefix(prefix) else {
+            return nil
+        }
+        let name = String(ref.dropFirst(prefix.count))
+        guard !name.isEmpty else {
+            return nil
+        }
+        return GitTag(
+            name: name,
+            objectSHA: object.sha,
+            kind: object.type == "tag" ? .annotated : .lightweight,
+            existsLocally: false,
+            existsRemotely: true
+        )
+    }
+}
+
 struct BranchProtectionPayload: Decodable {
     struct StatusChecks: Decodable {
         let strict: Bool

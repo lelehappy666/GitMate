@@ -111,6 +111,132 @@ let repositoryWorkspaceModelTests = [
         try expect(!inherited.isEditable, "继承的组织规则不得在仓库内编辑")
         try expect(repositoryRule.isEditable, "仓库规则应允许编辑")
     },
+    TestCase("编辑规则集保留未知规则参数和绕过角色") {
+        let bypass = RulesetBypassActorInput(
+            actorID: 42,
+            actorType: "Team",
+            bypassMode: "always"
+        )
+        let original = RepositoryRuleset(
+            id: 89,
+            name: "主分支保护",
+            enforcement: .active,
+            source: .repository,
+            rules: [
+                RepositoryRule(
+                    type: "pull_request",
+                    parameters: [
+                        "required_approving_review_count": .integer(1),
+                        "require_code_owner_review": .boolean(true)
+                    ]
+                ),
+                RepositoryRule(
+                    type: "required_status_checks",
+                    parameters: [
+                        "required_status_checks":
+                            .array([.string("build")])
+                    ]
+                ),
+                RepositoryRule(type: "code_scanning")
+            ],
+            bypassActors: [bypass]
+        )
+
+        let input = RepositoryRulesetInput.preservingUneditedConfiguration(
+            from: original,
+            name: "主分支保护 V2",
+            enforcement: .evaluate,
+            target: .branch,
+            includedRefs: ["~DEFAULT_BRANCH"],
+            excludedRefs: [],
+            editableRules: [
+                RepositoryRule(
+                    type: "pull_request",
+                    parameters: [
+                        "required_approving_review_count": .integer(2)
+                    ]
+                )
+            ],
+            editableRuleTypes: [
+                "pull_request",
+                "required_linear_history",
+                "required_signatures",
+                "non_fast_forward"
+            ]
+        )
+
+        try expect(
+            input.rules.contains { $0.type == "required_status_checks" },
+            "编辑器不认识的状态检查规则不得被删除"
+        )
+        try expect(
+            input.rules.contains { $0.type == "code_scanning" },
+            "编辑器不认识的代码扫描规则不得被删除"
+        )
+        let pullRequest = try input.rules.first {
+            $0.type == "pull_request"
+        } ?? {
+            throw TestFailure(description: "应保留拉取请求规则")
+        }()
+        try expectEqual(
+            pullRequest.parameters["required_approving_review_count"],
+            .integer(2),
+            "可编辑参数应使用新值"
+        )
+        try expectEqual(
+            pullRequest.parameters["require_code_owner_review"],
+            .boolean(true),
+            "未展示的原规则参数不得被重置"
+        )
+        try expectEqual(input.bypassActors, [bypass], "绕过角色不得在保存时丢失")
+    },
+    TestCase("停用或移除保护规则会被识别为危险弱化") {
+        let original = RepositoryRuleset(
+            id: 89,
+            name: "主分支保护",
+            enforcement: .active,
+            source: .repository,
+            includedRefs: ["~DEFAULT_BRANCH"],
+            rules: [
+                RepositoryRule(type: "required_status_checks"),
+                RepositoryRule(type: "non_fast_forward")
+            ]
+        )
+        let disabled = RepositoryRulesetInput(
+            name: original.name,
+            enforcement: .disabled,
+            target: original.target,
+            includedRefs: original.includedRefs,
+            rules: original.rules
+        )
+        let removedRule = RepositoryRulesetInput(
+            name: original.name,
+            enforcement: original.enforcement,
+            target: original.target,
+            includedRefs: original.includedRefs,
+            rules: [RepositoryRule(type: "non_fast_forward")]
+        )
+        let renamedOnly = RepositoryRulesetInput(
+            name: "主分支保护 V2",
+            enforcement: original.enforcement,
+            target: original.target,
+            includedRefs: original.includedRefs,
+            rules: original.rules
+        )
+
+        try expect(
+            disabled.weakensProtection(comparedTo: original),
+            "停用规则集必须进入危险确认"
+        )
+        try expect(
+            removedRule.weakensProtection(comparedTo: original),
+            "移除保护规则必须进入危险确认"
+        )
+        try expect(
+            !renamedOnly.weakensProtection(comparedTo: original),
+            "仅修改名称不应误报为弱化"
+        )
+    },
     TestCase("议题状态与里程碑进度覆盖边界") {
         let openIssue = GitHubIssue(
             id: 1,

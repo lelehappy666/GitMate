@@ -33,7 +33,9 @@ private final class WorkspaceLocalGitFake:
 {
     var branchValues: [GitBranch] = []
     var tagValues: [GitTag] = []
+    var comparisonValue = BranchComparison(aheadBy: 0, behindBy: 0)
     private(set) var deletedBranches: [String] = []
+    private(set) var comparisons: [(local: String, remote: String)] = []
 
     func branches(at directory: URL) async throws -> [GitBranch] { branchValues }
     func tags(at directory: URL) async throws -> [GitTag] { tagValues }
@@ -41,7 +43,8 @@ private final class WorkspaceLocalGitFake:
         WorkingTreeStatus(changedFiles: [])
     }
     func comparison(local: String, remote: String, at directory: URL) async throws -> BranchComparison {
-        BranchComparison(aheadBy: 0, behindBy: 0)
+        comparisons.append((local, remote))
+        return comparisonValue
     }
     func createBranch(_ name: String, startPoint: String, at directory: URL) async throws {}
     func checkoutBranch(_ name: String, at directory: URL) async throws {}
@@ -67,12 +70,17 @@ private final class WorkspaceBranchesAPIFake:
     @unchecked Sendable
 {
     var branchValues: [GitBranch] = []
+    var tagValues: [GitTag] = []
     var rulesetValues: [RepositoryRuleset] = []
     var error: GitHubAPIError?
 
     func remoteBranches(token: String) async throws -> [GitBranch] {
         if let error { throw error }
         return branchValues
+    }
+    func remoteTags(token: String) async throws -> [GitTag] {
+        if let error { throw error }
+        return tagValues
     }
     func branchProtection(name: String, token: String) async throws -> BranchProtectionSummary? { nil }
     func rulesets(token: String) async throws -> [RepositoryRuleset] {
@@ -111,13 +119,34 @@ private final class WorkspaceIssuesAPIFake:
     @unchecked Sendable
 {
     var createError: GitHubAPIError?
+    var commentError: GitHubAPIError?
+    var firstIssuesPage = GitHubPage<GitHubIssue>(
+        items: [],
+        nextPageURL: nil
+    )
+    var additionalIssuesPage = GitHubPage<GitHubIssue>(
+        items: [],
+        nextPageURL: nil
+    )
+    var additionalPageDelayNanoseconds: UInt64 = 0
+    private(set) var createdCommentBodies: [String] = []
+    private(set) var requestedIssuePageURLs: [URL?] = []
 
     func issues(
         query: IssueQuery,
         pageURL: URL?,
         token: String
     ) async throws -> GitHubPage<GitHubIssue> {
-        GitHubPage(items: [], nextPageURL: nil)
+        requestedIssuePageURLs.append(pageURL)
+        if pageURL != nil {
+            if additionalPageDelayNanoseconds > 0 {
+                try await Task.sleep(
+                    nanoseconds: additionalPageDelayNanoseconds
+                )
+            }
+            return additionalIssuesPage
+        }
+        return firstIssuesPage
     }
     func issue(number: Int, token: String) async throws -> GitHubIssue {
         issueFixture(number: number)
@@ -136,7 +165,9 @@ private final class WorkspaceIssuesAPIFake:
         issueFixture(number: number, title: input.title)
     }
     func createComment(number: Int, body: String, token: String) async throws -> IssueComment {
-        IssueComment(
+        createdCommentBodies.append(body)
+        if let commentError { throw commentError }
+        return IssueComment(
             id: 1,
             body: body,
             author: IssueUser(login: "lele"),
@@ -168,6 +199,9 @@ private final class WorkspaceIssuesAPIFake:
     }
     func deleteMilestone(number: Int, token: String) async throws {}
     func labels(token: String) async throws -> [IssueLabel] { [] }
+    func labelUsage(token: String) async throws -> [String: IssueLabelUsage] {
+        [:]
+    }
     func createLabel(_ input: IssueLabelInput, token: String) async throws -> IssueLabel {
         IssueLabel(id: 1, name: input.name, color: input.color)
     }
@@ -198,12 +232,48 @@ private actor EmptyLabelMergeAPI: LabelMergeAPI {
     func deleteLabel(name: String, token: String) async throws {}
 }
 
+private actor WorkspaceLabelMergerFake: LabelMerging {
+    struct Call: Sendable {
+        let source: String
+        let target: String
+        let completedIssueNumbers: [Int]
+    }
+
+    private(set) var calls: [Call] = []
+
+    func merge(
+        source: String,
+        into target: String,
+        token: String,
+        completedIssueNumbers: [Int]
+    ) async throws -> LabelMergeProgress {
+        calls.append(
+            Call(
+                source: source,
+                target: target,
+                completedIssueNumbers: completedIssueNumbers
+            )
+        )
+        return LabelMergeProgress(
+            source: source,
+            target: target,
+            completedIssueNumbers: completedIssueNumbers + [91],
+            failedIssueNumbers: [92]
+        )
+    }
+
+    func snapshot() -> [Call] {
+        calls
+    }
+}
+
 @MainActor
 private func makeWorkspaceViewModel(
     localGit: WorkspaceLocalGitFake = WorkspaceLocalGitFake(),
     branchesAPI: WorkspaceBranchesAPIFake = WorkspaceBranchesAPIFake(),
     issuesAPI: WorkspaceIssuesAPIFake = WorkspaceIssuesAPIFake(),
-    persistence: InMemoryWorkspacePersistenceStore = InMemoryWorkspacePersistenceStore()
+    persistence: InMemoryWorkspacePersistenceStore = InMemoryWorkspacePersistenceStore(),
+    labelMergeService: (any LabelMerging)? = nil
 ) throws -> (
     RepositoryWorkspaceViewModel,
     WorkspaceLocalGitFake,
@@ -225,7 +295,8 @@ private func makeWorkspaceViewModel(
         issuesAPI: issuesAPI,
         credentialStore: credentials,
         persistenceStore: persistence,
-        labelMergeService: LabelMergeService(api: EmptyLabelMergeAPI())
+        labelMergeService: labelMergeService
+            ?? LabelMergeService(api: EmptyLabelMergeAPI())
     )
     return (
         RepositoryWorkspaceViewModel(
@@ -273,7 +344,99 @@ let repositoryWorkspaceViewModelTests = [
         try expectEqual(branch.localSHA, "abc", "应保留本地提交")
         try expectEqual(branch.remoteSHA, "def", "应合并远端提交")
         try expect(branch.isProtected, "应合并 GitHub 保护状态")
+        try expect(branch.isDefault, "应使用仓库默认分支标记 main")
         try expectEqual(viewModel.state.status, .ready, "加载成功后应就绪")
+    },
+    TestCase("加载分支时计算真实领先落后数量") { @MainActor in
+        let local = WorkspaceLocalGitFake()
+        local.branchValues = [
+            GitBranch(
+                name: "main",
+                localSHA: "local-sha",
+                remoteSHA: nil,
+                upstreamName: "origin/main"
+            )
+        ]
+        local.comparisonValue = BranchComparison(aheadBy: 2, behindBy: 1)
+        let remote = WorkspaceBranchesAPIFake()
+        remote.branchValues = [
+            GitBranch(
+                name: "main",
+                localSHA: nil,
+                remoteSHA: "remote-sha",
+                upstreamName: nil
+            )
+        ]
+        let (viewModel, _, _, _, _) = try makeWorkspaceViewModel(
+            localGit: local,
+            branchesAPI: remote
+        )
+
+        await viewModel.loadCurrentRoute()
+
+        let branch = try viewModel.state.branches.first ?? {
+            throw TestFailure(description: "应加载 main 分支")
+        }()
+        try expectEqual(
+            branch.comparison,
+            BranchComparison(aheadBy: 2, behindBy: 1),
+            "提交不一致时应通过 Git 计算领先落后"
+        )
+        try expectEqual(local.comparisons.count, 1, "每个不一致分支应比较一次")
+        try expectEqual(local.comparisons.first?.local, "local-sha", "应比较精确本地提交")
+        try expectEqual(local.comparisons.first?.remote, "remote-sha", "应比较精确远端提交")
+    },
+    TestCase("加载标签时合并本地与远端存在状态") { @MainActor in
+        let local = WorkspaceLocalGitFake()
+        local.tagValues = [
+            GitTag(
+                name: "v2.4.0",
+                objectSHA: "same",
+                kind: .annotated,
+                existsLocally: true,
+                existsRemotely: false,
+                taggerName: "lele"
+            )
+        ]
+        let remote = WorkspaceBranchesAPIFake()
+        remote.tagValues = [
+            GitTag(
+                name: "v2.4.0",
+                objectSHA: "same",
+                kind: .annotated,
+                existsLocally: false,
+                existsRemotely: true
+            ),
+            GitTag(
+                name: "nightly",
+                objectSHA: "remote",
+                kind: .lightweight,
+                existsLocally: false,
+                existsRemotely: true
+            )
+        ]
+        let (viewModel, _, _, _, _) = try makeWorkspaceViewModel(
+            localGit: local,
+            branchesAPI: remote
+        )
+        viewModel.navigate(to: .tags)
+
+        await viewModel.loadCurrentRoute()
+
+        try expectEqual(viewModel.state.tags.map(\.name), ["nightly", "v2.4.0"], "应合并并排序标签")
+        let synchronized = try viewModel.state.tags.first {
+            $0.name == "v2.4.0"
+        } ?? {
+            throw TestFailure(description: "应保留同名标签")
+        }()
+        try expectEqual(synchronized.remoteStatus, .synchronized, "同名标签应标记已同步")
+        try expectEqual(synchronized.taggerName, "lele", "应保留本地附注元数据")
+        let remoteOnly = try viewModel.state.tags.first {
+            $0.name == "nightly"
+        } ?? {
+            throw TestFailure(description: "应加载仅远端标签")
+        }()
+        try expectEqual(remoteOnly.remoteStatus, .remoteOnly, "仅远端标签应正确标记")
     },
     TestCase("删除分支先产生确认请求确认后才执行") { @MainActor in
         let (viewModel, local, _, _, _) = try makeWorkspaceViewModel()
@@ -293,6 +456,86 @@ let repositoryWorkspaceViewModelTests = [
 
         try expectEqual(local.deletedBranches, ["old"], "确认后才应执行删除")
         try expectEqual(viewModel.pendingDangerousOperation, nil, "完成后应清空确认")
+    },
+    TestCase("不同标签合并任务不能复用旧任务进度") { @MainActor in
+        let merger = WorkspaceLabelMergerFake()
+        let (viewModel, _, _, _, _) = try makeWorkspaceViewModel(
+            labelMergeService: merger
+        )
+
+        viewModel.requestMergeLabels(
+            source: "legacy",
+            target: "bug",
+            affectedIssues: 2
+        )
+        await viewModel.confirmDangerousOperation()
+        viewModel.requestMergeLabels(
+            source: "needs-review",
+            target: "triage",
+            affectedIssues: 2
+        )
+        await viewModel.confirmDangerousOperation()
+
+        let calls = await merger.snapshot()
+        try expectEqual(calls.count, 2, "应执行两次独立合并")
+        try expectEqual(
+            calls[1].completedIssueNumbers,
+            [],
+            "新来源和目标不得继承旧任务已完成议题"
+        )
+    },
+    TestCase("连续点击加载更多只请求并追加一次") { @MainActor in
+        let issues = WorkspaceIssuesAPIFake()
+        let nextURL = URL(
+            string: "https://api.github.com/repos/GitMate/mac-client/issues?page=2"
+        )!
+        issues.firstIssuesPage = GitHubPage(
+            items: [
+                GitHubIssue(
+                    id: 1,
+                    number: 91,
+                    title: "第一页",
+                    body: nil,
+                    state: .open,
+                    author: IssueUser(login: "lele")
+                )
+            ],
+            nextPageURL: nextURL
+        )
+        issues.additionalIssuesPage = GitHubPage(
+            items: [
+                GitHubIssue(
+                    id: 2,
+                    number: 92,
+                    title: "第二页",
+                    body: nil,
+                    state: .open,
+                    author: IssueUser(login: "lele")
+                )
+            ],
+            nextPageURL: nil
+        )
+        issues.additionalPageDelayNanoseconds = 20_000_000
+        let (viewModel, _, _, _, _) = try makeWorkspaceViewModel(
+            issuesAPI: issues
+        )
+        viewModel.navigate(to: .issues)
+        await viewModel.loadCurrentRoute()
+
+        async let first: Void = viewModel.loadMoreIssues()
+        async let second: Void = viewModel.loadMoreIssues()
+        _ = await (first, second)
+
+        try expectEqual(
+            issues.requestedIssuePageURLs.compactMap { $0 }.count,
+            1,
+            "同一页处于请求中时不得重复请求"
+        )
+        try expectEqual(
+            viewModel.state.issues.map(\.number),
+            [91, 92],
+            "第二页议题只能追加一次"
+        )
     },
     TestCase("401 响应转为工作区授权失效状态") { @MainActor in
         let remote = WorkspaceBranchesAPIFake()
@@ -336,5 +579,24 @@ let repositoryWorkspaceViewModelTests = [
         try expectEqual(draft?.title, "网络恢复异常", "失败后必须保留标题")
         try expectEqual(draft?.labelNames, ["bug"], "失败后必须保留发布设置")
         try expect(viewModel.state.errorMessage != nil, "应显示发布错误")
+    },
+    TestCase("评论失败返回失败结果并保留重试依据") { @MainActor in
+        let issues = WorkspaceIssuesAPIFake()
+        issues.commentError = .forbidden("没有评论权限")
+        let (viewModel, _, _, _, _) = try makeWorkspaceViewModel(
+            issuesAPI: issues
+        )
+        viewModel.navigate(to: .issueDetail(number: 91))
+        await viewModel.loadCurrentRoute()
+
+        let succeeded = await viewModel.addComment(body: "请保留这段评论")
+
+        try expect(!succeeded, "评论失败时应返回失败结果")
+        try expectEqual(
+            issues.createdCommentBodies,
+            ["请保留这段评论"],
+            "失败后应保留可重试的原始正文"
+        )
+        try expect(viewModel.state.errorMessage != nil, "失败原因应反馈到页面")
     }
 ]

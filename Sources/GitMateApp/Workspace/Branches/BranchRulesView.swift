@@ -5,8 +5,7 @@ struct BranchRulesView: View {
     @Bindable var viewModel: RepositoryWorkspaceViewModel
     @State private var searchText = ""
     @State private var selectedID: Int64?
-    @State private var editingRuleset: RepositoryRuleset?
-    @State private var showsEditor = false
+    @State private var editorPresentation: RulesetEditorPresentation?
 
     var body: some View {
         VStack(spacing: 12) {
@@ -25,8 +24,9 @@ struct BranchRulesView: View {
                         ruleset: selectedRuleset,
                         viewModel: viewModel,
                         onEdit: {
-                            editingRuleset = selectedRuleset
-                            showsEditor = true
+                            editorPresentation = RulesetEditorPresentation(
+                                ruleset: selectedRuleset
+                            )
                         }
                     )
                 } else {
@@ -39,22 +39,31 @@ struct BranchRulesView: View {
                 }
             }
         }
-        .sheet(isPresented: $showsEditor) {
+        .sheet(item: $editorPresentation) { presentation in
             RulesetEditorSheet(
-                ruleset: editingRuleset,
+                ruleset: presentation.ruleset,
                 onCancel: {
-                    editingRuleset = nil
-                    showsEditor = false
+                    editorPresentation = nil
                 },
                 onSave: { input in
-                    let original = editingRuleset
-                    editingRuleset = nil
-                    showsEditor = false
-                    Task {
-                        if let original {
-                            await viewModel.updateRuleset(original, input: input)
-                        } else {
-                            await viewModel.createRuleset(input)
+                    let original = presentation.ruleset
+                    editorPresentation = nil
+                    if let original,
+                       input.weakensProtection(comparedTo: original) {
+                        viewModel.requestUpdateRuleset(
+                            original,
+                            input: input
+                        )
+                    } else {
+                        Task {
+                            if let original {
+                                await viewModel.updateRuleset(
+                                    original,
+                                    input: input
+                                )
+                            } else {
+                                await viewModel.createRuleset(input)
+                            }
                         }
                     }
                 }
@@ -108,8 +117,9 @@ struct BranchRulesView: View {
             }
 
             Button {
-                editingRuleset = nil
-                showsEditor = true
+                editorPresentation = RulesetEditorPresentation(
+                    ruleset: nil
+                )
             } label: {
                 Label("新建规则", systemImage: "plus")
             }
@@ -266,6 +276,11 @@ struct BranchRulesView: View {
         }
         .buttonStyle(.plain)
     }
+}
+
+private struct RulesetEditorPresentation: Identifiable {
+    let id = UUID()
+    let ruleset: RepositoryRuleset?
 }
 
 struct RulesetEditorSheet: View {
@@ -450,18 +465,22 @@ struct RulesetEditorSheet: View {
     private var input: RepositoryRulesetInput {
         var rules: [RepositoryRule] = []
         if requiresPullRequest {
+            var parameters: [String: GitHubJSONValue] = [
+                "required_approving_review_count":
+                    .integer(requiredApprovals),
+                "dismiss_stale_reviews_on_push":
+                    .boolean(dismissesStaleReviews)
+            ]
+            if ruleset == nil {
+                parameters["require_code_owner_review"] = .boolean(false)
+                parameters["require_last_push_approval"] = .boolean(false)
+                parameters["required_review_thread_resolution"] =
+                    .boolean(true)
+            }
             rules.append(
                 RepositoryRule(
                     type: "pull_request",
-                    parameters: [
-                        "required_approving_review_count":
-                            .integer(requiredApprovals),
-                        "dismiss_stale_reviews_on_push":
-                            .boolean(dismissesStaleReviews),
-                        "require_code_owner_review": .boolean(false),
-                        "require_last_push_approval": .boolean(false),
-                        "required_review_thread_resolution": .boolean(true)
-                    ]
+                    parameters: parameters
                 )
             )
         }
@@ -475,13 +494,20 @@ struct RulesetEditorSheet: View {
             rules.append(RepositoryRule(type: "non_fast_forward"))
         }
 
-        return RepositoryRulesetInput(
+        return RepositoryRulesetInput.preservingUneditedConfiguration(
+            from: ruleset,
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
             enforcement: enforcement,
             target: target,
             includedRefs: parsedRefs(includedRefs),
             excludedRefs: parsedRefs(excludedRefs),
-            rules: rules
+            editableRules: rules,
+            editableRuleTypes: [
+                "pull_request",
+                "required_linear_history",
+                "required_signatures",
+                "non_fast_forward"
+            ]
         )
     }
 

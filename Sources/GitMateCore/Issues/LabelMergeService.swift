@@ -19,13 +19,19 @@ public protocol LabelMergeAPI: Sendable {
 }
 
 public struct LabelMergeProgress: Equatable, Codable, Sendable {
+    public let source: String
+    public let target: String
     public let completedIssueNumbers: [Int]
     public let failedIssueNumbers: [Int]
 
     public init(
+        source: String,
+        target: String,
         completedIssueNumbers: [Int],
         failedIssueNumbers: [Int]
     ) {
+        self.source = source
+        self.target = target
         self.completedIssueNumbers = completedIssueNumbers
         self.failedIssueNumbers = failedIssueNumbers
     }
@@ -102,6 +108,8 @@ public final class LabelMergeService: LabelMerging, @unchecked Sendable {
         }
 
         return LabelMergeProgress(
+            source: source,
+            target: target,
             completedIssueNumbers: completed.sorted(),
             failedIssueNumbers: failed.sorted()
         )

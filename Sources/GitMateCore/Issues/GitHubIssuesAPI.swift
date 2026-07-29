@@ -190,6 +190,7 @@ public protocol GitHubIssuesAPI: Sendable {
     ) async throws -> IssueMilestone
     func deleteMilestone(number: Int, token: String) async throws
     func labels(token: String) async throws -> [IssueLabel]
+    func labelUsage(token: String) async throws -> [String: IssueLabelUsage]
     func createLabel(
         _ input: IssueLabelInput,
         token: String

@@ -116,11 +116,26 @@ public struct MilestoneTimelineLayout: Equatable, Sendable {
         }
 
         let lanes = [1, 0, 2, 1]
+        let firstDueDate = ordered.compactMap(\.dueOn).first
+        let pointsPerDay = horizontalSpacing / 30
+        var previousX = contentInset - horizontalSpacing
         let nodes = ordered.enumerated().map { index, milestone in
-            MilestoneTimelineNode(
+            let dateBasedX: Double
+            if let dueOn = milestone.dueOn, let firstDueDate {
+                let days = max(
+                    0,
+                    dueOn.timeIntervalSince(firstDueDate) / 86_400
+                )
+                dateBasedX = contentInset + (days * pointsPerDay)
+            } else {
+                dateBasedX = previousX + horizontalSpacing
+            }
+            let x = max(previousX + horizontalSpacing, dateBasedX)
+            previousX = x
+            return MilestoneTimelineNode(
                 milestoneID: milestone.id,
                 position: MilestoneCanvasPoint(
-                    x: contentInset + (Double(index) * horizontalSpacing),
+                    x: x,
                     y: contentInset
                         + (Double(lanes[index % lanes.count]) * verticalSpacing)
                 ),

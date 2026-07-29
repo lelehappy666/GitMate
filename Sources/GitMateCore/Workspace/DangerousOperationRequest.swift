@@ -6,6 +6,10 @@ public struct DangerousOperationRequest: Identifiable, Equatable, Sendable {
         case deleteRemoteBranch(remote: String, name: String)
         case deleteTag(name: String, remote: String?)
         case deleteRuleset(id: Int64, name: String)
+        case updateRuleset(
+            current: RepositoryRuleset,
+            input: RepositoryRulesetInput
+        )
         case deleteMilestone(number: Int, affectedIssues: Int)
         case deleteLabel(name: String, affectedIssues: Int)
         case mergeLabels(source: String, target: String, affectedIssues: Int)
