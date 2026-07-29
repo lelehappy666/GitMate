@@ -32,6 +32,10 @@ public struct Repository: Identifiable, Equatable, Codable, Sendable {
 
     public var safeLocalDirectoryName: String {
         let invalid = CharacterSet(charactersIn: "/:\\")
-        return name.components(separatedBy: invalid).joined(separator: "-")
+        let directoryName = name.components(separatedBy: invalid).joined(separator: "-")
+        if directoryName == "." || directoryName == ".." {
+            return "repository-\(directoryName)"
+        }
+        return directoryName
     }
 }

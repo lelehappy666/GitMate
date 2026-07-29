@@ -107,15 +107,6 @@ public final class JSONWorkspaceCache: WorkspaceCaching, @unchecked Sendable {
     }
 
     private func sanitizedRecord(_ record: LocalRepositoryRecord) -> LocalRepositoryRecord {
-        var components = URLComponents(
-            url: record.repository.cloneURL,
-            resolvingAgainstBaseURL: false
-        )
-        components?.user = nil
-        components?.password = nil
-        components?.query = nil
-        components?.fragment = nil
-        let cloneURL = components?.url ?? record.repository.cloneURL
         let repository = Repository(
             id: record.repository.id,
             name: record.repository.name,
@@ -123,16 +114,25 @@ public final class JSONWorkspaceCache: WorkspaceCaching, @unchecked Sendable {
             isPrivate: record.repository.isPrivate,
             defaultBranch: record.repository.defaultBranch,
             sizeInKilobytes: record.repository.sizeInKilobytes,
-            cloneURL: cloneURL,
-            ownerAvatarURL: record.repository.ownerAvatarURL
+            cloneURL: sanitizedURL(record.repository.cloneURL),
+            ownerAvatarURL: record.repository.ownerAvatarURL.map(sanitizedURL)
         )
 
         return LocalRepositoryRecord(
             repository: repository,
-            localURL: record.localURL,
+            localURL: sanitizedURL(record.localURL),
             availability: record.availability,
             localSizeInBytes: record.localSizeInBytes,
             lastInspectedAt: record.lastInspectedAt
         )
+    }
+
+    private func sanitizedURL(_ url: URL) -> URL {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.user = nil
+        components?.password = nil
+        components?.query = nil
+        components?.fragment = nil
+        return components?.url ?? url
     }
 }

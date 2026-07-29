@@ -99,6 +99,31 @@ let localRepositoryCatalogTests = [
 
         try expectEqual(record.localURL.path, "/sync/..-client-windows-build", "不安全字符应替换为连字符")
     },
+    TestCase("精确点号仓库名不会逃出同步根目录") {
+        let dotRepository = Repository(
+            id: 44,
+            name: ".",
+            fullName: "gitmate/dot",
+            isPrivate: true,
+            defaultBranch: "main",
+            sizeInKilobytes: 0,
+            cloneURL: URL(string: "https://github.com/gitmate/dot.git")!,
+            ownerAvatarURL: nil
+        )
+        let dotDotRepository = Repository(
+            id: 45,
+            name: "..",
+            fullName: "gitmate/dot-dot",
+            isPrivate: true,
+            defaultBranch: "main",
+            sizeInKilobytes: 0,
+            cloneURL: URL(string: "https://github.com/gitmate/dot-dot.git")!,
+            ownerAvatarURL: nil
+        )
+
+        try expectEqual(dotRepository.safeLocalDirectoryName, "repository-.", "单点目录名必须安全化")
+        try expectEqual(dotDotRepository.safeLocalDirectoryName, "repository-..", "双点目录名必须安全化")
+    },
     TestCase("默认文件系统统计真实仓库目录") {
         let directory = try temporaryWorkspaceCacheDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -115,6 +140,23 @@ let localRepositoryCatalogTests = [
 
         try expectEqual(record.availability, .available, "真实 Git 目录应可用")
         try expect(record.localSizeInBytes >= 4, "本地大小应包含仓库文件")
+    },
+    TestCase("默认文件系统无法枚举时抛出错误") {
+        let directory = try temporaryWorkspaceCacheDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try Data("not-a-directory".utf8).write(
+            to: directory.appending(path: "mac-client")
+        )
+        let catalog = LocalRepositoryCatalog(rootDirectory: directory)
+        var didThrow = false
+
+        do {
+            _ = try catalog.record(for: repositoryFixture)
+        } catch {
+            didThrow = true
+        }
+
+        try expect(didThrow, "无法枚举仓库目录时不应伪装为零字节成功")
     },
     TestCase("缓存按账户保存读取并可清理") {
         let directory = try temporaryWorkspaceCacheDirectory()
@@ -186,5 +228,55 @@ let localRepositoryCatalogTests = [
             .appending(path: "workspace.json")
         let content = try String(decoding: Data(contentsOf: cacheURL), as: UTF8.self)
         try expect(!content.contains("should-not-be-written"), "缓存文件不应包含仓库地址中的凭据")
+    },
+    TestCase("缓存清洗所有可编码 URL 后仍可读取") {
+        let directory = try temporaryWorkspaceCacheDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sensitiveValue = "should-not-be-written"
+        let repository = Repository(
+            id: 100,
+            name: "private-client",
+            fullName: "gitmate/private-client",
+            isPrivate: true,
+            defaultBranch: "main",
+            sizeInKilobytes: 0,
+            cloneURL: URL(string: "https://github.com/gitmate/private-client.git")!,
+            ownerAvatarURL: URL(string: "https://reader:\(sensitiveValue)@avatars.example.com/avatar.png?secret=\(sensitiveValue)#fragment")
+        )
+        let snapshot = WorkspaceCacheSnapshot(
+            accountID: "octo-cat",
+            repositoryRecords: [
+                LocalRepositoryRecord(
+                    repository: repository,
+                    localURL: URL(string: "https://reader:\(sensitiveValue)@local.example.com/private-client?secret=\(sensitiveValue)#fragment")!,
+                    availability: .available,
+                    localSizeInBytes: 0,
+                    lastInspectedAt: Date(timeIntervalSince1970: 1_710_000_100)
+                )
+            ],
+            onlineSummaries: [:],
+            savedAt: Date(timeIntervalSince1970: 1_710_000_200)
+        )
+        let cache = JSONWorkspaceCache(rootDirectory: directory)
+
+        try cache.save(snapshot)
+
+        let cacheURL = directory
+            .appending(path: "octo-cat", directoryHint: .isDirectory)
+            .appending(path: "workspace.json")
+        let content = try String(decoding: Data(contentsOf: cacheURL), as: UTF8.self)
+        let loadedSnapshot = try cache.load(accountID: "octo-cat")
+        let loadedRecord = loadedSnapshot?.repositoryRecords.first
+        try expect(!content.contains(sensitiveValue), "缓存文件不应包含任意 URL 中的凭据")
+        try expectEqual(
+            loadedRecord?.repository.ownerAvatarURL,
+            URL(string: "https://avatars.example.com/avatar.png"),
+            "读取的头像地址应保持可解码且无凭据"
+        )
+        try expectEqual(
+            loadedRecord?.localURL,
+            URL(string: "https://local.example.com/private-client"),
+            "读取的本地地址应保持可解码且无凭据"
+        )
     }
 ]

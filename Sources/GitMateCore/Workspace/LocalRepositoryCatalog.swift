@@ -100,13 +100,24 @@ public final class LocalRepositoryCatalog: @unchecked Sendable {
         if let fileSystem {
             return try fileSystem.recursiveByteCount(at: directory)
         }
-        guard let fileManager,
-              let enumerator = fileManager.enumerator(
-                  at: directory,
-                  includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]
-              )
-        else {
-            return 0
+        guard let fileManager else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        let directoryValues = try directory.resourceValues(forKeys: [.isDirectoryKey])
+        guard directoryValues.isDirectory == true else {
+            throw CocoaError(
+                .fileReadUnknown,
+                userInfo: [NSFilePathErrorKey: directory.path]
+            )
+        }
+        guard let enumerator = fileManager.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]
+        ) else {
+            throw CocoaError(
+                .fileReadUnknown,
+                userInfo: [NSFilePathErrorKey: directory.path]
+            )
         }
 
         var byteCount: Int64 = 0
