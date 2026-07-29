@@ -684,6 +684,48 @@ public struct GitCommandBuilder: Sendable {
         )
     }
 
+    public func conflictEntries(
+        repositoryURL: URL
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "ls-files",
+                "--unmerged",
+                "-z"
+            ]
+        )
+    }
+
+    public func conflictBlob(
+        repositoryURL: URL,
+        path: String,
+        stage: Int
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        let validatedPath = try GitInputValidator.validatedRelativePath(
+            path,
+            repositoryURL: repository
+        )
+        guard (1...3).contains(stage) else {
+            throw LocalGitError.invalidReference
+        }
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "show",
+                ":\(stage):\(validatedPath)"
+            ]
+        )
+    }
+
     private func validateHistoryEndpoint(_ value: String) throws {
         guard value == "HEAD"
                 || GitInputValidator.isSafeReference(value)
