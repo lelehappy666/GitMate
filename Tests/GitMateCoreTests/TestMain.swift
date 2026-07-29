@@ -26,6 +26,8 @@ struct GitMateCoreTestsMain {
             + repositoryCoverLoaderTests
             + readmeBlockParserTests
             + repositoryCoverExtractorTests
+            + commitGraphLayoutTests
+            + commitGraphViewModelTests
         var failedCount = 0
 
         for test in tests {
