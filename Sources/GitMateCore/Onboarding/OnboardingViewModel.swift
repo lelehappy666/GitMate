@@ -278,6 +278,18 @@ public final class OnboardingViewModel {
         }
     }
 
+    public func skipInitialDownload() {
+        activeSyncTask?.cancel()
+        activeSyncTask = nil
+        activeSyncID = nil
+        isWorking = false
+        isDownloadPaused = false
+        state.errorMessage = nil
+        state.selectedRepositoryIDs = []
+        state.transition(.downloadConfigured([]))
+        state.transition(.syncFinished)
+    }
+
     public func pauseDownload() {
         do {
             try dependencies.syncService.pause()

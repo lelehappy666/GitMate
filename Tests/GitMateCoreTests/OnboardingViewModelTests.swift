@@ -410,6 +410,24 @@ let onboardingViewModelTests = [
         try expectEqual(viewModel.state.route, .repositorySync, "停止后应返回仓库选择页")
         try expect(syncService.hasCancelled, "停止后应取消同步流和后台 Git 任务")
     },
+    TestCase("跳过首次下载会直接完成引导且不启动 Git") { @MainActor in
+        let syncService = CancellableSyncService()
+        let (viewModel, _) = try makeViewModel(syncService: syncService)
+        await viewModel.startGitHubLogin()
+        await viewModel.connectGitHub(token: "secret")
+        await viewModel.confirmPermissions()
+        viewModel.setRepositorySelected(repositoryID: 101, isSelected: true)
+
+        viewModel.skipInitialDownload()
+
+        try expectEqual(viewModel.state.route, .complete, "跳过后应完成首次引导")
+        try expectEqual(
+            viewModel.state.selectedRepositoryIDs,
+            [],
+            "跳过后应清空首次下载选择"
+        )
+        try expect(!syncService.hasStarted, "跳过不得启动 Git 下载服务")
+    },
     TestCase("暂停与继续会更新下载状态并控制当前任务") { @MainActor in
         let syncService = CancellableSyncService()
         let (viewModel, _) = try makeViewModel(syncService: syncService)

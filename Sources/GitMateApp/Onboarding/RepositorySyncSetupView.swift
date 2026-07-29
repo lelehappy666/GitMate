@@ -118,6 +118,12 @@ struct RepositorySyncSetupView: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(GitMateTheme.textSecondary)
 
+                Button("跳过首次下载") {
+                    viewModel.skipInitialDownload()
+                }
+                .buttonStyle(GitMateButtonStyle(role: .secondary))
+                .accessibilityIdentifier("onboarding.repository.skipClone")
+
                 Button {
                     Task { await viewModel.startSync() }
                 } label: {
