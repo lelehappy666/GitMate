@@ -5,6 +5,7 @@ struct WorkspaceRootView: View {
     @State private var session: WorkspaceSession
     @State private var selection: WorkspaceSelection
     @State private var apiAuthorizationRequired = false
+    @State private var repositoryGroups: WorkspaceRepositoryGroups
 
     let preferences: [RepositorySyncPreference]
     let runtime: WorkspaceRuntimeDependencies
@@ -21,6 +22,31 @@ struct WorkspaceRootView: View {
     ) {
         _session = State(initialValue: session)
         _selection = State(initialValue: WorkspaceSelection(route: session.route))
+        let cachedRecords = (
+            try? runtime.cache.load(accountID: session.account.id)
+        )?.repositoryRecords ?? []
+        let cachedRecordsByID = Dictionary(
+            cachedRecords.map { ($0.repository.id, $0) },
+            uniquingKeysWith: { _, newest in newest }
+        )
+        let records = session.repositories.map { repository in
+            (try? runtime.catalog.record(for: repository))
+                ?? cachedRecordsByID[repository.id]
+                ?? LocalRepositoryRecord(
+                    repository: repository,
+                    localURL: runtime.catalog.localURL(for: repository),
+                    availability: .missing,
+                    localSizeInBytes: 0,
+                    lastInspectedAt: .distantPast
+                )
+        }
+        _repositoryGroups = State(
+            initialValue: WorkspaceRepositoryClassifier.classify(
+                repositories: session.repositories,
+                records: records,
+                preferences: preferences
+            )
+        )
         self.preferences = preferences
         self.runtime = runtime
         authorization = runtime.authorization(for: session.account)
@@ -32,7 +58,7 @@ struct WorkspaceRootView: View {
         NavigationSplitView {
             WorkspaceSidebar(
                 selection: $selection,
-                repositories: session.repositories,
+                repositories: repositoryGroups.local,
                 account: session.account
             )
         } detail: {
@@ -69,7 +95,7 @@ struct WorkspaceRootView: View {
         case .dashboard:
             DashboardPageContainer(
                 account: session.account,
-                repositories: session.repositories,
+                repositories: repositoryGroups.local,
                 token: token,
                 loader: runtime.contentService(for: session.account),
                 onAuthorizationRequired: requireReauthorization,
@@ -80,7 +106,7 @@ struct WorkspaceRootView: View {
         case .repositories:
             RepositoryWallContainer(
                 account: session.account,
-                repositories: session.repositories,
+                repositories: repositoryGroups.local,
                 preferences: preferences,
                 token: token,
                 content: runtime.contentService(for: session.account),

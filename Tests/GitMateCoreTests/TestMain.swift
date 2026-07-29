@@ -17,6 +17,7 @@ struct GitMateCoreTestsMain {
             + onboardingViewModelTests
             + workspaceRouteTests
             + localRepositoryCatalogTests
+            + workspaceRepositoryClassifierTests
             + localGitReaderTests
             + workspaceContentServiceTests
             + dashboardViewModelTests
