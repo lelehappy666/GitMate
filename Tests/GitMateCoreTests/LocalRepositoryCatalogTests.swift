@@ -192,6 +192,119 @@ let localRepositoryCatalogTests = [
         let clearedSnapshot = try cache.load(accountID: "octo-cat")
         try expectEqual(clearedSnapshot, nil, "清理后不应读取到缓存")
     },
+    TestCase("缓存迁移仓库身份并移除同名旧记录与摘要") {
+        let directory = try temporaryWorkspaceCacheDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = JSONWorkspaceCache(rootDirectory: directory)
+        let syntheticRepository = Repository(
+            id: -900,
+            name: "mac-client",
+            fullName: "GitMate/mac-client",
+            isPrivate: true,
+            defaultBranch: "develop",
+            sizeInKilobytes: 1,
+            cloneURL: URL(
+                string: "https://github.com/GitMate/mac-client.git"
+            )!,
+            ownerAvatarURL: nil,
+            primaryLanguage: nil
+        )
+        let remoteRepository = Repository(
+            id: 101,
+            name: "mac-client",
+            fullName: "gitmate/MAC-client",
+            isPrivate: true,
+            defaultBranch: "main",
+            sizeInKilobytes: 2_400,
+            cloneURL: URL(
+                string: "https://github.com/gitmate/mac-client.git"
+            )!,
+            ownerAvatarURL: URL(
+                string: "https://avatars.githubusercontent.com/u/1"
+            ),
+            primaryLanguage: "Swift"
+        )
+        let localURL = URL(
+            filePath: "/仓库/mac-client",
+            directoryHint: .isDirectory
+        )
+        let oldSummary = RepositoryOnlineSummary(
+            repositoryID: syntheticRepository.id,
+            primaryLanguage: "Swift",
+            openIssueCount: 3,
+            openPullRequestCount: 2,
+            failedWorkflowCount: 1,
+            remoteUpdatedAt: Date(timeIntervalSince1970: 1_000)
+        )
+        try cache.save(
+            WorkspaceCacheSnapshot(
+                accountID: "octo-cat",
+                repositoryRecords: [
+                    LocalRepositoryRecord(
+                        repository: syntheticRepository,
+                        localURL: localURL,
+                        availability: .available,
+                        localSizeInBytes: 4_096,
+                        lastInspectedAt: Date(timeIntervalSince1970: 2_000)
+                    ),
+                    LocalRepositoryRecord(
+                        repository: remoteRepository,
+                        localURL: URL(
+                            filePath: "/旧路径/mac-client",
+                            directoryHint: .isDirectory
+                        ),
+                        availability: .missing,
+                        localSizeInBytes: 0,
+                        lastInspectedAt: Date(timeIntervalSince1970: 1_500)
+                    )
+                ],
+                onlineSummaries: [
+                    syntheticRepository.id: oldSummary
+                ],
+                savedAt: Date(timeIntervalSince1970: 2_000)
+            )
+        )
+
+        try cache.migrateRepositoryIdentity(
+            accountID: "octo-cat",
+            from: syntheticRepository,
+            to: remoteRepository,
+            localURL: localURL,
+            migratedAt: Date(timeIntervalSince1970: 3_000)
+        )
+
+        let snapshot = try cache.load(accountID: "octo-cat")
+        try expectEqual(
+            snapshot?.repositoryRecords.map(\.repository),
+            [remoteRepository],
+            "身份迁移后只应保留真实 GitHub 仓库"
+        )
+        try expectEqual(
+            snapshot?.repositoryRecords.first?.localURL,
+            localURL,
+            "身份迁移必须保留用户选择的本地路径"
+        )
+        try expectEqual(
+            snapshot?.repositoryRecords.first?.localSizeInBytes,
+            4_096,
+            "身份迁移必须保留已统计的本地大小"
+        )
+        try expectEqual(
+            snapshot?.onlineSummaries.keys.sorted(),
+            [remoteRepository.id],
+            "身份迁移必须删除合成编号摘要"
+        )
+        try expectEqual(
+            snapshot?.onlineSummaries[remoteRepository.id]?.repositoryID,
+            remoteRepository.id,
+            "迁移后的摘要必须引用真实 GitHub 编号"
+        )
+        try expectEqual(
+            snapshot?.savedAt,
+            Date(timeIntervalSince1970: 3_000),
+            "迁移时间应成为新的缓存保存时间"
+        )
+    },
     TestCase("缓存写入时移除仓库地址中的凭据") {
         let directory = try temporaryWorkspaceCacheDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

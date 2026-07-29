@@ -422,6 +422,90 @@ let onboardingViewModelTests = [
             "本地优先恢复不得因离线产生启动错误"
         )
     },
+    TestCase("重启恢复按仓库全名去重并保留最新真实身份") { @MainActor in
+        let cacheDirectory = FileManager.default.temporaryDirectory
+            .appending(
+                path: "GitMate-Restore-Identity-\(UUID().uuidString)",
+                directoryHint: .isDirectory
+            )
+        defer {
+            try? FileManager.default.removeItem(at: cacheDirectory)
+        }
+        let syntheticRepository = Repository(
+            id: -900,
+            name: "mac-client",
+            fullName: "GitMate/mac-client",
+            isPrivate: true,
+            defaultBranch: "develop",
+            sizeInKilobytes: 1,
+            cloneURL: URL(
+                string: "https://github.com/GitMate/mac-client.git"
+            )!,
+            ownerAvatarURL: nil
+        )
+        let realRepository = Repository(
+            id: viewModelRepository.id,
+            name: viewModelRepository.name,
+            fullName: "gitmate/MAC-client",
+            isPrivate: viewModelRepository.isPrivate,
+            defaultBranch: viewModelRepository.defaultBranch,
+            sizeInKilobytes: viewModelRepository.sizeInKilobytes,
+            cloneURL: viewModelRepository.cloneURL,
+            ownerAvatarURL: viewModelRepository.ownerAvatarURL,
+            primaryLanguage: "Swift"
+        )
+        let cache = JSONWorkspaceCache(rootDirectory: cacheDirectory)
+        try cache.save(
+            WorkspaceCacheSnapshot(
+                accountID: viewModelAccount.id,
+                repositoryRecords: [
+                    LocalRepositoryRecord(
+                        repository: syntheticRepository,
+                        localURL: URL(
+                            filePath: "/仓库/mac-client",
+                            directoryHint: .isDirectory
+                        ),
+                        availability: .available,
+                        localSizeInBytes: 4_096,
+                        lastInspectedAt: Date(timeIntervalSince1970: 1_000)
+                    ),
+                    LocalRepositoryRecord(
+                        repository: realRepository,
+                        localURL: URL(
+                            filePath: "/仓库/mac-client",
+                            directoryHint: .isDirectory
+                        ),
+                        availability: .available,
+                        localSizeInBytes: 4_096,
+                        lastInspectedAt: Date(timeIntervalSince1970: 2_000)
+                    )
+                ],
+                onlineSummaries: [:],
+                savedAt: Date(timeIntervalSince1970: 2_000)
+            )
+        )
+        let credentialStore = InMemoryCredentialStore()
+        let sessionStore = InMemoryAccountSessionStore()
+        try credentialStore.save(
+            token: "secret",
+            accountID: viewModelAccount.id
+        )
+        try sessionStore.save(account: viewModelAccount)
+        let (viewModel, _) = try makeViewModel(
+            credentialStore: credentialStore,
+            sessionStore: sessionStore,
+            workspaceCache: cache,
+            api: OfflineGitHubAPI()
+        )
+
+        await viewModel.restoreSession()
+
+        try expectEqual(
+            viewModel.state.repositories,
+            [realRepository],
+            "同一 fullName 的合成身份和真实身份只能恢复最新真实项"
+        )
+    },
     TestCase("恢复会话保留不同步云端仓库而不是全部改为手动") { @MainActor in
         let cacheDirectory = FileManager.default.temporaryDirectory
             .appending(

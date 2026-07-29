@@ -33,9 +33,8 @@ struct WorkspaceRootView: View {
         for imported in importedRepositories {
             if let matchingRepository = initialSession.repositories.first(
                 where: {
-                    $0.fullName.caseInsensitiveCompare(
-                        imported.repository.fullName
-                    ) == .orderedSame
+                    $0.normalizedFullName
+                        == imported.repository.normalizedFullName
                 }
             ) {
                 runtime.catalog.register(
@@ -235,9 +234,8 @@ struct WorkspaceRootView: View {
         let localRepository: Repository
         if let matchingIndex = session.repositories.firstIndex(
             where: {
-                $0.fullName.caseInsensitiveCompare(
-                    imported.repository.fullName
-                ) == .orderedSame
+                $0.normalizedFullName
+                    == imported.repository.normalizedFullName
             }
         ) {
             runtime.catalog.register(
@@ -262,9 +260,8 @@ struct WorkspaceRootView: View {
     ) {
         guard let matchingIndex = session.repositories.firstIndex(
             where: {
-                $0.fullName.caseInsensitiveCompare(
-                    remoteRepository.fullName
-                ) == .orderedSame
+                $0.normalizedFullName
+                    == remoteRepository.normalizedFullName
             }
         ) else {
             return
@@ -293,12 +290,12 @@ struct WorkspaceRootView: View {
     private func promoteToLocal(repository: Repository) {
         var localFullNames = Set(
             repositoryGroups.local.map {
-                $0.fullName.lowercased()
+                $0.normalizedFullName
             }
         )
-        localFullNames.insert(repository.fullName.lowercased())
+        localFullNames.insert(repository.normalizedFullName)
         let local = session.repositories.filter {
-            localFullNames.contains($0.fullName.lowercased())
+            localFullNames.contains($0.normalizedFullName)
         }
         let localIDs = Set(local.map(\.id))
         repositoryGroups = WorkspaceRepositoryGroups(

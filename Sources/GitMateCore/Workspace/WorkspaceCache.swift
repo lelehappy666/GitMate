@@ -31,6 +31,93 @@ public protocol WorkspaceCaching: Sendable {
     ) throws
 }
 
+public extension WorkspaceCaching {
+    func migrateRepositoryIdentity(
+        accountID: String,
+        from sourceRepository: Repository,
+        to targetRepository: Repository,
+        localURL: URL,
+        migratedAt: Date = Date()
+    ) throws {
+        try update(accountID: accountID) { snapshot in
+            let currentSnapshot = snapshot ?? WorkspaceCacheSnapshot(
+                accountID: accountID,
+                repositoryRecords: [],
+                onlineSummaries: [:],
+                savedAt: migratedAt
+            )
+            let matchingRecords = currentSnapshot.repositoryRecords.filter {
+                $0.repository.id == sourceRepository.id
+                    || $0.repository.id == targetRepository.id
+                    || $0.repository.normalizedFullName
+                        == sourceRepository.normalizedFullName
+                    || $0.repository.normalizedFullName
+                        == targetRepository.normalizedFullName
+            }
+            let sourceRecord = matchingRecords.last {
+                $0.repository.id == sourceRepository.id
+            } ?? matchingRecords.last {
+                $0.localURL.standardizedFileURL
+                    == localURL.standardizedFileURL
+            } ?? matchingRecords.last
+
+            var records = currentSnapshot.repositoryRecords
+            let removedRepositoryIDs = Set(
+                matchingRecords.map(\.repository.id)
+            ).union([
+                sourceRepository.id,
+                targetRepository.id
+            ])
+            records.removeAll {
+                removedRepositoryIDs.contains($0.repository.id)
+                    || $0.repository.normalizedFullName
+                        == sourceRepository.normalizedFullName
+                    || $0.repository.normalizedFullName
+                        == targetRepository.normalizedFullName
+            }
+            records.append(
+                LocalRepositoryRecord(
+                    repository: targetRepository,
+                    localURL: localURL,
+                    availability: sourceRecord?.availability ?? .available,
+                    localSizeInBytes: sourceRecord?.localSizeInBytes ?? 0,
+                    lastInspectedAt:
+                        sourceRecord?.lastInspectedAt ?? .distantPast
+                )
+            )
+
+            let summary = currentSnapshot.onlineSummaries[
+                targetRepository.id
+            ] ?? currentSnapshot.onlineSummaries[
+                sourceRepository.id
+            ] ?? matchingRecords.reversed().compactMap {
+                currentSnapshot.onlineSummaries[$0.repository.id]
+            }.first
+            var summaries = currentSnapshot.onlineSummaries
+            for repositoryID in removedRepositoryIDs {
+                summaries.removeValue(forKey: repositoryID)
+            }
+            if let summary {
+                summaries[targetRepository.id] = RepositoryOnlineSummary(
+                    repositoryID: targetRepository.id,
+                    primaryLanguage: summary.primaryLanguage,
+                    openIssueCount: summary.openIssueCount,
+                    openPullRequestCount: summary.openPullRequestCount,
+                    failedWorkflowCount: summary.failedWorkflowCount,
+                    remoteUpdatedAt: summary.remoteUpdatedAt
+                )
+            }
+
+            return WorkspaceCacheSnapshot(
+                accountID: accountID,
+                repositoryRecords: records,
+                onlineSummaries: summaries,
+                savedAt: migratedAt
+            )
+        }
+    }
+}
+
 public enum WorkspaceCacheError: Error, LocalizedError, Sendable {
     case invalidAccountID
 

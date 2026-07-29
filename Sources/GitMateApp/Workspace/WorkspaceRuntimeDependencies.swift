@@ -137,6 +137,7 @@ final class WorkspaceRuntimeDependencies {
         ) else {
             return
         }
+        let sourceRepository = records[index].repository
         let stableID = records[index].repository.id
         records[index] = ImportedLocalRepository(
             repository: Repository(
@@ -155,6 +156,12 @@ final class WorkspaceRuntimeDependencies {
         try importedRepositoryStore.save(
             records,
             accountID: account.id
+        )
+        try cache.migrateRepositoryIdentity(
+            accountID: account.id,
+            from: sourceRepository,
+            to: repository,
+            localURL: localURL
         )
     }
 

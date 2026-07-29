@@ -41,4 +41,17 @@ public struct Repository: Identifiable, Equatable, Codable, Sendable {
         }
         return directoryName
     }
+
+    public var normalizedFullName: String {
+        Self.normalizedFullName(fullName)
+    }
+
+    public static func normalizedFullName(_ fullName: String) -> String {
+        fullName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: Locale(identifier: "en_US_POSIX")
+            )
+    }
 }

@@ -54,7 +54,9 @@ public final class CloudRepositoryViewModel {
         self.token = token
         self.excludedRepositoryIDs = excludedRepositoryIDs
         self.excludedRepositoryFullNames = Set(
-            excludedRepositoryFullNames.map(Self.normalizedFullName)
+            excludedRepositoryFullNames.map(
+                Repository.normalizedFullName
+            )
         )
         self.pageSize = min(max(pageSize, 1), 100)
     }
@@ -157,16 +159,7 @@ public final class CloudRepositoryViewModel {
     private func isExcluded(_ repository: Repository) -> Bool {
         excludedRepositoryIDs.contains(repository.id)
             || excludedRepositoryFullNames.contains(
-                Self.normalizedFullName(repository.fullName)
-            )
-    }
-
-    private static func normalizedFullName(_ fullName: String) -> String {
-        fullName
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .folding(
-                options: [.caseInsensitive, .diacriticInsensitive],
-                locale: Locale(identifier: "en_US_POSIX")
+                repository.normalizedFullName
             )
     }
 }

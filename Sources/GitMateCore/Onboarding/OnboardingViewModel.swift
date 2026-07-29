@@ -115,13 +115,18 @@ public final class OnboardingViewModel {
         }
 
         var seenRepositoryIDs = Set<Int64>()
-        return snapshot.repositoryRecords.compactMap { record in
-            guard seenRepositoryIDs.insert(record.repository.id).inserted
-            else {
+        var seenRepositoryFullNames = Set<String>()
+        let repositories = snapshot.repositoryRecords.reversed().compactMap {
+            record -> Repository? in
+            guard seenRepositoryIDs.insert(record.repository.id).inserted,
+                  seenRepositoryFullNames.insert(
+                      record.repository.normalizedFullName
+                  ).inserted else {
                 return nil
             }
             return record.repository
         }
+        return repositories.reversed()
     }
 
     private func hasLocalRepositoryData() -> Bool {
