@@ -88,6 +88,41 @@ let commitGraphViewModelTests = [
             initialColumns["hash-b"],
             "追加分页不得移动已有父节点"
         )
+    },
+    TestCase("差异失败时仍保留已加载的提交详情") { @MainActor in
+        let viewModel = CommitGraphViewModel(
+            reader: FailingDiffCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL
+        )
+        await viewModel.load()
+        viewModel.viewport = GraphViewport(
+            offsetX: 48,
+            offsetY: -32,
+            scale: 1.1
+        )
+
+        await viewModel.select(hash: "hash-a")
+
+        try expectEqual(
+            viewModel.selectedCommit?.commit.fullHash,
+            "hash-a",
+            "差异读取失败不得丢弃已成功加载的提交详情"
+        )
+        try expectEqual(
+            viewModel.selectedDiff,
+            nil,
+            "差异失败时不应保留无效差异"
+        )
+        try expectEqual(
+            viewModel.errorMessage,
+            "提交详情已打开，但暂时无法读取差异。",
+            "应以稳定错误提示差异模块失败"
+        )
+        try expectEqual(
+            viewModel.viewport,
+            GraphViewport(offsetX: 48, offsetY: -32, scale: 1.1),
+            "差异失败不得重置画布视口"
+        )
     }
 ]
 
@@ -248,6 +283,26 @@ private actor PagedCommitGraphReader: CommitGraphTestReading {
             ],
             nextCursor: nil
         )
+    }
+}
+
+private actor FailingDiffCommitGraphReader: CommitGraphTestReading {
+    func graph(
+        repositoryURL _: URL,
+        cursor _: String?,
+        limit _: Int
+    ) async throws -> CommitGraphPage {
+        CommitGraphPage(
+            commits: [commitGraphCommit(hash: "hash-a")],
+            nextCursor: nil
+        )
+    }
+
+    func diff(
+        repositoryURL _: URL,
+        hash _: String
+    ) async throws -> GitDiff {
+        throw LocalGitReaderError.invalidRevision("差异不可用")
     }
 }
 

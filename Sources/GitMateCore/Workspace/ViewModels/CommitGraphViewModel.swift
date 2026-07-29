@@ -233,20 +233,34 @@ public final class CommitGraphViewModel {
 
         do {
             let detail = try await detailTask.value
-            let diff = try await diffTask.value
             guard selectionRequestID == requestID,
-                  detail.commit.fullHash == hash,
-                  diff.commitHash == hash
+                  detail.commit.fullHash == hash
             else {
                 return
             }
             selectedCommit = detail
-            selectedDiff = safeDiff(diff)
         } catch is CancellationError {
             return
         } catch {
             guard selectionRequestID == requestID else { return }
             errorMessage = "无法读取提交详情，请稍后重试。"
+            diffTask.cancel()
+            return
+        }
+
+        do {
+            let diff = try await diffTask.value
+            guard selectionRequestID == requestID,
+                  diff.commitHash == hash
+            else {
+                return
+            }
+            selectedDiff = safeDiff(diff)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard selectionRequestID == requestID else { return }
+            errorMessage = "提交详情已打开，但暂时无法读取差异。"
         }
     }
 
