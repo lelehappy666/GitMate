@@ -4,6 +4,7 @@ import Foundation
 struct GitMateCoreTestsMain {
     static func main() async {
         let tests = onboardingRouteTests
+            + repositoryWorkspaceModelTests
             + onboardingStateTests
             + githubDeviceFlowTests
             + githubAPITests
