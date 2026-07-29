@@ -16,9 +16,9 @@ struct CommitGraphView: View {
                 errorBanner(message)
             }
             graphCanvas
-                .frame(minWidth: 1_040, minHeight: 680)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 1_040, minHeight: 680)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.white)
         .task {
             await viewModel.load()

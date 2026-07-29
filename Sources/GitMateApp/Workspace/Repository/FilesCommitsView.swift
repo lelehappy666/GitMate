@@ -13,7 +13,7 @@ struct FilesCommitsView: View {
             }
             modeContent
         }
-        .frame(minWidth: 1_040, minHeight: 680)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(GitMateTheme.canvas)
         .task {
             await viewModel.load()

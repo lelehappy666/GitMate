@@ -228,6 +228,33 @@ public final class OnboardingViewModel {
         state.route = .repositorySync
     }
 
+    public func prepareRepositoryResync() {
+        activeSyncTask?.cancel()
+        activeSyncTask = nil
+        activeSyncID = nil
+        isWorking = false
+        state.errorMessage = nil
+        state.route = .repositorySync
+        if state.preferences.isEmpty {
+            state.preferences = state.repositories.map {
+                RepositorySyncPreference(
+                    repositoryID: $0.id,
+                    mode: .manual
+                )
+            }
+        }
+    }
+
+    public func prepareReauthorization() {
+        activeSyncTask?.cancel()
+        activeSyncTask = nil
+        activeSyncID = nil
+        isWorking = false
+        state.canResumeSync = true
+        state.errorMessage = "账户令牌不可用，请重新授权。"
+        state.route = .authorizationExpired
+    }
+
     public func retryFailed() async {
         let failedIDs = Set(state.failedRepositoryIDs)
         let repositories = state.repositories.filter { failedIDs.contains($0.id) }

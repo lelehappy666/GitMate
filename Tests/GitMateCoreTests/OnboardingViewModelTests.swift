@@ -148,6 +148,39 @@ private func makeViewModel(
 }
 
 let onboardingViewModelTests = [
+    TestCase("工作区重新同步返回仓库选择并保留账户仓库") { @MainActor in
+        let (viewModel, _) = try makeViewModel()
+        await viewModel.startGitHubLogin()
+        await viewModel.connectGitHub(token: "secret")
+        await viewModel.confirmPermissions()
+        await viewModel.startSync()
+
+        viewModel.prepareRepositoryResync()
+
+        try expectEqual(viewModel.state.route, .repositorySync, "应返回仓库同步选择页")
+        try expectEqual(viewModel.state.account, viewModelAccount, "应保留当前账户")
+        try expectEqual(
+            viewModel.state.repositories,
+            [viewModelRepository],
+            "应保留已加载仓库"
+        )
+    },
+    TestCase("工作区缺少令牌时返回重新授权并保留账户仓库") { @MainActor in
+        let (viewModel, _) = try makeViewModel()
+        await viewModel.startGitHubLogin()
+        await viewModel.connectGitHub(token: "secret")
+        await viewModel.confirmPermissions()
+
+        viewModel.prepareReauthorization()
+
+        try expectEqual(viewModel.state.route, .authorizationExpired, "应进入重新授权页")
+        try expectEqual(viewModel.state.account, viewModelAccount, "应保留当前账户")
+        try expectEqual(
+            viewModel.state.repositories,
+            [viewModelRepository],
+            "应保留仓库选择"
+        )
+    },
     TestCase("GitHub 登录保存令牌并进入权限确认页") { @MainActor in
         let sessionStore = InMemoryAccountSessionStore()
         let (viewModel, credentialStore) = try makeViewModel(

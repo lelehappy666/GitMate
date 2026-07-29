@@ -52,6 +52,22 @@ struct WorkspaceSidebar: View {
                 .padding(.horizontal, 18)
                 .padding(.bottom, 8)
 
+            if !repositories.isEmpty {
+                Picker("当前仓库", selection: currentRepositoryBinding) {
+                    ForEach(repositories) { repository in
+                        Text(repository.fullName)
+                            .tag(Optional(repository.id))
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 9)
+                .accessibilityLabel("切换当前仓库")
+                .accessibilityIdentifier("workspace.sidebar.repository")
+            }
+
             VStack(alignment: .leading, spacing: 4) {
                 routeButton(
                     title: "总览",
@@ -138,6 +154,34 @@ struct WorkspaceSidebar: View {
             return .repositories
         }
         return makeRoute(repositoryID)
+    }
+
+    private var currentRepositoryBinding: Binding<Int64?> {
+        Binding(
+            get: { currentRepositoryID },
+            set: { repositoryID in
+                currentRepositoryID = repositoryID
+                guard let repositoryID else { return }
+                switch selection.route {
+                case .dashboard, .repositories:
+                    break
+                case .repositoryOverview:
+                    selection.route = .repositoryOverview(
+                        repositoryID: repositoryID
+                    )
+                case .readme:
+                    selection.route = .readme(repositoryID: repositoryID)
+                case .filesAndCommits:
+                    selection.route = .filesAndCommits(
+                        repositoryID: repositoryID
+                    )
+                case .commitGraph:
+                    selection.route = .commitGraph(
+                        repositoryID: repositoryID
+                    )
+                }
+            }
+        )
     }
 
     private func routeButton(
