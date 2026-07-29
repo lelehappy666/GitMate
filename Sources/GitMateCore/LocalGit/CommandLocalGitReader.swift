@@ -59,13 +59,20 @@ public final class CommandLocalGitReader: LocalGitReading, @unchecked Sendable {
             "-C", repositoryPath, "show", "\(revision):\(path)"
         ])
         let decodedText = String(data: data, encoding: .utf8)
-        let isBinary = data.contains(0) || decodedText == nil
+        let kind: GitFileContentKind
+        if data.contains(0) {
+            kind = .binary
+        } else if decodedText == nil {
+            kind = .invalidUTF8
+        } else {
+            kind = .text
+        }
         return GitFileContent(
             path: path,
             data: data,
-            text: isBinary ? nil : decodedText,
+            text: kind == .text ? decodedText : nil,
             byteCount: data.count,
-            isBinary: isBinary
+            kind: kind
         )
     }
 

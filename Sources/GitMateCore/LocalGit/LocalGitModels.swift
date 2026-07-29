@@ -93,12 +93,36 @@ public struct LocalRepositoryStatus: Equatable, Sendable {
     }
 }
 
+public enum GitFileContentKind: Equatable, Sendable {
+    case text
+    case binary
+    case invalidUTF8
+}
+
 public struct GitFileContent: Equatable, Sendable {
     public let path: String
     public let data: Data
     public let text: String?
     public let byteCount: Int
-    public let isBinary: Bool
+    public let kind: GitFileContentKind
+
+    public var isBinary: Bool {
+        kind == .binary
+    }
+
+    public init(
+        path: String,
+        data: Data,
+        text: String?,
+        byteCount: Int,
+        kind: GitFileContentKind
+    ) {
+        self.path = path
+        self.data = data
+        self.text = text
+        self.byteCount = byteCount
+        self.kind = kind
+    }
 
     public init(
         path: String,
@@ -107,11 +131,15 @@ public struct GitFileContent: Equatable, Sendable {
         byteCount: Int,
         isBinary: Bool
     ) {
-        self.path = path
-        self.data = data
-        self.text = text
-        self.byteCount = byteCount
-        self.isBinary = isBinary
+        self.init(
+            path: path,
+            data: data,
+            text: text,
+            byteCount: byteCount,
+            kind: isBinary
+                ? .binary
+                : (text == nil ? .invalidUTF8 : .text)
+        )
     }
 }
 

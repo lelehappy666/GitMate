@@ -186,6 +186,95 @@ let filesCommitsViewModelTests = [
             originalCommits,
             "提交筛选不得改写原始分页结果"
         )
+    },
+    TestCase("目录展开向读取器传递规范化斜杠路径") { @MainActor in
+        let reader = RecordingTreeReader()
+        let viewModel = FilesCommitsViewModel(
+            reader: reader,
+            repositoryURL: filesCommitsRepositoryURL
+        )
+
+        await viewModel.loadTree()
+        await viewModel.loadTree(path: "Sources")
+
+        let requestedPaths = await reader.requestedPaths
+        try expectEqual(
+            requestedPaths,
+            ["", "Sources/"],
+            "目录 pathspec 必须以单个斜杠结尾"
+        )
+    },
+    TestCase("快速展开不同目录时各自结果都合并进文件树") { @MainActor in
+        let reader = ConcurrentTreeReader()
+        let viewModel = FilesCommitsViewModel(
+            reader: reader,
+            repositoryURL: filesCommitsRepositoryURL
+        )
+        await viewModel.loadTree()
+
+        let sources = Task { @MainActor in
+            await viewModel.loadTree(path: "Sources/")
+        }
+        await reader.waitForRequest(path: "Sources/")
+        let tests = Task { @MainActor in
+            await viewModel.loadTree(path: "Tests/")
+        }
+        await reader.waitForRequest(path: "Tests/")
+
+        await reader.resume(path: "Tests/")
+        await tests.value
+        await reader.resume(path: "Sources/")
+        await sources.value
+
+        try expectEqual(
+            Set(viewModel.state.tree.map(\.path)),
+            Set([
+                "Sources",
+                "Tests",
+                "Sources/App.swift",
+                "Tests/AppTests.swift"
+            ]),
+            "不同目录的并发展开不得互相取消或丢失结果"
+        )
+    },
+    TestCase("文件树已知超大文件在读取内容前直接拒绝") { @MainActor in
+        let reader = KnownLargeFileReader()
+        let viewModel = FilesCommitsViewModel(
+            reader: reader,
+            repositoryURL: filesCommitsRepositoryURL,
+            maximumDisplayedFileBytes: 8
+        )
+        await viewModel.loadTree()
+
+        await viewModel.selectFile(path: "Archive.txt")
+
+        let fileRequestCount = await reader.fileRequestCount
+        try expectEqual(
+            fileRequestCount,
+            0,
+            "已知大小超过上限时不得读取 blob 内容"
+        )
+        try expectEqual(
+            viewModel.state.fileDisplayState,
+            .tooLarge(path: "Archive.txt", byteCount: 20),
+            "预拒绝后应直接显示超大文件状态"
+        )
+    },
+    TestCase("无法解码文件进入独立 UTF-8 空状态") { @MainActor in
+        let reader = InvalidUTF8FileReader()
+        let viewModel = FilesCommitsViewModel(
+            reader: reader,
+            repositoryURL: filesCommitsRepositoryURL
+        )
+        await viewModel.loadTree()
+
+        await viewModel.selectFile(path: "Legacy.txt")
+
+        try expectEqual(
+            viewModel.state.fileDisplayState,
+            .invalidUTF8(path: "Legacy.txt", byteCount: 3),
+            "生产内容类型必须直达无法解码空状态"
+        )
     }
 ]
 
@@ -480,12 +569,128 @@ private actor StaticFilesCommitsReader: FilesCommitsTestReading {
 
 }
 
-private func makeFileEntry(path: String) -> GitFileEntry {
+private actor RecordingTreeReader: FilesCommitsTestReading {
+    private(set) var requestedPaths: [String] = []
+
+    func tree(
+        repositoryURL _: URL,
+        revision _: String,
+        path: String
+    ) async throws -> [GitFileEntry] {
+        requestedPaths.append(path)
+        if path.isEmpty {
+            return [makeDirectoryEntry(path: "Sources")]
+        }
+        return [makeFileEntry(path: "Sources/App.swift")]
+    }
+}
+
+private actor ConcurrentTreeReader: FilesCommitsTestReading {
+    private var continuations: [
+        String: CheckedContinuation<[GitFileEntry], Never>
+    ] = [:]
+
+    func tree(
+        repositoryURL _: URL,
+        revision _: String,
+        path: String
+    ) async throws -> [GitFileEntry] {
+        if path.isEmpty {
+            return [
+                makeDirectoryEntry(path: "Sources"),
+                makeDirectoryEntry(path: "Tests")
+            ]
+        }
+        return await withCheckedContinuation { continuation in
+            continuations[path] = continuation
+        }
+    }
+
+    func waitForRequest(path: String) async {
+        while continuations[path] == nil {
+            await Task.yield()
+        }
+    }
+
+    func resume(path: String) {
+        let entry = path == "Sources/"
+            ? makeFileEntry(path: "Sources/App.swift")
+            : makeFileEntry(path: "Tests/AppTests.swift")
+        continuations.removeValue(forKey: path)?.resume(returning: [entry])
+    }
+}
+
+private actor KnownLargeFileReader: FilesCommitsTestReading {
+    private(set) var fileRequestCount = 0
+
+    func tree(
+        repositoryURL _: URL,
+        revision _: String,
+        path _: String
+    ) async throws -> [GitFileEntry] {
+        [makeFileEntry(path: "Archive.txt", byteCount: 20)]
+    }
+
+    func file(
+        repositoryURL _: URL,
+        revision _: String,
+        path: String
+    ) async throws -> GitFileContent {
+        fileRequestCount += 1
+        let text = String(repeating: "A", count: 20)
+        return GitFileContent(
+            path: path,
+            data: Data(text.utf8),
+            text: text,
+            byteCount: 20,
+            isBinary: false
+        )
+    }
+}
+
+private actor InvalidUTF8FileReader: FilesCommitsTestReading {
+    func tree(
+        repositoryURL _: URL,
+        revision _: String,
+        path _: String
+    ) async throws -> [GitFileEntry] {
+        [makeFileEntry(path: "Legacy.txt")]
+    }
+
+    func file(
+        repositoryURL _: URL,
+        revision _: String,
+        path: String
+    ) async throws -> GitFileContent {
+        GitFileContent(
+            path: path,
+            data: Data([0xFF, 0xFE, 0x41]),
+            text: nil,
+            byteCount: 3,
+            kind: .invalidUTF8
+        )
+    }
+}
+
+private func makeFileEntry(
+    path: String,
+    byteCount: Int64? = nil
+) -> GitFileEntry {
     GitFileEntry(
         path: path,
         name: URL(fileURLWithPath: path).lastPathComponent,
         kind: .file,
         objectID: "blob-\(path)",
+        byteCount: byteCount
+    )
+}
+
+private func makeDirectoryEntry(path: String) -> GitFileEntry {
+    GitFileEntry(
+        path: path,
+        name: URL(fileURLWithPath: path).lastPathComponent,
+        kind: .directory,
+        objectID: "tree-\(path)",
         byteCount: nil
     )
 }

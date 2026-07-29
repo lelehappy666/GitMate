@@ -498,6 +498,33 @@ let localGitReaderTests = [
         try expectEqual(file.data, Data("GIF\u{0}89a".utf8), "应保留 UTF-8 汇总数据")
         try executor.verifyComplete()
     },
+    TestCase("无空字节的非 UTF-8 内容标记为无法解码") {
+        let rawData = Data([0xFF, 0xFE, 0x41])
+        let executor = FakeCommandExecutor(results: [
+            .success([.standardOutputData(rawData)])
+        ], expectedInvocations: [
+            expectedInvocation([
+                "-C", "/tmp/gitmate-repository", "show", "main:legacy.txt"
+            ])
+        ])
+        let reader = CommandLocalGitReader(executor: executor)
+
+        let file = try await reader.file(
+            repositoryURL: URL(fileURLWithPath: "/tmp/gitmate-repository"),
+            revision: "main",
+            path: "legacy.txt"
+        )
+
+        try expectEqual(
+            file.kind,
+            .invalidUTF8,
+            "无 NUL 且无法解码的内容必须使用独立类型"
+        )
+        try expect(!file.isBinary, "无法解码文本不得伪装成二进制")
+        try expect(file.text == nil, "无法解码内容不得暴露伪文本")
+        try expectEqual(file.data, rawData, "原始字节不得丢失")
+        try executor.verifyComplete()
+    },
     TestCase("提交列表分页命令和游标完全由验证后数值构造") {
         let executor = FakeCommandExecutor(results: [
             .success([.standardOutput(commitRecord)])

@@ -185,7 +185,10 @@ struct FileTreeView: View {
             if expandedDirectories.remove(entry.path) == nil {
                 expandedDirectories.insert(entry.path)
                 Task {
-                    await viewModel.loadTree(path: entry.path)
+                    let pathspec = entry.path.hasSuffix("/")
+                        ? entry.path
+                        : "\(entry.path)/"
+                    await viewModel.loadTree(path: pathspec)
                 }
             }
         } else if entry.kind == .file {

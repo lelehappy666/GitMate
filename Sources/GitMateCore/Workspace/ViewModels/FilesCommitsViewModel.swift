@@ -128,7 +128,9 @@ public final class FilesCommitsViewModel {
     private let maximumPatchCharacters: Int
 
     @ObservationIgnored
-    private var treeTask: Task<[GitFileEntry], Error>?
+    private var treeTasks: [
+        String: Task<[GitFileEntry], Error>
+    ] = [:]
 
     @ObservationIgnored
     private var fileTask: Task<GitFileContent, Error>?
@@ -143,7 +145,10 @@ public final class FilesCommitsViewModel {
     private var diffTask: Task<GitDiff, Error>?
 
     @ObservationIgnored
-    private var treeRequestID = UUID()
+    private var treeRequestIDs: [String: UUID] = [:]
+
+    @ObservationIgnored
+    private var loadingTreePaths = Set<String>()
 
     @ObservationIgnored
     private var fileRequestID = UUID()
@@ -201,9 +206,14 @@ public final class FilesCommitsViewModel {
     }
 
     public func loadTree(path: String = "") async {
-        treeTask?.cancel()
+        guard let pathspec = normalizedTreePath(path) else {
+            state.errorMessage = "只能展开文件树中的安全目录。"
+            return
+        }
+        treeTasks[pathspec]?.cancel()
         let requestID = UUID()
-        treeRequestID = requestID
+        treeRequestIDs[pathspec] = requestID
+        loadingTreePaths.insert(pathspec)
         state.isLoadingTree = true
         state.errorMessage = nil
 
@@ -214,31 +224,25 @@ public final class FilesCommitsViewModel {
             try await reader.tree(
                 repositoryURL: repositoryURL,
                 revision: revision,
-                path: path
+                path: pathspec
             )
         }
-        treeTask = task
+        treeTasks[pathspec] = task
 
         do {
             let entries = try await task.value
-            guard treeRequestID == requestID else {
+            guard treeRequestIDs[pathspec] == requestID else {
                 return
             }
-            if path.isEmpty {
-                state.tree = uniqueEntries(entries)
-            } else {
-                state.tree = uniqueEntries(state.tree + entries)
-            }
-            state.isLoadingTree = false
+            state.tree = uniqueEntries(state.tree + entries)
+            finishTreeRequest(pathspec: pathspec, requestID: requestID)
         } catch is CancellationError {
-            if treeRequestID == requestID {
-                state.isLoadingTree = false
-            }
+            finishTreeRequest(pathspec: pathspec, requestID: requestID)
         } catch {
-            guard treeRequestID == requestID else {
+            guard treeRequestIDs[pathspec] == requestID else {
                 return
             }
-            state.isLoadingTree = false
+            finishTreeRequest(pathspec: pathspec, requestID: requestID)
             state.errorMessage = "无法读取文件树，请稍后重试。"
         }
     }
@@ -251,12 +255,21 @@ public final class FilesCommitsViewModel {
         state.selectedFile = nil
         state.errorMessage = nil
 
-        guard state.tree.contains(where: {
+        guard let fileEntry = state.tree.first(where: {
             $0.path == path && $0.kind == .file
         }) else {
             state.selectedFilePath = nil
             state.fileDisplayState = .empty
             state.errorMessage = "只能查看文件树中的普通文件。"
+            return
+        }
+
+        if let byteCount = fileEntry.byteCount,
+           byteCount > Int64(maximumDisplayedFileBytes) {
+            state.fileDisplayState = .tooLarge(
+                path: path,
+                byteCount: Int(clamping: byteCount)
+            )
             return
         }
 
@@ -466,29 +479,68 @@ public final class FilesCommitsViewModel {
     private func displayState(
         for content: GitFileContent
     ) -> FilesCommitsFileDisplayState {
-        if content.isBinary {
-            return .binary(
-                path: content.path,
-                byteCount: content.byteCount
-            )
-        }
         if content.byteCount > maximumDisplayedFileBytes {
             return .tooLarge(
                 path: content.path,
                 byteCount: content.byteCount
             )
         }
-        guard let text = content.text else {
+        switch content.kind {
+        case .binary:
+            return .binary(
+                path: content.path,
+                byteCount: content.byteCount
+            )
+        case .invalidUTF8:
             return .invalidUTF8(
                 path: content.path,
                 byteCount: content.byteCount
             )
+        case .text:
+            guard let text = content.text else {
+                return .failed(
+                    path: content.path,
+                    message: "文本内容缺少可显示字符。"
+                )
+            }
+            return .text(
+                path: content.path,
+                text: text,
+                byteCount: content.byteCount
+            )
         }
-        return .text(
-            path: content.path,
-            text: text,
-            byteCount: content.byteCount
+    }
+
+    private func normalizedTreePath(_ path: String) -> String? {
+        guard !path.hasPrefix("/"), !path.contains("\u{0}") else {
+            return nil
+        }
+        if path.isEmpty {
+            return ""
+        }
+        let components = path.split(
+            separator: "/",
+            omittingEmptySubsequences: true
         )
+        guard !components.isEmpty,
+              components.allSatisfy({ $0 != "." && $0 != ".." })
+        else {
+            return nil
+        }
+        return components.joined(separator: "/") + "/"
+    }
+
+    private func finishTreeRequest(
+        pathspec: String,
+        requestID: UUID
+    ) {
+        guard treeRequestIDs[pathspec] == requestID else {
+            return
+        }
+        treeTasks[pathspec] = nil
+        treeRequestIDs[pathspec] = nil
+        loadingTreePaths.remove(pathspec)
+        state.isLoadingTree = !loadingTreePaths.isEmpty
     }
 
     private func truncated(
