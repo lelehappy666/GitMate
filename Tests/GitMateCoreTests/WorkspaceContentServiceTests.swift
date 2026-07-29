@@ -181,6 +181,7 @@ private final class FixtureGitHubWorkspaceAPI: GitHubWorkspaceAPI, @unchecked Se
     private let summaryHandler: SummaryHandler
     private let readmeHandler: READMEHandler
     private let lock = NSLock()
+    private var summaryRequests = 0
     private var readmeRequests = 0
 
     init(
@@ -195,7 +196,10 @@ private final class FixtureGitHubWorkspaceAPI: GitHubWorkspaceAPI, @unchecked Se
         repository: Repository,
         token: String
     ) async throws -> RepositoryOnlineSummary {
-        try await summaryHandler(repository, token)
+        lock.withLock {
+            summaryRequests += 1
+        }
+        return try await summaryHandler(repository, token)
     }
 
     func readme(
@@ -212,6 +216,12 @@ private final class FixtureGitHubWorkspaceAPI: GitHubWorkspaceAPI, @unchecked Se
         lock.lock()
         defer { lock.unlock() }
         return readmeRequests
+    }
+
+    var summaryRequestCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return summaryRequests
     }
 }
 
@@ -665,6 +675,91 @@ let workspaceContentServiceTests = [
 
         try expectEqual(github.readmeRequestCount, 2, "README 不得使用工作区缓存")
     },
+    TestCase("工作台刷新不请求 README") {
+        let github = FixtureGitHubWorkspaceAPI(
+            summary: { repository, _ in
+                RepositoryOnlineSummary(
+                    repositoryID: repository.id,
+                    primaryLanguage: "Swift",
+                    openIssueCount: 0,
+                    openPullRequestCount: 0,
+                    failedWorkflowCount: 0,
+                    remoteUpdatedAt: nil
+                )
+            },
+            readme: { _, _ in contentREADMEFixture }
+        )
+        let service = WorkspaceContentService(
+            catalog: makeContentCatalog(
+                availability: [
+                    "desktop": .available,
+                    "server": .available
+                ]
+            ),
+            localGit: FixtureLocalGitReader(),
+            github: github,
+            cache: MemoryWorkspaceCache()
+        )
+
+        _ = try await service.dashboard(
+            account: contentAccountFixture,
+            repositories: [
+                contentRepositoryFixture,
+                secondContentRepositoryFixture
+            ],
+            token: "secret"
+        )
+
+        try expectEqual(
+            github.readmeRequestCount,
+            0,
+            "工作台只读取本地事实与在线摘要，不得批量请求 README"
+        )
+    },
+    TestCase("工作台收到限流后停止启动后续在线请求") {
+        let resetAt = Date(timeIntervalSince1970: 2_000)
+        let github = FixtureGitHubWorkspaceAPI(
+            summary: { _, _ in
+                throw WorkspaceAPIError.rateLimited(resetAt: resetAt)
+            },
+            readme: { _, _ in contentREADMEFixture }
+        )
+        let rateLimitGate = WorkspaceRateLimitGate()
+        let service = WorkspaceContentService(
+            catalog: makeContentCatalog(
+                availability: [
+                    "desktop": .available,
+                    "server": .available
+                ]
+            ),
+            localGit: FixtureLocalGitReader(),
+            github: github,
+            cache: MemoryWorkspaceCache(),
+            now: { Date(timeIntervalSince1970: 1_000) },
+            maximumConcurrentRepositoryRefreshes: 1,
+            rateLimitGate: rateLimitGate
+        )
+
+        let dashboard = try await service.dashboard(
+            account: contentAccountFixture,
+            repositories: [
+                contentRepositoryFixture,
+                secondContentRepositoryFixture
+            ],
+            token: "secret"
+        )
+
+        try expectEqual(
+            github.summaryRequestCount,
+            1,
+            "首个限流响应后不得再启动第二个摘要请求"
+        )
+        try expectEqual(
+            dashboard.connectivity,
+            .rateLimited(resetAt: resetAt),
+            "被限流拦截的仓库也应保留恢复时间"
+        )
+    },
     TestCase("并发刷新不同仓库不会覆盖已保存摘要") {
         let barrier = SummaryRequestBarrier()
         let cache = MemoryWorkspaceCache()
@@ -864,7 +959,7 @@ let workspaceContentServiceTests = [
             )
         }
     },
-    TestCase("多个限流错误保留较晚恢复时间") {
+    TestCase("首个限流错误阻止后续在线模块") {
         let earlier = Date(timeIntervalSince1970: 2_000_000_100)
         let later = Date(timeIntervalSince1970: 2_000_000_200)
         let service = WorkspaceContentService(
@@ -889,8 +984,8 @@ let workspaceContentServiceTests = [
 
         try expectEqual(
             content.connectivity,
-            .rateLimited(resetAt: later),
-            "多个限流模块应采用较晚恢复时间"
+            .rateLimited(resetAt: earlier),
+            "首个限流响应应立即停止后续 README 请求"
         )
     },
     TestCase("工作台单模块失败不丢弃其他仓库内容") {
@@ -1135,9 +1230,9 @@ let workspaceContentServiceTests = [
         try expect(
             snapshots.last?.repositories.allSatisfy {
                 $0.onlineSummary?.openIssueCount == Int($0.repository.id)
-                    && $0.readme != nil
+                    && $0.readme == nil
             } == true,
-            "最终快照应包含所有仓库的远程刷新结果"
+            "最终快照应包含在线摘要且不批量读取 README"
         )
     },
     TestCase("仓库目录统计异常仍返回在线仓库内容") {

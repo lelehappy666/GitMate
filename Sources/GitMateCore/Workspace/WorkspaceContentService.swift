@@ -10,6 +10,7 @@ public final class WorkspaceContentService: @unchecked Sendable {
     private let cache: any WorkspaceCaching
     private let now: @Sendable () -> Date
     private let maximumConcurrentRepositoryRefreshes: Int
+    private let rateLimitGate: WorkspaceRateLimitGate
 
     public init(
         catalog: LocalRepositoryCatalog,
@@ -17,7 +18,8 @@ public final class WorkspaceContentService: @unchecked Sendable {
         github: any GitHubWorkspaceAPI,
         cache: any WorkspaceCaching,
         now: @escaping @Sendable () -> Date = Date.init,
-        maximumConcurrentRepositoryRefreshes: Int = 4
+        maximumConcurrentRepositoryRefreshes: Int = 4,
+        rateLimitGate: WorkspaceRateLimitGate = WorkspaceRateLimitGate()
     ) {
         self.catalog = catalog
         self.localGit = localGit
@@ -28,12 +30,27 @@ public final class WorkspaceContentService: @unchecked Sendable {
             max(maximumConcurrentRepositoryRefreshes, 1),
             8
         )
+        self.rateLimitGate = rateLimitGate
     }
 
     public func repositoryContent(
         repository: Repository,
         account: GitHubAccount,
         token: String
+    ) async throws -> RepositoryContent {
+        try await repositoryContent(
+            repository: repository,
+            account: account,
+            token: token,
+            includeREADME: true
+        )
+    }
+
+    private func repositoryContent(
+        repository: Repository,
+        account: GitHubAccount,
+        token: String,
+        includeREADME: Bool
     ) async throws -> RepositoryContent {
         let accountID = String(account.id)
         let currentDate = now()
@@ -146,6 +163,7 @@ public final class WorkspaceContentService: @unchecked Sendable {
 
         var onlineSummary = validSnapshot?.onlineSummaries[repository.id]
         do {
+            try rateLimitGate.check(now: currentDate)
             let freshSummary = try await github.repositorySummary(
                 repository: repository,
                 token: token
@@ -171,6 +189,7 @@ public final class WorkspaceContentService: @unchecked Sendable {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
+            recordRateLimit(error)
             connectivity = mergedConnectivity(
                 connectivity,
                 connectivityState(for: error)
@@ -185,25 +204,29 @@ public final class WorkspaceContentService: @unchecked Sendable {
         }
 
         var readme: GitHubREADME?
-        do {
-            readme = try await github.readme(
-                repository: repository,
-                token: token
-            )
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            connectivity = mergedConnectivity(
-                connectivity,
-                connectivityState(for: error)
-            )
-            panelErrors.append(
-                panelError(
-                    panel: .readme,
-                    repositoryID: repository.id,
-                    message: stableMessage(for: error, panel: .readme)
+        if includeREADME {
+            do {
+                try rateLimitGate.check(now: currentDate)
+                readme = try await github.readme(
+                    repository: repository,
+                    token: token
                 )
-            )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                recordRateLimit(error)
+                connectivity = mergedConnectivity(
+                    connectivity,
+                    connectivityState(for: error)
+                )
+                panelErrors.append(
+                    panelError(
+                        panel: .readme,
+                        repositoryID: repository.id,
+                        message: stableMessage(for: error, panel: .readme)
+                    )
+                )
+            }
         }
 
         return RepositoryContent(
@@ -266,7 +289,8 @@ public final class WorkspaceContentService: @unchecked Sendable {
                                 let content = try await self.repositoryContent(
                                     repository: repository,
                                     account: account,
-                                    token: token
+                                    token: token,
+                                    includeREADME: false
                                 )
                                 return (index, content)
                             }
@@ -290,7 +314,8 @@ public final class WorkspaceContentService: @unchecked Sendable {
                                     let content = try await self.repositoryContent(
                                         repository: repository,
                                         account: account,
-                                        token: token
+                                        token: token,
+                                        includeREADME: false
                                     )
                                     return (index, content)
                                 }
@@ -478,6 +503,13 @@ public final class WorkspaceContentService: @unchecked Sendable {
             return .offline
         }
         return .online
+    }
+
+    private func recordRateLimit(_ error: Error) {
+        guard case let WorkspaceAPIError.rateLimited(resetAt) = error else {
+            return
+        }
+        rateLimitGate.pause(until: resetAt)
     }
 
     private func mergedConnectivity(
