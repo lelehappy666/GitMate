@@ -41,6 +41,8 @@ public struct OnboardingDependencies: Sendable {
     public let networkMonitor: any NetworkMonitoring
     public let syncDestination: URL
     public let workspaceCache: (any WorkspaceCaching)?
+    public let repositorySyncPreferenceStore:
+        any RepositorySyncPreferenceStoring
 
     public init(
         apiProvider: any GitHubAPIProviding,
@@ -50,7 +52,10 @@ public struct OnboardingDependencies: Sendable {
         syncService: any RepositorySyncService,
         networkMonitor: any NetworkMonitoring,
         syncDestination: URL,
-        workspaceCache: (any WorkspaceCaching)? = nil
+        workspaceCache: (any WorkspaceCaching)? = nil,
+        repositorySyncPreferenceStore:
+            any RepositorySyncPreferenceStoring =
+                UserDefaultsRepositorySyncPreferenceStore()
     ) {
         self.apiProvider = apiProvider
         self.enterpriseConnector = enterpriseConnector
@@ -60,5 +65,6 @@ public struct OnboardingDependencies: Sendable {
         self.networkMonitor = networkMonitor
         self.syncDestination = syncDestination
         self.workspaceCache = workspaceCache
+        self.repositorySyncPreferenceStore = repositorySyncPreferenceStore
     }
 }

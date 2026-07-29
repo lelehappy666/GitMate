@@ -73,6 +73,45 @@ private struct OfflineGitHubAPI: GitHubAPI {
     }
 }
 
+private final class InMemoryRepositorySyncPreferenceStore:
+    RepositorySyncPreferenceStoring,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var values: [String: [RepositorySyncPreference]]
+
+    init(values: [String: [RepositorySyncPreference]] = [:]) {
+        self.values = values
+    }
+
+    func load(accountID: String) throws -> [RepositorySyncPreference] {
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+        return values[accountID] ?? []
+    }
+
+    func save(
+        _ preferences: [RepositorySyncPreference],
+        accountID: String
+    ) throws {
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+        values[accountID] = preferences
+    }
+
+    func clear(accountID: String) throws {
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+        values[accountID] = nil
+    }
+}
+
 private final class CancellableSyncService: RepositorySyncService, @unchecked Sendable {
     private let lock = NSLock()
     private var started = false
@@ -145,9 +184,12 @@ private func makeViewModel(
         .appending(
             path: "GitMate-Onboarding-\(UUID().uuidString)",
             directoryHint: .isDirectory
-        ),
+    ),
     workspaceCache: (any WorkspaceCaching)? = nil,
-    api: (any GitHubAPI)? = nil
+    api: (any GitHubAPI)? = nil,
+    repositorySyncPreferenceStore:
+        any RepositorySyncPreferenceStoring =
+            InMemoryRepositorySyncPreferenceStore()
 ) throws -> (OnboardingViewModel, InMemoryCredentialStore) {
     let defaultAPI = FakeGitHubAPI(
         account: viewModelAccount,
@@ -161,7 +203,8 @@ private func makeViewModel(
         syncService: syncService ?? FixedSyncService(events: syncEvents),
         networkMonitor: SilentNetworkMonitor(),
         syncDestination: syncDestination,
-        workspaceCache: workspaceCache
+        workspaceCache: workspaceCache,
+        repositorySyncPreferenceStore: repositorySyncPreferenceStore
     )
     return (
         OnboardingViewModel(
@@ -308,15 +351,84 @@ let onboardingViewModelTests = [
             [
                 RepositorySyncPreference(
                     repositoryID: viewModelRepository.id,
-                    mode: .manual
+                    mode: .never
                 )
             ],
-            "缓存仓库应恢复为可手动同步状态"
+            "没有保存偏好时缓存仓库应保持不同步"
         )
         try expectEqual(
             viewModel.state.errorMessage,
             nil,
             "本地优先恢复不得因离线产生启动错误"
+        )
+    },
+    TestCase("恢复会话保留不同步云端仓库而不是全部改为手动") { @MainActor in
+        let cacheDirectory = FileManager.default.temporaryDirectory
+            .appending(
+                path: "GitMate-Restore-Preferences-\(UUID().uuidString)",
+                directoryHint: .isDirectory
+            )
+        defer {
+            try? FileManager.default.removeItem(at: cacheDirectory)
+        }
+        let cache = JSONWorkspaceCache(rootDirectory: cacheDirectory)
+        try cache.save(
+            WorkspaceCacheSnapshot(
+                accountID: viewModelAccount.id,
+                repositoryRecords: [
+                    LocalRepositoryRecord(
+                        repository: viewModelRepository,
+                        localURL: URL(
+                            filePath: "/同步目录/mac-client",
+                            directoryHint: .isDirectory
+                        ),
+                        availability: .missing,
+                        localSizeInBytes: 0,
+                        lastInspectedAt: Date(
+                            timeIntervalSince1970: 1_000
+                        )
+                    )
+                ],
+                onlineSummaries: [:],
+                savedAt: Date(timeIntervalSince1970: 1_000)
+            )
+        )
+        let credentialStore = InMemoryCredentialStore()
+        let sessionStore = InMemoryAccountSessionStore()
+        try credentialStore.save(
+            token: "secret",
+            accountID: viewModelAccount.id
+        )
+        try sessionStore.save(account: viewModelAccount)
+        let preferenceStore = InMemoryRepositorySyncPreferenceStore(
+            values: [
+                viewModelAccount.id: [
+                    RepositorySyncPreference(
+                        repositoryID: viewModelRepository.id,
+                        mode: .never
+                    )
+                ]
+            ]
+        )
+        let (viewModel, _) = try makeViewModel(
+            credentialStore: credentialStore,
+            sessionStore: sessionStore,
+            workspaceCache: cache,
+            api: OfflineGitHubAPI(),
+            repositorySyncPreferenceStore: preferenceStore
+        )
+
+        await viewModel.restoreSession()
+
+        try expectEqual(
+            viewModel.state.preferences,
+            [
+                RepositorySyncPreference(
+                    repositoryID: viewModelRepository.id,
+                    mode: .never
+                )
+            ],
+            "恢复工作区必须使用真实持久偏好"
         )
     },
     TestCase("工作区重新同步返回仓库选择并保留账户仓库") { @MainActor in

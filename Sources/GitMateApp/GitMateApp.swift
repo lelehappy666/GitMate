@@ -62,7 +62,9 @@ struct GitMateApp: App {
             syncService: GitRepositorySyncService(),
             networkMonitor: NWPathNetworkMonitor(),
             syncDestination: syncDestination,
-            workspaceCache: workspaceCache
+            workspaceCache: workspaceCache,
+            repositorySyncPreferenceStore:
+                UserDefaultsRepositorySyncPreferenceStore()
         )
         _viewModel = State(
             initialValue: OnboardingViewModel(dependencies: dependencies)

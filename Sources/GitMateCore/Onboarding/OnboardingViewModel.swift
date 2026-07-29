@@ -56,6 +56,9 @@ public final class OnboardingViewModel {
         shouldReturnToWorkspaceAfterReauthorization = false
         if let account = state.account {
             try? dependencies.credentialStore.deleteToken(accountID: account.id)
+            try? dependencies.repositorySyncPreferenceStore.clear(
+                accountID: account.id
+            )
         }
         try? dependencies.accountSessionStore.clear()
         state = OnboardingState()
@@ -84,12 +87,10 @@ public final class OnboardingViewModel {
                 accountID: account.id
             ) {
                 state.repositories = cachedRepositories
-                state.preferences = cachedRepositories.map {
-                    RepositorySyncPreference(
-                        repositoryID: $0.id,
-                        mode: .manual
-                    )
-                }
+                state.preferences = try restoredPreferences(
+                    repositories: cachedRepositories,
+                    accountID: account.id
+                )
                 state.route = .complete
                 return
             }
@@ -228,12 +229,10 @@ public final class OnboardingViewModel {
             let api = try dependencies.apiProvider.api(for: account)
             let repositories = try await api.repositories(token: token)
             state.transition(.repositoriesLoaded(repositories))
-            state.preferences = repositories.map {
-                RepositorySyncPreference(
-                    repositoryID: $0.id,
-                    mode: .never
-                )
-            }
+            state.preferences = try restoredPreferences(
+                repositories: repositories,
+                accountID: account.id
+            )
         } catch GitHubAPIError.httpStatus(401, _) {
             state.transition(.authorizationExpired(message: "账户授权已失效，请重新登录。"))
         } catch {
@@ -257,16 +256,19 @@ public final class OnboardingViewModel {
                 )
             )
         }
+        persistPreferences()
     }
 
     public func setSyncModeForAllRepositories(_ mode: RepositorySyncMode) {
         state.preferences = state.repositories.map {
             RepositorySyncPreference(repositoryID: $0.id, mode: mode)
         }
+        persistPreferences()
     }
 
     public func startSync() async {
         activeSyncTask?.cancel()
+        persistPreferences()
         state.transition(.syncConfigured(state.preferences))
         let operationID = UUID()
         activeSyncID = operationID
@@ -575,5 +577,38 @@ public final class OnboardingViewModel {
             return URL(string: trimmed)
         }
         return URL(string: "https://\(trimmed)")
+    }
+
+    private func restoredPreferences(
+        repositories: [Repository],
+        accountID: String
+    ) throws -> [RepositorySyncPreference] {
+        let stored = try dependencies.repositorySyncPreferenceStore.load(
+            accountID: accountID
+        )
+        let storedModes = Dictionary(
+            stored.map { ($0.repositoryID, $0.mode) },
+            uniquingKeysWith: { _, newest in newest }
+        )
+        return repositories.map {
+            RepositorySyncPreference(
+                repositoryID: $0.id,
+                mode: storedModes[$0.id] ?? .never
+            )
+        }
+    }
+
+    private func persistPreferences() {
+        guard let account = state.account else {
+            return
+        }
+        do {
+            try dependencies.repositorySyncPreferenceStore.save(
+                state.preferences,
+                accountID: account.id
+            )
+        } catch {
+            state.errorMessage = error.localizedDescription
+        }
     }
 }
