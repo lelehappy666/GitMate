@@ -275,6 +275,155 @@ public struct GitCommandBuilder: Sendable {
         )
     }
 
+    public func stashList(
+        repositoryURL: URL
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "stash",
+                "list",
+                "--format=%gd%x00%gs%x00%ct%x00"
+            ]
+        )
+    }
+
+    public func stashCreate(
+        repositoryURL: URL,
+        message: String,
+        includeUntracked: Bool
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        let value = message
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var arguments = [
+            "-C",
+            repository.path,
+            "stash",
+            "push"
+        ]
+        if includeUntracked {
+            arguments.append("--include-untracked")
+        }
+        if !value.isEmpty {
+            arguments.append(contentsOf: ["--message", value])
+        }
+        arguments.append("--")
+        return GitCommand(
+            arguments: arguments,
+            cancellation: .finishToSafeState
+        )
+    }
+
+    public func stashPaths(
+        repositoryURL: URL,
+        id: GitStashID
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "-c",
+                "core.quotepath=false",
+                "stash",
+                "show",
+                "--name-only",
+                "-z",
+                "--include-untracked",
+                id.rawValue
+            ]
+        )
+    }
+
+    public func stashDiff(
+        repositoryURL: URL,
+        id: GitStashID
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "-c",
+                "core.quotepath=false",
+                "stash",
+                "show",
+                "--patch",
+                "--binary",
+                "--include-untracked",
+                id.rawValue
+            ]
+        )
+    }
+
+    public func stashApply(
+        repositoryURL: URL,
+        id: GitStashID,
+        pop: Bool
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "stash",
+                pop ? "pop" : "apply",
+                id.rawValue
+            ],
+            cancellation: .finishToSafeState
+        )
+    }
+
+    public func stashDrop(
+        repositoryURL: URL,
+        id: GitStashID
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "stash",
+                "drop",
+                id.rawValue
+            ],
+            cancellation: .finishToSafeState
+        )
+    }
+
+    public func unmergedPaths(
+        repositoryURL: URL
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "diff",
+                "--name-only",
+                "--diff-filter=U",
+                "-z"
+            ]
+        )
+    }
+
     private func pathspecData(
         _ paths: [String],
         repositoryURL: URL
