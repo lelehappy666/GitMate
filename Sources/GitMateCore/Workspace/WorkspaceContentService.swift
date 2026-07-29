@@ -481,8 +481,10 @@ public final class WorkspaceContentService: @unchecked Sendable {
                 accountID: accountID,
                 repositoryRecords: records,
                 onlineSummaries: summaries,
-                savedAt: savedAt
-            )
+                savedAt: savedAt,
+                repositoryIdentityAliases:
+                    latestSnapshot?.repositoryIdentityAliases ?? [:]
+            ).resolvingRepositoryIdentities()
         }
     }
 

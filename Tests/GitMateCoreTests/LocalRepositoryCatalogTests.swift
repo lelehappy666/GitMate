@@ -304,6 +304,41 @@ let localRepositoryCatalogTests = [
             Date(timeIntervalSince1970: 3_000),
             "迁移时间应成为新的缓存保存时间"
         )
+
+        try cache.update(accountID: "octo-cat") { latestSnapshot in
+            var records = latestSnapshot?.repositoryRecords ?? []
+            records.append(
+                LocalRepositoryRecord(
+                    repository: syntheticRepository,
+                    localURL: localURL,
+                    availability: .available,
+                    localSizeInBytes: 4_096,
+                    lastInspectedAt: Date(timeIntervalSince1970: 2_500)
+                )
+            )
+            var summaries = latestSnapshot?.onlineSummaries ?? [:]
+            summaries[syntheticRepository.id] = oldSummary
+            return WorkspaceCacheSnapshot(
+                accountID: "octo-cat",
+                repositoryRecords: records,
+                onlineSummaries: summaries,
+                savedAt: Date(timeIntervalSince1970: 4_000)
+            )
+        }
+
+        let snapshotAfterStaleWrite = try cache.load(
+            accountID: "octo-cat"
+        )
+        try expectEqual(
+            snapshotAfterStaleWrite?.repositoryRecords.map(\.repository.id),
+            [remoteRepository.id],
+            "迁移完成后的旧任务不得写回合成仓库身份"
+        )
+        try expectEqual(
+            snapshotAfterStaleWrite?.onlineSummaries.keys.sorted(),
+            [remoteRepository.id],
+            "迁移完成后的旧摘要必须继续归并到真实编号"
+        )
     },
     TestCase("缓存写入时移除仓库地址中的凭据") {
         let directory = try temporaryWorkspaceCacheDirectory()

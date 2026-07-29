@@ -5,17 +5,186 @@ public struct WorkspaceCacheSnapshot: Codable, Equatable, Sendable {
     public var repositoryRecords: [LocalRepositoryRecord]
     public var onlineSummaries: [Int64: RepositoryOnlineSummary]
     public var savedAt: Date
+    public var repositoryIdentityAliases: [Int64: Int64]
 
     public init(
         accountID: String,
         repositoryRecords: [LocalRepositoryRecord],
         onlineSummaries: [Int64: RepositoryOnlineSummary],
-        savedAt: Date
+        savedAt: Date,
+        repositoryIdentityAliases: [Int64: Int64] = [:]
     ) {
         self.accountID = accountID
         self.repositoryRecords = repositoryRecords
         self.onlineSummaries = onlineSummaries
         self.savedAt = savedAt
+        self.repositoryIdentityAliases = repositoryIdentityAliases
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case accountID
+        case repositoryRecords
+        case onlineSummaries
+        case savedAt
+        case repositoryIdentityAliases
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        accountID = try container.decode(String.self, forKey: .accountID)
+        repositoryRecords = try container.decode(
+            [LocalRepositoryRecord].self,
+            forKey: .repositoryRecords
+        )
+        onlineSummaries = try container.decode(
+            [Int64: RepositoryOnlineSummary].self,
+            forKey: .onlineSummaries
+        )
+        savedAt = try container.decode(Date.self, forKey: .savedAt)
+        repositoryIdentityAliases = try container.decodeIfPresent(
+            [Int64: Int64].self,
+            forKey: .repositoryIdentityAliases
+        ) ?? [:]
+    }
+
+    public func resolvingRepositoryIdentities(
+        inheriting inheritedAliases: [Int64: Int64] = [:]
+    ) -> WorkspaceCacheSnapshot {
+        var aliases = inheritedAliases
+        aliases.merge(repositoryIdentityAliases) { _, newest in newest }
+        aliases = Self.normalizedAliases(aliases)
+
+        let directRepositoryPairs: [(Int64, Repository)] =
+            repositoryRecords.compactMap { record in
+                let canonicalID = Self.canonicalID(
+                    for: record.repository.id,
+                    aliases: aliases
+                )
+                guard canonicalID == record.repository.id else {
+                    return nil
+                }
+                return (canonicalID, record.repository)
+            }
+        let directRepositories = Dictionary(
+            directRepositoryPairs,
+            uniquingKeysWith: { _, newest in newest }
+        )
+        var selectedRecords:
+            [Int64: (
+                record: LocalRepositoryRecord,
+                isDirect: Bool,
+                position: Int
+            )] = [:]
+        for (position, record) in repositoryRecords.enumerated() {
+            let canonicalID = Self.canonicalID(
+                for: record.repository.id,
+                aliases: aliases
+            )
+            let canonicalRepository = directRepositories[canonicalID]
+                ?? Self.repository(
+                    record.repository,
+                    replacingIDWith: canonicalID
+                )
+            let candidate = LocalRepositoryRecord(
+                repository: canonicalRepository,
+                localURL: record.localURL,
+                availability: record.availability,
+                localSizeInBytes: record.localSizeInBytes,
+                lastInspectedAt: record.lastInspectedAt
+            )
+            let isDirect = record.repository.id == canonicalID
+            if let existing = selectedRecords[canonicalID],
+               existing.isDirect && !isDirect {
+                continue
+            }
+            selectedRecords[canonicalID] = (
+                record: candidate,
+                isDirect: isDirect,
+                position: position
+            )
+        }
+        let records = selectedRecords.values
+            .sorted { $0.position < $1.position }
+            .map(\.record)
+
+        var selectedSummaries:
+            [Int64: (
+                summary: RepositoryOnlineSummary,
+                isDirect: Bool
+            )] = [:]
+        for (repositoryID, summary) in onlineSummaries {
+            let canonicalID = Self.canonicalID(
+                for: repositoryID,
+                aliases: aliases
+            )
+            let isDirect = repositoryID == canonicalID
+            if let existing = selectedSummaries[canonicalID],
+               existing.isDirect && !isDirect {
+                continue
+            }
+            selectedSummaries[canonicalID] = (
+                summary: RepositoryOnlineSummary(
+                    repositoryID: canonicalID,
+                    primaryLanguage: summary.primaryLanguage,
+                    openIssueCount: summary.openIssueCount,
+                    openPullRequestCount: summary.openPullRequestCount,
+                    failedWorkflowCount: summary.failedWorkflowCount,
+                    remoteUpdatedAt: summary.remoteUpdatedAt
+                ),
+                isDirect: isDirect
+            )
+        }
+
+        return WorkspaceCacheSnapshot(
+            accountID: accountID,
+            repositoryRecords: records,
+            onlineSummaries: selectedSummaries.mapValues(\.summary),
+            savedAt: savedAt,
+            repositoryIdentityAliases: aliases
+        )
+    }
+
+    private static func normalizedAliases(
+        _ aliases: [Int64: Int64]
+    ) -> [Int64: Int64] {
+        var normalized: [Int64: Int64] = [:]
+        for sourceID in aliases.keys {
+            let targetID = canonicalID(for: sourceID, aliases: aliases)
+            if sourceID != targetID {
+                normalized[sourceID] = targetID
+            }
+        }
+        return normalized
+    }
+
+    private static func canonicalID(
+        for repositoryID: Int64,
+        aliases: [Int64: Int64]
+    ) -> Int64 {
+        var currentID = repositoryID
+        var visited = Set<Int64>()
+        while let nextID = aliases[currentID],
+              visited.insert(currentID).inserted {
+            currentID = nextID
+        }
+        return currentID
+    }
+
+    private static func repository(
+        _ repository: Repository,
+        replacingIDWith id: Int64
+    ) -> Repository {
+        Repository(
+            id: id,
+            name: repository.name,
+            fullName: repository.fullName,
+            isPrivate: repository.isPrivate,
+            defaultBranch: repository.defaultBranch,
+            sizeInKilobytes: repository.sizeInKilobytes,
+            cloneURL: repository.cloneURL,
+            ownerAvatarURL: repository.ownerAvatarURL,
+            primaryLanguage: repository.primaryLanguage
+        )
     }
 }
 
@@ -108,12 +277,18 @@ public extension WorkspaceCaching {
                 )
             }
 
+            var aliases = currentSnapshot.repositoryIdentityAliases
+            for repositoryID in removedRepositoryIDs
+                where repositoryID != targetRepository.id {
+                aliases[repositoryID] = targetRepository.id
+            }
             return WorkspaceCacheSnapshot(
                 accountID: accountID,
                 repositoryRecords: records,
                 onlineSummaries: summaries,
-                savedAt: migratedAt
-            )
+                savedAt: migratedAt,
+                repositoryIdentityAliases: aliases
+            ).resolvingRepositoryIdentities()
         }
     }
 }
@@ -154,7 +329,11 @@ public final class JSONWorkspaceCache: WorkspaceCaching, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let url = try cacheURL(for: snapshot.accountID)
-        try saveUnlocked(snapshot, url: url)
+        let currentSnapshot = try? loadUnlocked(url: url)
+        let resolvedSnapshot = snapshot.resolvingRepositoryIdentities(
+            inheriting: currentSnapshot?.repositoryIdentityAliases ?? [:]
+        )
+        try saveUnlocked(resolvedSnapshot, url: url)
     }
 
     public func clear(accountID: String) throws {
@@ -184,7 +363,10 @@ public final class JSONWorkspaceCache: WorkspaceCaching, @unchecked Sendable {
         guard updatedSnapshot.accountID == accountID else {
             throw WorkspaceCacheError.invalidAccountID
         }
-        try saveUnlocked(updatedSnapshot, url: url)
+        let resolvedSnapshot = updatedSnapshot.resolvingRepositoryIdentities(
+            inheriting: currentSnapshot?.repositoryIdentityAliases ?? [:]
+        )
+        try saveUnlocked(resolvedSnapshot, url: url)
     }
 
     private func loadUnlocked(url: URL) throws -> WorkspaceCacheSnapshot? {
@@ -227,7 +409,9 @@ public final class JSONWorkspaceCache: WorkspaceCaching, @unchecked Sendable {
             accountID: snapshot.accountID,
             repositoryRecords: snapshot.repositoryRecords.map(sanitizedRecord),
             onlineSummaries: snapshot.onlineSummaries,
-            savedAt: snapshot.savedAt
+            savedAt: snapshot.savedAt,
+            repositoryIdentityAliases:
+                snapshot.repositoryIdentityAliases
         )
     }
 
