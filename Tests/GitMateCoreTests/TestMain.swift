@@ -20,6 +20,8 @@ struct GitMateCoreTestsMain {
             + workspaceContentServiceTests
             + dashboardViewModelTests
             + repositoryWallViewModelTests
+            + repositoryOverviewViewModelTests
+            + readmeViewModelTests
             + repositoryCoverLoaderTests
             + readmeBlockParserTests
             + repositoryCoverExtractorTests
