@@ -1,3 +1,4 @@
+import AppKit
 import GitMateCore
 import SwiftUI
 
@@ -21,14 +22,14 @@ struct RepositorySyncSetupView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("选择首次同步方式")
                         .font(.system(size: 28, weight: .bold))
-                    Text("每个仓库都可以设为不同步、手动同步或自动同步。")
+                    Text("手动会立即同步一次；自动持续更新尚未开发，当前仅完成首次同步。")
                         .foregroundStyle(GitMateTheme.textSecondary)
                 }
                 Spacer()
                 Menu {
                     batchButton("全部不同步", mode: .never)
                     batchButton("全部手动同步", mode: .manual)
-                    batchButton("全部自动同步", mode: .automatic)
+                    batchButton("全部自动（预留）", mode: .automatic)
                 } label: {
                     Label("批量设置", systemImage: "slider.horizontal.3")
                 }
@@ -43,6 +44,44 @@ struct RepositorySyncSetupView: View {
                 )
                 summaryMetric(value: "\(summary.count)", label: "本次同步")
                 summaryMetric(value: formattedSize(summary.size), label: "预计占用")
+            }
+
+            HStack(spacing: 14) {
+                Image(systemName: "folder.badge.gearshape")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(GitMateTheme.accent)
+                    .frame(width: 42, height: 42)
+                    .background(GitMateTheme.accentSoft)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("仓库存储目录")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(
+                        viewModel.syncDestination?.path
+                            ?? "尚未选择；开始同步前必须选择一个本机文件夹"
+                    )
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(GitMateTheme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                }
+
+                Spacer()
+
+                Button(viewModel.syncDestination == nil ? "选择目录" : "更改目录") {
+                    chooseSyncDestination()
+                }
+                .buttonStyle(GitMateButtonStyle(role: .secondary))
+                .accessibilityIdentifier("onboarding.repository.destination")
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 66)
+            .background(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(GitMateTheme.border, lineWidth: 1)
             }
 
             VStack(spacing: 0) {
@@ -83,6 +122,13 @@ struct RepositorySyncSetupView: View {
                     .stroke(GitMateTheme.border, lineWidth: 1)
             }
 
+            if let errorMessage = viewModel.state.errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(GitMateTheme.danger)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             HStack {
                 Button("返回权限说明") {
                     viewModel.returnToPermissionReview()
@@ -104,6 +150,9 @@ struct RepositorySyncSetupView: View {
                     }
                 }
                 .buttonStyle(GitMateButtonStyle(role: .primary))
+                .disabled(
+                    summary.count > 0 && viewModel.syncDestination == nil
+                )
             }
         }
         .frame(maxHeight: .infinity)
@@ -148,6 +197,20 @@ struct RepositorySyncSetupView: View {
     ) -> some View {
         Button(title) {
             viewModel.setSyncModeForAllRepositories(mode)
+        }
+    }
+
+    private func chooseSyncDestination() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "选择"
+        panel.message = "选择 GitMate 保存仓库的父文件夹"
+        panel.directoryURL = viewModel.syncDestination
+        if panel.runModal() == .OK, let destination = panel.url {
+            viewModel.selectSyncDestination(destination)
         }
     }
 
@@ -205,7 +268,7 @@ private struct RepositorySyncRow: View {
             ) {
                 Text("不同步").tag(RepositorySyncMode.never)
                 Text("手动").tag(RepositorySyncMode.manual)
-                Text("自动").tag(RepositorySyncMode.automatic)
+                Text("自动（预留）").tag(RepositorySyncMode.automatic)
             }
             .pickerStyle(.segmented)
             .frame(width: 300)

@@ -111,7 +111,7 @@ struct SyncProgressView: View {
                         systemImage: "externaldrive.badge.checkmark"
                     )
                     .font(.system(size: 12, weight: .semibold))
-                    Text(viewModel.syncDestination.path)
+                    Text(viewModel.syncDestination?.path ?? "尚未选择")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(GitMateTheme.textSecondary)
                         .lineLimit(1)
@@ -133,12 +133,15 @@ struct SyncProgressView: View {
     }
 
     private func revealSyncDestination() {
+        guard let syncDestination = viewModel.syncDestination else {
+            return
+        }
         try? FileManager.default.createDirectory(
-            at: viewModel.syncDestination,
+            at: syncDestination,
             withIntermediateDirectories: true
         )
         NSWorkspace.shared.activateFileViewerSelecting([
-            viewModel.syncDestination
+            syncDestination
         ])
     }
 

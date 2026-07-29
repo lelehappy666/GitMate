@@ -6,9 +6,7 @@ import Observation
 public final class OnboardingViewModel {
     public private(set) var state: OnboardingState
     public private(set) var isWorking = false
-    public var syncDestination: URL {
-        dependencies.syncDestination
-    }
+    public private(set) var syncDestination: URL?
 
     @ObservationIgnored
     private let dependencies: OnboardingDependencies
@@ -31,6 +29,7 @@ public final class OnboardingViewModel {
     ) {
         self.dependencies = dependencies
         state = initialState
+        syncDestination = dependencies.syncDestinationStore.destination()
     }
 
     deinit {
@@ -196,8 +195,48 @@ public final class OnboardingViewModel {
         }
     }
 
+    public func selectSyncDestination(_ destination: URL) {
+        do {
+            try dependencies.syncDestinationStore.save(
+                destination: destination
+            )
+            syncDestination = destination
+            state.errorMessage = nil
+        } catch {
+            state.errorMessage = error.localizedDescription
+        }
+    }
+
     public func startSync() async {
         activeSyncTask?.cancel()
+        let selectedPreferences = state.preferences.filter(
+            \.shouldSyncInitially
+        )
+        guard !selectedPreferences.isEmpty else {
+            state.transition(.syncConfigured(state.preferences))
+            state.transition(.syncFinished)
+            return
+        }
+        guard let syncDestination else {
+            state.errorMessage = "请先选择仓库存储目录。"
+            state.route = .repositorySync
+            return
+        }
+        let conflicts = SyncDestinationInspector.conflicts(
+            repositories: state.repositories,
+            preferences: state.preferences,
+            destination: syncDestination
+        )
+        guard conflicts.isEmpty else {
+            let names = conflicts.prefix(3).map(\.lastPathComponent)
+                .joined(separator: "、")
+            let remaining = conflicts.count - min(conflicts.count, 3)
+            let suffix = remaining > 0 ? "等 \(conflicts.count) 个仓库" : ""
+            state.errorMessage = "存储目录中存在同名内容：\(names)\(suffix)。请选择其他目录，或确认它们是同一远程仓库。"
+            state.route = .repositorySync
+            return
+        }
+
         state.transition(.syncConfigured(state.preferences))
         let operationID = UUID()
         activeSyncID = operationID
@@ -368,6 +407,11 @@ public final class OnboardingViewModel {
         repositories: [Repository],
         preferences: [RepositorySyncPreference]
     ) async {
+        guard let syncDestination else {
+            state.errorMessage = "尚未选择仓库存储目录。"
+            state.route = .repositorySync
+            return
+        }
         isWorking = true
         state.errorMessage = nil
         defer { isWorking = false }
@@ -384,7 +428,7 @@ public final class OnboardingViewModel {
             let stream = dependencies.syncService.sync(
                 repositories: repositories,
                 preferences: preferences,
-                destination: dependencies.syncDestination,
+                destination: syncDestination,
                 accessToken: accessToken
             )
             for try await event in stream {

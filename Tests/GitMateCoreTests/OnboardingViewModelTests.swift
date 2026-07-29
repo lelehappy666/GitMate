@@ -129,7 +129,10 @@ private func makeViewModel(
     syncEvents: [SyncEvent] = [.finished],
     credentialStore: InMemoryCredentialStore = InMemoryCredentialStore(),
     sessionStore: InMemoryAccountSessionStore = InMemoryAccountSessionStore(),
-    syncService: (any RepositorySyncService)? = nil
+    syncService: (any RepositorySyncService)? = nil,
+    destinationStore: InMemorySyncDestinationStore = InMemorySyncDestinationStore(
+        destination: FileManager.default.temporaryDirectory
+    )
 ) throws -> (OnboardingViewModel, InMemoryCredentialStore) {
     let api = FakeGitHubAPI(
         account: viewModelAccount,
@@ -142,7 +145,7 @@ private func makeViewModel(
         accountSessionStore: sessionStore,
         syncService: syncService ?? FixedSyncService(events: syncEvents),
         networkMonitor: SilentNetworkMonitor(),
-        syncDestination: FileManager.default.temporaryDirectory
+        syncDestinationStore: destinationStore
     )
     return (OnboardingViewModel(dependencies: dependencies), credentialStore)
 }
@@ -214,6 +217,7 @@ let onboardingViewModelTests = [
         await viewModel.startGitHubLogin()
         await viewModel.connectGitHub(token: "secret")
         await viewModel.confirmPermissions()
+        viewModel.updateSyncMode(repositoryID: 101, mode: .manual)
 
         await viewModel.startSync()
 
@@ -239,6 +243,84 @@ let onboardingViewModelTests = [
         try expectEqual(viewModel.state.route, .repositorySync, "停止后应返回仓库选择页")
         try expect(syncService.hasCancelled, "停止后应取消同步流和后台 Git 任务")
     },
+    TestCase("未选择存储目录时不能开始同步") { @MainActor in
+        let destinationStore = InMemorySyncDestinationStore()
+        let syncService = CancellableSyncService()
+        let (viewModel, _) = try makeViewModel(
+            syncService: syncService,
+            destinationStore: destinationStore
+        )
+        await viewModel.startGitHubLogin()
+        await viewModel.connectGitHub(token: "secret")
+        await viewModel.confirmPermissions()
+        viewModel.updateSyncMode(repositoryID: 101, mode: .manual)
+
+        await viewModel.startSync()
+
+        try expectEqual(viewModel.state.route, .repositorySync, "缺少目录时应停留在仓库页")
+        try expect(
+            viewModel.state.errorMessage?.contains("存储目录") == true,
+            "应提示用户先选择存储目录"
+        )
+        try expect(!syncService.hasStarted, "缺少目录时不得启动后台同步")
+    },
+    TestCase("选择存储目录后会保存用户选择") { @MainActor in
+        let destinationStore = InMemorySyncDestinationStore()
+        let (viewModel, _) = try makeViewModel(destinationStore: destinationStore)
+        let destination = FileManager.default.temporaryDirectory
+            .appending(
+                path: "GitMateSelected-\(UUID().uuidString)",
+                directoryHint: .isDirectory
+            )
+
+        viewModel.selectSyncDestination(destination)
+
+        try expectEqual(viewModel.syncDestination, destination, "界面应显示新目录")
+        try expectEqual(
+            destinationStore.destination(),
+            destination,
+            "目录选择应持久化"
+        )
+    },
+    TestCase("目标目录存在同名文件时阻止同步") { @MainActor in
+        let destination = FileManager.default.temporaryDirectory
+            .appending(
+                path: "GitMateConflict-\(UUID().uuidString)",
+                directoryHint: .isDirectory
+            )
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let repositoryDirectory = destination.appending(
+            path: viewModelRepository.name,
+            directoryHint: .isDirectory
+        )
+        try FileManager.default.createDirectory(
+            at: repositoryDirectory,
+            withIntermediateDirectories: true
+        )
+        try Data("已有内容".utf8).write(
+            to: repositoryDirectory.appending(path: "README.md")
+        )
+        let syncService = CancellableSyncService()
+        let (viewModel, _) = try makeViewModel(
+            syncService: syncService,
+            destinationStore: InMemorySyncDestinationStore(
+                destination: destination
+            )
+        )
+        await viewModel.startGitHubLogin()
+        await viewModel.connectGitHub(token: "secret")
+        await viewModel.confirmPermissions()
+        viewModel.updateSyncMode(repositoryID: 101, mode: .manual)
+
+        await viewModel.startSync()
+
+        try expectEqual(viewModel.state.route, .repositorySync, "冲突时应停留在仓库页")
+        try expect(
+            viewModel.state.errorMessage?.contains("mac-client") == true,
+            "冲突提示应指出同名文件夹"
+        )
+        try expect(!syncService.hasStarted, "冲突时不得启动后台同步")
+    },
     TestCase("同步断网进入第 8 页并允许恢复") { @MainActor in
         let (viewModel, _) = try makeViewModel(syncEvents: [
             .repositoryFailed(
@@ -249,6 +331,7 @@ let onboardingViewModelTests = [
         await viewModel.startGitHubLogin()
         await viewModel.connectGitHub(token: "secret")
         await viewModel.confirmPermissions()
+        viewModel.updateSyncMode(repositoryID: 101, mode: .manual)
 
         await viewModel.startSync()
 
@@ -265,6 +348,7 @@ let onboardingViewModelTests = [
         await viewModel.startGitHubLogin()
         await viewModel.connectGitHub(token: "secret")
         await viewModel.confirmPermissions()
+        viewModel.updateSyncMode(repositoryID: 101, mode: .manual)
 
         await viewModel.startSync()
 
@@ -281,6 +365,7 @@ let onboardingViewModelTests = [
         await viewModel.startGitHubLogin()
         await viewModel.connectGitHub(token: "secret")
         await viewModel.confirmPermissions()
+        viewModel.updateSyncMode(repositoryID: 101, mode: .manual)
 
         await viewModel.startSync()
 

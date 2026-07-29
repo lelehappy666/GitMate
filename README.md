@@ -10,7 +10,9 @@ GitMate 是一款原生 macOS GitHub 管理工具。本阶段已实现第 01–0
 - 访问令牌存入 macOS 钥匙串
 - 读取真实用户头像与仓库列表
 - 显示仓库可见性、默认分支和仓库大小
-- 仓库默认全部不同步，可逐个选择手动同步或自动同步
+- 仓库默认全部不同步，可逐个选择手动同步或自动同步预留项
+- 首次同步前由用户选择本机存储目录，选择结果会在重新启动后恢复
+- 同步前检测同名文件、非 Git 文件夹和不同远程仓库，发生冲突时不会覆盖
 - 使用系统 Git 执行 clone 与 fetch
 - 大量仓库惰性渲染、头像缓存与后台同步
 - 横向进度条、Git 实时进度和当前文件显示
@@ -59,12 +61,12 @@ SWIFT_MODULECACHE_PATH=.build/swift-module-cache \
 swift build --disable-sandbox
 ```
 
-仓库默认下载到：
+仓库会下载到用户在首次同步页面选择的父文件夹中。同步页面会显示该目录，
+并可直接在 Finder 中打开。
 
-```text
-~/Library/Application Support/GitMate/Repositories
-```
+当前“自动”模式仅保存用户偏好并执行一次首次同步，与手动模式的首次行为相同。
+定时检查、后台持续拉取、网络恢复后自动更新等真正的自动同步功能尚未开发。
 
-同步页面会显示该目录，并可直接在 Finder 中打开。
-
-当前开发机器只有 Apple Command Line Tools，没有完整 Xcode。因此已验证 Swift Package 测试和原生 SwiftUI 可执行程序编译；应用签名、钥匙串授权弹窗、VoiceOver、`.app` 归档与公证需要安装完整 Xcode 后继续验证。
+当前开发机器只有 Apple Command Line Tools，没有完整 Xcode。因此已验证 Swift Package
+测试、原生 SwiftUI 可执行程序编译和 `.app` 临时签名；钥匙串授权弹窗、VoiceOver
+与发布公证仍需在完整 Xcode 环境继续验证。

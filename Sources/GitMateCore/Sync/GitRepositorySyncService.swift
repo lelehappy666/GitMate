@@ -40,9 +40,10 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
                     for repository in selectedRepositories {
                         try Task.checkCancellation()
                         continuation.yield(.repositoryStarted(repository))
-                        let repositoryDirectory = destination.appending(
-                            path: Self.safeDirectoryName(repository.name),
-                            directoryHint: .isDirectory
+                        let repositoryDirectory = SyncDestinationInspector
+                            .repositoryDirectory(
+                                for: repository,
+                                destination: destination
                         )
 
                         do {
@@ -269,8 +270,4 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
         return String(normalized.prefix(180))
     }
 
-    private static func safeDirectoryName(_ name: String) -> String {
-        let invalid = CharacterSet(charactersIn: "/:\\")
-        return name.components(separatedBy: invalid).joined(separator: "-")
-    }
 }

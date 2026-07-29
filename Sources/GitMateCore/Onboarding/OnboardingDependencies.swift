@@ -39,7 +39,7 @@ public struct OnboardingDependencies: Sendable {
     public let accountSessionStore: any AccountSessionStore
     public let syncService: any RepositorySyncService
     public let networkMonitor: any NetworkMonitoring
-    public let syncDestination: URL
+    public let syncDestinationStore: any SyncDestinationStore
 
     public init(
         apiProvider: any GitHubAPIProviding,
@@ -48,7 +48,7 @@ public struct OnboardingDependencies: Sendable {
         accountSessionStore: any AccountSessionStore,
         syncService: any RepositorySyncService,
         networkMonitor: any NetworkMonitoring,
-        syncDestination: URL
+        syncDestinationStore: any SyncDestinationStore
     ) {
         self.apiProvider = apiProvider
         self.enterpriseConnector = enterpriseConnector
@@ -56,6 +56,6 @@ public struct OnboardingDependencies: Sendable {
         self.accountSessionStore = accountSessionStore
         self.syncService = syncService
         self.networkMonitor = networkMonitor
-        self.syncDestination = syncDestination
+        self.syncDestinationStore = syncDestinationStore
     }
 }

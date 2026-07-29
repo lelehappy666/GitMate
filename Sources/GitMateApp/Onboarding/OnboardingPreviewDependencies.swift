@@ -45,7 +45,9 @@ enum OnboardingPreviewFactory {
             accountSessionStore: InMemoryAccountSessionStore(),
             syncService: PreviewSyncService(),
             networkMonitor: PreviewNetworkMonitor(),
-            syncDestination: FileManager.default.temporaryDirectory
+            syncDestinationStore: InMemorySyncDestinationStore(
+                destination: FileManager.default.temporaryDirectory
+            )
         )
         return OnboardingViewModel(
             dependencies: dependencies,
