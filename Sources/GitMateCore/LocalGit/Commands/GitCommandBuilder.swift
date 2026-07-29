@@ -31,4 +31,25 @@ public struct GitCommandBuilder: Sendable {
             environment: environment
         )
     }
+
+    public func workingTreeStatus(
+        repositoryURL: URL,
+        environment: [String: String] = [:]
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "status",
+                "--porcelain=v2",
+                "-z",
+                "--branch",
+                "--untracked-files=no"
+            ],
+            environment: environment
+        )
+    }
 }
