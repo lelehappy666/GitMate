@@ -307,7 +307,7 @@ public final class OnboardingViewModel {
         isWorking = false
         isDownloadPaused = false
         state.errorMessage = nil
-        state.progress.currentFile = "同步已停止"
+        state.progress.currentFile = "下载已停止"
         state.route = .repositorySync
     }
 

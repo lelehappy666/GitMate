@@ -12,7 +12,7 @@ public enum SyncDestinationStoreError: Error, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .invalidDirectory:
-            "同步目录必须是本机文件夹。"
+            "下载目录必须是本机文件夹。"
         }
     }
 }

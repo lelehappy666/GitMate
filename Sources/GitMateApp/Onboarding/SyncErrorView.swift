@@ -20,7 +20,7 @@ struct SyncErrorView: View {
                     .background(GitMateTheme.warning.opacity(0.12))
                     .clipShape(RoundedRectangle(cornerRadius: 17))
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("部分仓库同步失败")
+                    Text("部分仓库下载失败")
                         .font(.system(size: 28, weight: .bold))
                     Text("已完成的仓库不受影响，你可以只重试失败项。")
                         .foregroundStyle(GitMateTheme.textSecondary)
@@ -32,7 +32,7 @@ struct SyncErrorView: View {
                 Text("错误原因")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(GitMateTheme.textSecondary)
-                Text(viewModel.state.errorMessage ?? "同步命令未能完成。")
+                Text(viewModel.state.errorMessage ?? "下载命令未能完成。")
                     .font(.system(size: 14, weight: .medium, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)

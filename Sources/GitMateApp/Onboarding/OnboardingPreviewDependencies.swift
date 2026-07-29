@@ -5,22 +5,18 @@ import GitMateCore
 enum OnboardingPreviewFactory {
     static func make(page: Int) -> OnboardingViewModel {
         let repositories = previewRepositories
-        let preferences = repositories.enumerated().map { index, repository in
-            RepositorySyncPreference(
-                repositoryID: repository.id,
-                mode: index == 2 ? .never : .automatic
-            )
-        }
         var state = OnboardingState(
             route: route(for: page),
             account: previewAccount,
             repositories: repositories,
-            preferences: preferences,
+            selectedRepositoryIDs: [101, 102],
             progress: SyncProgress(
                 completed: 1,
-                total: 3,
+                total: 2,
                 currentRepository: "GitMate/mac-client",
-                currentFile: "Sources/Sync/SyncRecovery.swift"
+                currentFile: "Receiving objects: 64% (640/1000)",
+                currentRepositoryFraction: 0.64,
+                currentRepositoryPhase: "正在接收对象"
             )
         )
 
@@ -136,9 +132,13 @@ private struct PreviewEnterpriseConnector: EnterpriseConnecting {
 }
 
 private struct PreviewSyncService: RepositorySyncService {
+    func pause() throws {}
+
+    func resume() throws {}
+
     func sync(
         repositories: [Repository],
-        preferences: [RepositorySyncPreference],
+        selectedRepositoryIDs: Set<Int64>,
         destination: URL,
         accessToken: String?
     ) -> AsyncThrowingStream<SyncEvent, Error> {

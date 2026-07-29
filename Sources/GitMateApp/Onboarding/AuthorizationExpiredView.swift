@@ -17,7 +17,7 @@ struct AuthorizationExpiredView: View {
                     .foregroundStyle(GitMateTheme.danger)
                 Text("GitHub 授权已失效")
                     .font(.system(size: 30, weight: .bold))
-                Text("重新授权后会从当前同步现场继续，不会重复下载已完成内容。")
+                Text("重新授权后会从当前下载现场继续，不会重复下载已完成内容。")
                     .font(.system(size: 15))
                     .foregroundStyle(GitMateTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -91,7 +91,7 @@ struct AuthorizationExpiredView: View {
             VStack(alignment: .leading, spacing: 22) {
                 safetyItem(
                     number: "01",
-                    title: "同步现场保留",
+                    title: "下载现场保留",
                     detail: "已完成仓库和当前文件不会被删除。"
                 )
                 safetyItem(
@@ -102,7 +102,7 @@ struct AuthorizationExpiredView: View {
                 safetyItem(
                     number: "03",
                     title: "原位置继续",
-                    detail: "授权完成后自动返回同步进度。"
+                    detail: "授权完成后自动返回下载进度。"
                 )
             }
             .frame(maxWidth: .infinity)

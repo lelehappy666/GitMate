@@ -13,7 +13,7 @@ public enum SyncFailure: Error, Equatable, Sendable {
              let .commandFailed(message):
             message
         case .cancelled:
-            "同步已取消"
+            "下载已取消"
         }
     }
 }

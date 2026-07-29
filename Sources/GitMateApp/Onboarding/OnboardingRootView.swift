@@ -98,7 +98,7 @@ struct OnboardingRootView: View {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 56))
                 .foregroundStyle(GitMateTheme.success)
-            Text("首次同步已完成")
+            Text("首次下载已完成")
                 .font(.system(size: 28, weight: .bold))
             Text("账户与仓库已准备好。")
                 .foregroundStyle(GitMateTheme.textSecondary)

@@ -5,112 +5,84 @@ import SwiftUI
 struct RepositorySyncSetupView: View {
     let viewModel: OnboardingViewModel
 
-    private var syncModes: [Int64: RepositorySyncMode] {
-        Dictionary(
-            uniqueKeysWithValues: viewModel.state.preferences.map {
-                ($0.repositoryID, $0.mode)
-            }
-        )
+    private var selectedRepositoryIDs: Set<Int64> {
+        viewModel.state.selectedRepositoryIDs
     }
 
     var body: some View {
-        let modes = syncModes
-        let summary = selectionSummary(modes: modes)
+        let summary = selectionSummary()
 
         VStack(spacing: 16) {
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("选择首次同步方式")
+                    Text("选择首次下载仓库")
                         .font(.system(size: 28, weight: .bold))
-                    Text("手动会立即同步一次；自动持续更新尚未开发，当前仅完成首次同步。")
+                    Text("勾选需要保存到本机的仓库；本次只执行 Clone，不会自动上传或下载更新。")
                         .foregroundStyle(GitMateTheme.textSecondary)
                 }
                 Spacer()
-                Menu {
-                    batchButton("全部不同步", mode: .never)
-                    batchButton("全部手动同步", mode: .manual)
-                    batchButton("全部自动（预留）", mode: .automatic)
-                } label: {
-                    Label("批量设置", systemImage: "slider.horizontal.3")
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
             }
 
             HStack(spacing: 12) {
                 summaryMetric(
                     value: "\(viewModel.state.repositories.count)",
-                    label: "仓库总数"
+                    label: "云端仓库"
                 )
-                summaryMetric(value: "\(summary.count)", label: "本次同步")
+                summaryMetric(value: "\(summary.count)", label: "已选择")
                 summaryMetric(value: formattedSize(summary.size), label: "预计占用")
             }
 
-            HStack(spacing: 14) {
-                Image(systemName: "folder.badge.gearshape")
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundStyle(GitMateTheme.accent)
-                    .frame(width: 42, height: 42)
-                    .background(GitMateTheme.accentSoft)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("仓库存储目录")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(
-                        viewModel.syncDestination?.path
-                            ?? "尚未选择；开始同步前必须选择一个本机文件夹"
-                    )
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(GitMateTheme.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                }
-
-                Spacer()
-
-                Button(viewModel.syncDestination == nil ? "选择目录" : "更改目录") {
-                    chooseSyncDestination()
-                }
-                .buttonStyle(GitMateButtonStyle(role: .secondary))
-                .accessibilityIdentifier("onboarding.repository.destination")
-            }
-            .padding(.horizontal, 16)
-            .frame(height: 66)
-            .background(.white)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(GitMateTheme.border, lineWidth: 1)
-            }
+            destinationCard
 
             VStack(spacing: 0) {
                 HStack {
                     Text("仓库")
+                    Text("已选择 \(summary.count) 个")
+                        .foregroundStyle(GitMateTheme.textTertiary)
                     Spacer()
-                    Text("同步方式")
-                        .frame(width: 300)
+                    Button {
+                        Task { await viewModel.refreshRepositories() }
+                    } label: {
+                        if viewModel.isRefreshingRepositories {
+                            HStack(spacing: 7) {
+                                ProgressView().controlSize(.small)
+                                Text("正在刷新")
+                            }
+                        } else {
+                            Label(
+                                "刷新云端仓库",
+                                systemImage: "arrow.clockwise"
+                            )
+                        }
+                    }
+                    .buttonStyle(GitMateButtonStyle(role: .quiet))
+                    .disabled(viewModel.isRefreshingRepositories)
+                    .accessibilityIdentifier(
+                        "onboarding.repository.refresh"
+                    )
                 }
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(GitMateTheme.textSecondary)
                 .padding(.horizontal, 18)
-                .frame(height: 38)
+                .frame(height: 42)
                 .background(GitMateTheme.panel)
 
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(viewModel.state.repositories) { repository in
-                            RepositorySyncRow(
+                            RepositoryDownloadRow(
                                 repository: repository,
-                                mode: modes[repository.id] ?? .never,
-                                onModeChanged: { mode in
-                                    viewModel.updateSyncMode(
+                                isSelected: selectedRepositoryIDs.contains(
+                                    repository.id
+                                ),
+                                onSelectionChanged: { isSelected in
+                                    viewModel.setRepositorySelected(
                                         repositoryID: repository.id,
-                                        mode: mode
+                                        isSelected: isSelected
                                     )
                                 }
                             )
-                            Divider().padding(.leading, 64)
+                            Divider().padding(.leading, 78)
                         }
                     }
                 }
@@ -145,26 +117,66 @@ struct RepositorySyncSetupView: View {
                     Task { await viewModel.startSync() }
                 } label: {
                     HStack {
-                        Text(summary.count == 0 ? "跳过首次同步" : "开始首次同步")
+                        Text("开始首次下载（Clone）")
                         Image(systemName: "arrow.right")
                     }
                 }
                 .buttonStyle(GitMateButtonStyle(role: .primary))
                 .disabled(
-                    summary.count > 0 && viewModel.syncDestination == nil
+                    summary.count == 0 || viewModel.syncDestination == nil
                 )
             }
         }
         .frame(maxHeight: .infinity)
     }
 
-    private func selectionSummary(
-        modes: [Int64: RepositorySyncMode]
-    ) -> (count: Int, size: Int64) {
+    private var destinationCard: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "folder.badge.gearshape")
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundStyle(GitMateTheme.accent)
+                .frame(width: 42, height: 42)
+                .background(GitMateTheme.accentSoft)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("仓库存储目录")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(
+                    viewModel.syncDestination?.path
+                        ?? "尚未选择；首次下载前必须选择一个本机文件夹"
+                )
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(GitMateTheme.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            }
+
+            Spacer()
+
+            Button(viewModel.syncDestination == nil ? "选择目录" : "更改目录") {
+                chooseSyncDestination()
+            }
+            .buttonStyle(GitMateButtonStyle(role: .secondary))
+            .accessibilityIdentifier("onboarding.repository.destination")
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 66)
+        .background(.white)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(GitMateTheme.border, lineWidth: 1)
+        }
+    }
+
+    private func selectionSummary() -> (count: Int, size: Int64) {
         viewModel.state.repositories.reduce(into: (count: 0, size: 0)) {
             result,
             repository in
-            guard (modes[repository.id] ?? .never) != .never else { return }
+            guard selectedRepositoryIDs.contains(repository.id) else {
+                return
+            }
             result.count += 1
             result.size += Int64(repository.sizeInKilobytes) * 1_024
         }
@@ -191,15 +203,6 @@ struct RepositorySyncSetupView: View {
         }
     }
 
-    private func batchButton(
-        _ title: String,
-        mode: RepositorySyncMode
-    ) -> some View {
-        Button(title) {
-            viewModel.setSyncModeForAllRepositories(mode)
-        }
-    }
-
     private func chooseSyncDestination() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -222,62 +225,59 @@ struct RepositorySyncSetupView: View {
     }
 }
 
-private struct RepositorySyncRow: View {
+private struct RepositoryDownloadRow: View {
     let repository: Repository
-    let mode: RepositorySyncMode
-    let onModeChanged: (RepositorySyncMode) -> Void
+    let isSelected: Bool
+    let onSelectionChanged: (Bool) -> Void
 
     var body: some View {
-        HStack(spacing: 13) {
-            GitMateAvatar(url: repository.ownerAvatarURL, size: 34)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 7) {
-                    Text(repository.fullName)
-                        .font(.system(size: 14, weight: .semibold))
-                    Text(repository.isPrivate ? "私有" : "公开")
-                        .font(.system(size: 10, weight: .bold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(GitMateTheme.panel)
-                        .clipShape(Capsule())
+        Toggle(
+            isOn: Binding(
+                get: { isSelected },
+                set: { isSelected in
+                    onSelectionChanged(isSelected)
                 }
-                HStack(spacing: 12) {
-                    Label(
-                        repository.defaultBranch,
-                        systemImage: "arrow.triangle.branch"
-                    )
-                    Text(
-                        ByteCountFormatter.string(
-                            fromByteCount: Int64(repository.sizeInKilobytes) * 1_024,
-                            countStyle: .file
-                        )
-                    )
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(GitMateTheme.textSecondary)
-            }
-            Spacer()
-            Picker(
-                "同步方式",
-                selection: Binding(
-                    get: { mode },
-                    set: { newMode in
-                        onModeChanged(newMode)
-                    }
-                )
-            ) {
-                Text("不同步").tag(RepositorySyncMode.never)
-                Text("手动").tag(RepositorySyncMode.manual)
-                Text("自动（预留）").tag(RepositorySyncMode.automatic)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 300)
-            .accessibilityLabel("\(repository.fullName) 同步方式")
-            .accessibilityIdentifier(
-                "onboarding.repository.syncMode.\(repository.id)"
             )
+        ) {
+            HStack(spacing: 13) {
+                GitMateAvatar(url: repository.ownerAvatarURL, size: 34)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 7) {
+                        Text(repository.fullName)
+                            .font(.system(size: 14, weight: .semibold))
+                        Text(repository.isPrivate ? "私有" : "公开")
+                            .font(.system(size: 10, weight: .bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(GitMateTheme.panel)
+                            .clipShape(Capsule())
+                    }
+                    HStack(spacing: 12) {
+                        Label(
+                            repository.defaultBranch,
+                            systemImage: "arrow.triangle.branch"
+                        )
+                        Text(
+                            ByteCountFormatter.string(
+                                fromByteCount: Int64(
+                                    repository.sizeInKilobytes
+                                ) * 1_024,
+                                countStyle: .file
+                            )
+                        )
+                    }
+                    .font(.system(size: 11))
+                    .foregroundStyle(GitMateTheme.textSecondary)
+                }
+                Spacer()
+            }
         }
+        .toggleStyle(.checkbox)
         .padding(.horizontal, 18)
         .frame(height: 68)
+        .accessibilityLabel("\(repository.fullName) 首次下载")
+        .accessibilityIdentifier(
+            "onboarding.repository.selected.\(repository.id)"
+        )
     }
 }

@@ -18,7 +18,7 @@ struct NetworkInterruptedView: View {
             VStack(spacing: 8) {
                 Text("网络连接已中断")
                     .font(.system(size: 30, weight: .bold))
-                Text("同步已安全暂停，已下载的文件和进度都不会丢失。")
+                Text("下载已安全暂停，已完成的文件和进度都不会丢失。")
                     .font(.system(size: 15))
                     .foregroundStyle(GitMateTheme.textSecondary)
             }
@@ -33,7 +33,7 @@ struct NetworkInterruptedView: View {
                 informationRow(
                     icon: "externaldrive.badge.checkmark",
                     title: "本机数据",
-                    value: "同步现场已保存"
+                    value: "下载现场已保存"
                 )
                 Divider()
                 informationRow(

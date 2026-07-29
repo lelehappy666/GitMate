@@ -30,7 +30,7 @@ struct PermissionReviewView: View {
                 permissionCard(
                     icon: "folder.badge.gearshape",
                     title: "仓库访问",
-                    detail: "读取你的公开与私有仓库，用于克隆、同步和管理。"
+                    detail: "读取你的公开与私有仓库，用于克隆和管理。"
                 )
                 permissionCard(
                     icon: "person.crop.circle",
