@@ -2,6 +2,47 @@ import Foundation
 import GitMateCore
 
 let repositoryCoverExtractorTests = [
+    TestCase("封面缓存按仓库读取最近记录并可标记刷新") {
+        let rootDirectory = FileManager.default.temporaryDirectory
+            .appending(
+                path: "GitMate-Cover-Latest-\(UUID().uuidString)",
+                directoryHint: .isDirectory
+            )
+        defer {
+            try? FileManager.default.removeItem(at: rootDirectory)
+        }
+        let cache = RepositoryCoverCache(rootDirectory: rootDirectory)
+        let sourceURL = URL(
+            string: "https://images.example/latest.png"
+        )!
+        let data = Data("latest-cover".utf8)
+        try cache.save(
+            data: data,
+            metadata: RepositoryCoverCacheMetadata(
+                contentType: "image/png",
+                storedAt: Date(timeIntervalSince1970: 1_000),
+                pixelWidth: 640,
+                pixelHeight: 960
+            ),
+            repositoryID: 99,
+            sourceURL: sourceURL
+        )
+
+        let first = try cache.latest(repositoryID: 99)
+        try expectEqual(first?.data, data, "应直接读取仓库最近封面")
+        try expectEqual(
+            first?.metadata.sourceURL,
+            sourceURL,
+            "最近封面必须保留原始地址"
+        )
+
+        try cache.markNeedsRefresh(repositoryIDs: [99])
+        let marked = try cache.latest(repositoryID: 99)
+        try expect(
+            marked?.metadata.needsRefresh == true,
+            "手动刷新后只标记缓存需要检查"
+        )
+    },
     TestCase("封面跳过徽章并选择第一张有效大图") {
         let markdown = """
         ![build](https://img.shields.io/badge/build-passing.svg)
@@ -231,10 +272,20 @@ let repositoryCoverExtractorTests = [
         )
 
         let loadedEntry = try cache.load(repositoryID: 101, sourceURL: sourceURL)
+        try expectEqual(loadedEntry?.data, imageData, "缓存应返回真实图像数据")
         try expectEqual(
-            loadedEntry,
-            RepositoryCoverCacheEntry(data: imageData, metadata: metadata),
-            "缓存应返回真实落盘的图像原始数据和元数据"
+            loadedEntry?.metadata.contentType,
+            metadata.contentType,
+            "缓存应保留内容类型"
+        )
+        try expectEqual(
+            loadedEntry?.metadata.sourceURL,
+            sourceURL,
+            "缓存应补全安全封面地址"
+        )
+        try expect(
+            loadedEntry?.metadata.contentHash?.isEmpty == false,
+            "缓存应记录内容哈希"
         )
     },
     TestCase("封面缓存路径稳定且 sourceURL 无法目录逃逸") {
@@ -275,11 +326,12 @@ let repositoryCoverExtractorTests = [
             includingPropertiesForKeys: nil
         )
         try expectEqual(
-            repositoryEntries.map(\.lastPathComponent),
-            [
-                "9ac59277863bddd8926033d35c89c416657b7b5fd15c55aa8c65d925ee63140e"
-            ],
-            "sourceURL 必须只形成确定性 SHA-256 entryRoot"
+            Set(repositoryEntries.map(\.lastPathComponent)),
+            Set([
+                "9ac59277863bddd8926033d35c89c416657b7b5fd15c55aa8c65d925ee63140e",
+                "latest.json"
+            ]),
+            "sourceURL 必须形成确定性 entryRoot 和单一最近索引"
         )
         let files = try FileManager.default.contentsOfDirectory(
             at: entryRoot,
@@ -358,16 +410,12 @@ let repositoryCoverExtractorTests = [
         let loaded = try RepositoryCoverCache(
             rootDirectory: rootDirectory
         ).load(repositoryID: 77, sourceURL: sourceURL)
-        let isFirstPair = loaded
-            == RepositoryCoverCacheEntry(
-                data: firstData,
-                metadata: firstMetadata
-            )
-        let isSecondPair = loaded
-            == RepositoryCoverCacheEntry(
-                data: secondData,
-                metadata: secondMetadata
-            )
+        let isFirstPair = loaded?.data == firstData
+            && loaded?.metadata.contentType == firstMetadata.contentType
+            && loaded?.metadata.pixelWidth == firstMetadata.pixelWidth
+        let isSecondPair = loaded?.data == secondData
+            && loaded?.metadata.contentType == secondMetadata.contentType
+            && loaded?.metadata.pixelWidth == secondMetadata.pixelWidth
         try expect(
             isFirstPair || isSecondPair,
             "并发保存后只能读取任一完整 generation pair"
@@ -570,9 +618,15 @@ private func coverEntryRoot(
         )
     let entries = try FileManager.default.contentsOfDirectory(
         at: repositoryDirectory,
-        includingPropertiesForKeys: nil
+        includingPropertiesForKeys: [.isDirectoryKey]
     )
-    guard entries.count == 1, let entryRoot = entries.first else {
+    let directories = entries.filter {
+        let values = try? $0.resourceValues(
+            forKeys: [.isDirectoryKey]
+        )
+        return values?.isDirectory == true
+    }
+    guard directories.count == 1, let entryRoot = directories.first else {
         throw TestFailure(description: "仓库缓存目录应只有一个稳定 entryRoot")
     }
     return entryRoot

@@ -6,17 +6,75 @@ public struct RepositoryCoverCacheMetadata: Equatable, Codable, Sendable {
     public let storedAt: Date
     public let pixelWidth: Int?
     public let pixelHeight: Int?
+    public let sourceURL: URL?
+    public let contentHash: String?
+    public let etag: String?
+    public let lastModified: String?
+    public let needsRefresh: Bool
 
     public init(
         contentType: String?,
         storedAt: Date,
         pixelWidth: Int?,
-        pixelHeight: Int?
+        pixelHeight: Int?,
+        sourceURL: URL? = nil,
+        contentHash: String? = nil,
+        etag: String? = nil,
+        lastModified: String? = nil,
+        needsRefresh: Bool = false
     ) {
         self.contentType = contentType
         self.storedAt = storedAt
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
+        self.sourceURL = sourceURL
+        self.contentHash = contentHash
+        self.etag = etag
+        self.lastModified = lastModified
+        self.needsRefresh = needsRefresh
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case contentType
+        case storedAt
+        case pixelWidth
+        case pixelHeight
+        case sourceURL
+        case contentHash
+        case etag
+        case lastModified
+        case needsRefresh
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        contentType = try values.decodeIfPresent(
+            String.self,
+            forKey: .contentType
+        )
+        storedAt = try values.decode(Date.self, forKey: .storedAt)
+        pixelWidth = try values.decodeIfPresent(
+            Int.self,
+            forKey: .pixelWidth
+        )
+        pixelHeight = try values.decodeIfPresent(
+            Int.self,
+            forKey: .pixelHeight
+        )
+        sourceURL = try values.decodeIfPresent(URL.self, forKey: .sourceURL)
+        contentHash = try values.decodeIfPresent(
+            String.self,
+            forKey: .contentHash
+        )
+        etag = try values.decodeIfPresent(String.self, forKey: .etag)
+        lastModified = try values.decodeIfPresent(
+            String.self,
+            forKey: .lastModified
+        )
+        needsRefresh = try values.decodeIfPresent(
+            Bool.self,
+            forKey: .needsRefresh
+        ) ?? false
     }
 }
 
@@ -43,7 +101,17 @@ public protocol RepositoryCoverCaching: Sendable {
         sourceURL: URL
     ) throws
 
+    func latest(repositoryID: Int64) throws -> RepositoryCoverCacheEntry?
+    func markNeedsRefresh(repositoryIDs: Set<Int64>) throws
     func clear(repositoryID: Int64) throws
+}
+
+public extension RepositoryCoverCaching {
+    func latest(repositoryID: Int64) throws -> RepositoryCoverCacheEntry? {
+        nil
+    }
+
+    func markNeedsRefresh(repositoryIDs: Set<Int64>) throws {}
 }
 
 public enum RepositoryCoverCacheError: Error, Equatable, Sendable {
@@ -74,10 +142,119 @@ public final class RepositoryCoverCache: RepositoryCoverCaching, @unchecked Send
         lock.lock()
         defer { lock.unlock() }
 
+        return try loadUnlocked(
+            repositoryID: repositoryID,
+            sourceURL: sourceURL
+        )
+    }
+
+    public func save(
+        data: Data,
+        metadata: RepositoryCoverCacheMetadata,
+        repositoryID: Int64,
+        sourceURL: URL
+    ) throws {
+        lock.lock()
+        defer { lock.unlock() }
+
+        try saveUnlocked(
+            data: data,
+            metadata: normalizedMetadata(
+                metadata,
+                data: data,
+                sourceURL: sourceURL
+            ),
+            repositoryID: repositoryID,
+            sourceURL: sourceURL
+        )
+    }
+
+    public func latest(
+        repositoryID: Int64
+    ) throws -> RepositoryCoverCacheEntry? {
+        lock.lock()
+        defer { lock.unlock() }
+        let pointerURL = repositoryDirectory(repositoryID)
+            .appending(path: "latest.json")
+        guard let data = try? Data(contentsOf: pointerURL),
+              let pointer = try? JSONDecoder().decode(
+                  LatestCoverPointer.self,
+                  from: data
+              )
+        else {
+            return nil
+        }
+        return loadEntryUnlocked(
+            entryRoot: repositoryDirectory(repositoryID)
+                .appending(
+                    path: pointer.entryHash,
+                    directoryHint: .isDirectory
+                )
+        )
+    }
+
+    public func markNeedsRefresh(
+        repositoryIDs: Set<Int64>
+    ) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        for repositoryID in repositoryIDs {
+            let pointerURL = repositoryDirectory(repositoryID)
+                .appending(path: "latest.json")
+            guard let pointerData = try? Data(contentsOf: pointerURL),
+                  let pointer = try? JSONDecoder().decode(
+                      LatestCoverPointer.self,
+                      from: pointerData
+                  ),
+                  let entry = loadEntryUnlocked(
+                      entryRoot: repositoryDirectory(repositoryID)
+                          .appending(
+                              path: pointer.entryHash,
+                              directoryHint: .isDirectory
+                          )
+                  )
+            else {
+                continue
+            }
+            let metadata = RepositoryCoverCacheMetadata(
+                contentType: entry.metadata.contentType,
+                storedAt: entry.metadata.storedAt,
+                pixelWidth: entry.metadata.pixelWidth,
+                pixelHeight: entry.metadata.pixelHeight,
+                sourceURL: pointer.sourceURL,
+                contentHash: entry.metadata.contentHash,
+                etag: entry.metadata.etag,
+                lastModified: entry.metadata.lastModified,
+                needsRefresh: true
+            )
+            try saveEntryUnlocked(
+                data: entry.data,
+                metadata: metadata,
+                entryRoot: repositoryDirectory(repositoryID)
+                    .appending(
+                        path: pointer.entryHash,
+                        directoryHint: .isDirectory
+                    ),
+                latestPointerURL: pointerURL,
+                latestPointer: pointer
+            )
+        }
+    }
+
+    private func loadUnlocked(
+        repositoryID: Int64,
+        sourceURL: URL
+    ) throws -> RepositoryCoverCacheEntry? {
         let entryRoot = try cacheEntryRoot(
             repositoryID: repositoryID,
             sourceURL: sourceURL
         )
+        return loadEntryUnlocked(entryRoot: entryRoot)
+    }
+
+    private func loadEntryUnlocked(
+        entryRoot: URL
+    ) -> RepositoryCoverCacheEntry? {
         let currentURL = entryRoot.appending(path: "current")
         guard fileManager.fileExists(atPath: currentURL.path),
               let generation = try? String(
@@ -107,19 +284,38 @@ public final class RepositoryCoverCache: RepositoryCoverCaching, @unchecked Send
         )
     }
 
-    public func save(
+    private func saveUnlocked(
         data: Data,
         metadata: RepositoryCoverCacheMetadata,
         repositoryID: Int64,
         sourceURL: URL
     ) throws {
-        lock.lock()
-        defer { lock.unlock() }
-
         let entryRoot = try cacheEntryRoot(
             repositoryID: repositoryID,
             sourceURL: sourceURL
         )
+        let safeSourceURL = sanitizedSourceURL(sourceURL)
+        let pointer = LatestCoverPointer(
+            sourceURL: safeSourceURL,
+            entryHash: entryRoot.lastPathComponent
+        )
+        try saveEntryUnlocked(
+            data: data,
+            metadata: metadata,
+            entryRoot: entryRoot,
+            latestPointerURL: repositoryDirectory(repositoryID)
+                .appending(path: "latest.json"),
+            latestPointer: pointer
+        )
+    }
+
+    private func saveEntryUnlocked(
+        data: Data,
+        metadata: RepositoryCoverCacheMetadata,
+        entryRoot: URL,
+        latestPointerURL: URL,
+        latestPointer: LatestCoverPointer
+    ) throws {
         try fileManager.createDirectory(
             at: entryRoot,
             withIntermediateDirectories: true
@@ -142,6 +338,9 @@ public final class RepositoryCoverCache: RepositoryCoverCaching, @unchecked Send
             to: entryRoot.appending(path: "current"),
             options: .atomic
         )
+        try JSONEncoder().encode(
+            latestPointer
+        ).write(to: latestPointerURL, options: .atomic)
     }
 
     public func clear(repositoryID: Int64) throws {
@@ -177,11 +376,48 @@ public final class RepositoryCoverCache: RepositoryCoverCaching, @unchecked Send
                 directoryHint: .isDirectory
             )
     }
+
+    private func normalizedMetadata(
+        _ metadata: RepositoryCoverCacheMetadata,
+        data: Data,
+        sourceURL: URL
+    ) -> RepositoryCoverCacheMetadata {
+        RepositoryCoverCacheMetadata(
+            contentType: metadata.contentType,
+            storedAt: metadata.storedAt,
+            pixelWidth: metadata.pixelWidth,
+            pixelHeight: metadata.pixelHeight,
+            sourceURL: sanitizedSourceURL(sourceURL),
+            contentHash: metadata.contentHash ?? stableHash(data),
+            etag: metadata.etag,
+            lastModified: metadata.lastModified,
+            needsRefresh: metadata.needsRefresh
+        )
+    }
+
+    private func sanitizedSourceURL(_ sourceURL: URL) -> URL {
+        guard var components = URLComponents(
+            url: sourceURL,
+            resolvingAgainstBaseURL: false
+        ) else {
+            return sourceURL
+        }
+        components.user = nil
+        components.password = nil
+        components.query = nil
+        components.fragment = nil
+        return components.url ?? sourceURL
+    }
 }
 
 private struct StoredCoverMetadata: Codable {
     let generation: String
     let metadata: RepositoryCoverCacheMetadata
+}
+
+private struct LatestCoverPointer: Codable {
+    let sourceURL: URL
+    let entryHash: String
 }
 
 public struct FallbackRepositoryCover: Equatable, Codable, Sendable {
@@ -240,6 +476,12 @@ public struct FallbackRepositoryCover: Equatable, Codable, Sendable {
 
 private func stableHash(_ value: String) -> String {
     SHA256.hash(data: Data(value.utf8))
+        .map { String(format: "%02x", $0) }
+        .joined()
+}
+
+private func stableHash(_ value: Data) -> String {
+    SHA256.hash(data: value)
         .map { String(format: "%02x", $0) }
         .joined()
 }
