@@ -191,6 +191,90 @@ public struct GitCommandBuilder: Sendable {
         )
     }
 
+    public func commit(
+        repositoryURL: URL,
+        message: CommitMessage
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        let title = message.title.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard !title.isEmpty else {
+            throw LocalGitError.emptyCommitMessage
+        }
+        let body = message.body.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let value = body.isEmpty
+            ? "\(title)\n"
+            : "\(title)\n\n\(body)\n"
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "commit",
+                "--file=-"
+            ],
+            standardInput: Data(value.utf8),
+            cancellation: .finishToSafeState
+        )
+    }
+
+    public func stagedPaths(
+        repositoryURL: URL
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "diff",
+                "--cached",
+                "--name-only",
+                "-z"
+            ]
+        )
+    }
+
+    public func configurationValue(
+        repositoryURL: URL,
+        key: GitConfigurationKey
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "config",
+                "--get",
+                key.rawValue
+            ]
+        )
+    }
+
+    public func latestCommit(
+        repositoryURL: URL
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "log",
+                "-1",
+                "--format=%H%x00%h%x00%s"
+            ]
+        )
+    }
+
     private func pathspecData(
         _ paths: [String],
         repositoryURL: URL
