@@ -109,3 +109,85 @@ swift run GitMateCoreTestsRunner
 - 无功能或安全阻塞。
 - 现有 Task 2 的 `WorkspaceCacheSnapshot` 只有快照级 `savedAt`，因此 TTL 语义是快照级而不是逐仓库级；本实现只保留仍有效快照中的其他条目，符合“保留其他条目”和现有缓存结构。
 - 当前系统默认 CommandLineTools 的编译器与 SDK 版本不匹配，最终验证显式使用已安装的 Xcode 工具链；不影响测试和构建结果。
+
+---
+
+## 正式审查修复 Round 1
+
+### 审查问题
+
+1. GitHub 同时返回 `Retry-After` 与 `X-RateLimit-Reset` 时，旧实现无条件采用后者，未遵守二级限流的明确等待时间。
+2. 缓存原子事务由 `WorkspaceContentService` 实例锁保护；两个服务共享同一缓存资源时，实例锁互不相识，仍可能发生丢更新。
+
+### RED 证据
+
+新增两项真实行为测试：
+
+- `限流同时返回两种恢复头时优先 Retry-After`
+- `两个服务共享缓存时并发刷新不会丢失摘要`
+
+测试命令：
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+SWIFTPM_MODULECACHE_OVERRIDE=/private/tmp/gitmate-task4-module-cache \
+CLANG_MODULE_CACHE_PATH=/private/tmp/gitmate-task4-clang-cache \
+swift run GitMateCoreTestsRunner
+```
+
+初始结果：
+
+```text
+✗ 限流同时返回两种恢复头时优先 Retry-After：实际 2000000900，预期 2000000030
+✗ 两个服务共享缓存时并发刷新不会丢失摘要：实际 [202]，预期 [201, 202]
+完成 102 个测试，失败 2 个。
+```
+
+限流单项修复后，双头限流和既有主限流 Reset 测试均通过，完整套件只剩共享缓存 1 项失败。
+
+### 修复实现
+
+- 限流恢复时间按以下顺序解析：
+  1. 有效 `Retry-After` 秒数；
+  2. 仅当 `X-RateLimit-Remaining == 0` 时使用有效 `X-RateLimit-Reset`；
+  3. 二级限流或 429 没有有效恢复头时使用 `now + 60 秒`。
+- `WorkspaceCaching` 新增同步原子 `update(accountID:_:)`。
+- `JSONWorkspaceCache` 在自身资源锁内完成读取、变换、清洗和原子写入；公开 `load`、`save` 与 `update` 共享同一锁，内部使用 unlocked helper，避免锁重入。
+- `WorkspaceContentService` 删除实例级缓存事务锁，在线摘要保存改为调用缓存资源的 `update`。
+- 测试缓存 fixture 同样用资源锁实现 `update`；确定性交错 fixture 强制两个旧事务都读取相同空快照，证明旧实现会稳定丢失一个摘要。
+
+### GREEN 与完整验证
+
+完整测试：
+
+```text
+完成 102 个测试，失败 0 个。
+退出码：0
+```
+
+完整编译：
+
+```text
+Build complete!
+退出码：0
+```
+
+差异与安全检查：
+
+- `git diff --check`：无空白错误。
+- 生产代码扫描未发现令牌日志、缓存字段或 URL 查询令牌。
+- 新增缓存协议不携带令牌；变换只处理工作区快照。
+
+### Round 1 变更文件
+
+- `Sources/GitMateCore/GitHub/URLSessionGitHubWorkspaceAPI.swift`
+- `Sources/GitMateCore/Workspace/WorkspaceCache.swift`
+- `Sources/GitMateCore/Workspace/WorkspaceContentService.swift`
+- `Tests/GitMateCoreTests/GitHubWorkspaceAPITests.swift`
+- `Tests/GitMateCoreTests/WorkspaceContentServiceTests.swift`
+- `.superpowers/sdd/2026-07-29-全局与仓库页面10-15实施计划/task-4-report.md`
+
+### Round 1 Concerns
+
+- 无未解决的功能或安全阻塞。
+- 默认 CommandLineTools 仍存在编译器与 SDK 版本不匹配，验证继续使用已安装的 Xcode 工具链。

@@ -254,6 +254,17 @@ private final class MemoryWorkspaceCache: WorkspaceCaching, @unchecked Sendable 
         lock.unlock()
     }
 
+    func update(
+        accountID: String,
+        _ transform: @Sendable (
+            WorkspaceCacheSnapshot?
+        ) throws -> WorkspaceCacheSnapshot
+    ) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        storedSnapshot = try transform(storedSnapshot)
+    }
+
     var snapshot: WorkspaceCacheSnapshot? {
         lock.lock()
         defer { lock.unlock() }
@@ -264,6 +275,64 @@ private final class MemoryWorkspaceCache: WorkspaceCaching, @unchecked Sendable 
         lock.lock()
         defer { lock.unlock() }
         return loadedAccountIDs
+    }
+}
+
+private final class InterleavingWorkspaceCache: WorkspaceCaching, @unchecked Sendable {
+    private let condition = NSCondition()
+    private var storedSnapshot: WorkspaceCacheSnapshot?
+    private var loadCount = 0
+    private var transactionLoadArrivals = 0
+
+    func load(accountID: String) throws -> WorkspaceCacheSnapshot? {
+        condition.lock()
+        defer { condition.unlock() }
+        loadCount += 1
+        let captured = storedSnapshot
+        guard loadCount > 2 else {
+            return captured
+        }
+
+        transactionLoadArrivals += 1
+        if transactionLoadArrivals == 2 {
+            condition.broadcast()
+        } else {
+            while transactionLoadArrivals < 2 {
+                condition.wait()
+            }
+        }
+        return captured
+    }
+
+    func save(_ snapshot: WorkspaceCacheSnapshot) throws {
+        condition.lock()
+        storedSnapshot = snapshot
+        condition.unlock()
+    }
+
+    func clear(accountID: String) throws {
+        condition.lock()
+        if storedSnapshot?.accountID == accountID {
+            storedSnapshot = nil
+        }
+        condition.unlock()
+    }
+
+    func update(
+        accountID: String,
+        _ transform: @Sendable (
+            WorkspaceCacheSnapshot?
+        ) throws -> WorkspaceCacheSnapshot
+    ) throws {
+        condition.lock()
+        defer { condition.unlock() }
+        storedSnapshot = try transform(storedSnapshot)
+    }
+
+    var snapshot: WorkspaceCacheSnapshot? {
+        condition.lock()
+        defer { condition.unlock() }
+        return storedSnapshot
     }
 }
 
@@ -588,6 +657,69 @@ let workspaceContentServiceTests = [
             } ?? [],
             Set([201, 202]),
             "并发保存必须原子保留两个成功摘要"
+        )
+    },
+    TestCase("两个服务共享缓存时并发刷新不会丢失摘要") {
+        let barrier = SummaryRequestBarrier()
+        let cache = InterleavingWorkspaceCache()
+        let github = FixtureGitHubWorkspaceAPI(
+            summary: { repository, _ in
+                await barrier.waitForBothRequests()
+                return RepositoryOnlineSummary(
+                    repositoryID: repository.id,
+                    primaryLanguage: repository.id == 201 ? "Swift" : "Go",
+                    openIssueCount: 0,
+                    openPullRequestCount: 0,
+                    failedWorkflowCount: 0,
+                    remoteUpdatedAt: nil
+                )
+            },
+            readme: { repository, _ in
+                GitHubREADME(
+                    repositoryID: repository.id,
+                    path: "README.md",
+                    markdown: "# \(repository.name)",
+                    downloadURL: nil
+                )
+            }
+        )
+        let catalog = makeContentCatalog(
+            availability: [
+                "desktop": .missing,
+                "server": .missing
+            ]
+        )
+        let firstService = WorkspaceContentService(
+            catalog: catalog,
+            localGit: FixtureLocalGitReader(),
+            github: github,
+            cache: cache
+        )
+        let secondService = WorkspaceContentService(
+            catalog: catalog,
+            localGit: FixtureLocalGitReader(),
+            github: github,
+            cache: cache
+        )
+
+        async let first = firstService.repositoryContent(
+            repository: contentRepositoryFixture,
+            account: contentAccountFixture,
+            token: "secret"
+        )
+        async let second = secondService.repositoryContent(
+            repository: secondContentRepositoryFixture,
+            account: contentAccountFixture,
+            token: "secret"
+        )
+        _ = try await (first, second)
+
+        try expectEqual(
+            cache.snapshot.map {
+                Set($0.onlineSummaries.keys)
+            } ?? [],
+            Set([201, 202]),
+            "共享缓存必须原子保留两个服务的成功摘要"
         )
     },
     TestCase("本地缺失和损坏仍返回在线摘要与 README") {

@@ -9,7 +9,6 @@ public final class WorkspaceContentService: @unchecked Sendable {
     private let github: any GitHubWorkspaceAPI
     private let cache: any WorkspaceCaching
     private let now: @Sendable () -> Date
-    private let cacheLock = NSLock()
 
     public init(
         catalog: LocalRepositoryCatalog,
@@ -60,9 +59,7 @@ public final class WorkspaceContentService: @unchecked Sendable {
 
         let loadedSnapshot: WorkspaceCacheSnapshot?
         do {
-            loadedSnapshot = try cacheLock.withLock {
-                try cache.load(accountID: accountID)
-            }
+            loadedSnapshot = try cache.load(accountID: accountID)
         } catch {
             loadedSnapshot = nil
             panelErrors.append(
@@ -262,9 +259,8 @@ public final class WorkspaceContentService: @unchecked Sendable {
         localRecord: LocalRepositoryRecord,
         accountID: String
     ) throws {
-        try cacheLock.withLock {
+        try cache.update(accountID: accountID) { latestSnapshot in
             let savedAt = now()
-            let latestSnapshot = try? cache.load(accountID: accountID)
             let previousSnapshot = validSnapshot(
                 latestSnapshot,
                 accountID: accountID,
@@ -279,13 +275,11 @@ public final class WorkspaceContentService: @unchecked Sendable {
             }
             records.append(localRecord)
 
-            try cache.save(
-                WorkspaceCacheSnapshot(
-                    accountID: accountID,
-                    repositoryRecords: records,
-                    onlineSummaries: summaries,
-                    savedAt: savedAt
-                )
+            return WorkspaceCacheSnapshot(
+                accountID: accountID,
+                repositoryRecords: records,
+                onlineSummaries: summaries,
+                savedAt: savedAt
             )
         }
     }

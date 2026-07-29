@@ -23,6 +23,12 @@ public protocol WorkspaceCaching: Sendable {
     func load(accountID: String) throws -> WorkspaceCacheSnapshot?
     func save(_ snapshot: WorkspaceCacheSnapshot) throws
     func clear(accountID: String) throws
+    func update(
+        accountID: String,
+        _ transform: @Sendable (
+            WorkspaceCacheSnapshot?
+        ) throws -> WorkspaceCacheSnapshot
+    ) throws
 }
 
 public enum WorkspaceCacheError: Error, LocalizedError, Sendable {
@@ -54,21 +60,14 @@ public final class JSONWorkspaceCache: WorkspaceCaching, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let url = try cacheURL(for: accountID)
-        guard fileManager.fileExists(atPath: url.path) else { return nil }
-        let data = try Data(contentsOf: url)
-        return try JSONDecoder().decode(WorkspaceCacheSnapshot.self, from: data)
+        return try loadUnlocked(url: url)
     }
 
     public func save(_ snapshot: WorkspaceCacheSnapshot) throws {
         lock.lock()
         defer { lock.unlock() }
         let url = try cacheURL(for: snapshot.accountID)
-        try fileManager.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        let data = try JSONEncoder().encode(snapshotForStorage(snapshot))
-        try data.write(to: url, options: .atomic)
+        try saveUnlocked(snapshot, url: url)
     }
 
     public func clear(accountID: String) throws {
@@ -77,6 +76,46 @@ public final class JSONWorkspaceCache: WorkspaceCaching, @unchecked Sendable {
         let url = try cacheURL(for: accountID)
         guard fileManager.fileExists(atPath: url.path) else { return }
         try fileManager.removeItem(at: url)
+    }
+
+    public func update(
+        accountID: String,
+        _ transform: @Sendable (
+            WorkspaceCacheSnapshot?
+        ) throws -> WorkspaceCacheSnapshot
+    ) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        let url = try cacheURL(for: accountID)
+        let currentSnapshot: WorkspaceCacheSnapshot?
+        do {
+            currentSnapshot = try loadUnlocked(url: url)
+        } catch {
+            currentSnapshot = nil
+        }
+        let updatedSnapshot = try transform(currentSnapshot)
+        guard updatedSnapshot.accountID == accountID else {
+            throw WorkspaceCacheError.invalidAccountID
+        }
+        try saveUnlocked(updatedSnapshot, url: url)
+    }
+
+    private func loadUnlocked(url: URL) throws -> WorkspaceCacheSnapshot? {
+        guard fileManager.fileExists(atPath: url.path) else { return nil }
+        let data = try Data(contentsOf: url)
+        return try JSONDecoder().decode(WorkspaceCacheSnapshot.self, from: data)
+    }
+
+    private func saveUnlocked(
+        _ snapshot: WorkspaceCacheSnapshot,
+        url: URL
+    ) throws {
+        try fileManager.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let data = try JSONEncoder().encode(snapshotForStorage(snapshot))
+        try data.write(to: url, options: .atomic)
     }
 
     private func cacheURL(for accountID: String) throws -> URL {

@@ -193,19 +193,22 @@ public final class URLSessionGitHubWorkspaceAPI: GitHubWorkspaceAPI, @unchecked 
             )
         guard isRateLimited else { return nil }
 
-        if let rawTimestamp = response.value(
-            forHTTPHeaderField: "X-RateLimit-Reset"
-        ),
-           let timestamp = TimeInterval(rawTimestamp)
-        {
-            return Date(timeIntervalSince1970: timestamp)
-        }
         if let rawDelay = response.value(
             forHTTPHeaderField: "Retry-After"
         ),
            let delay = TimeInterval(rawDelay)
         {
             return now().addingTimeInterval(max(0, delay))
+        }
+        if response.value(
+            forHTTPHeaderField: "X-RateLimit-Remaining"
+        ) == "0",
+           let rawTimestamp = response.value(
+               forHTTPHeaderField: "X-RateLimit-Reset"
+           ),
+           let timestamp = TimeInterval(rawTimestamp)
+        {
+            return Date(timeIntervalSince1970: timestamp)
         }
         return now().addingTimeInterval(60)
     }

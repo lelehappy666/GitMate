@@ -139,6 +139,39 @@ let githubWorkspaceAPITests = [
             )
         }
     },
+    TestCase("限流同时返回两种恢复头时优先 Retry-After") {
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        URLProtocolStub.handler = { request in
+            try stubResponse(
+                for: request,
+                statusCode: 403,
+                headers: [
+                    "Retry-After": "30",
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": "2000000900"
+                ],
+                body: #"{"message":"API rate limit exceeded"}"#
+            )
+        }
+        let api = URLSessionGitHubWorkspaceAPI(
+            session: makeStubSession(),
+            now: { now }
+        )
+
+        do {
+            _ = try await api.repositorySummary(
+                repository: workspaceRepositoryFixture,
+                token: "secret"
+            )
+            throw TestFailure(description: "限流响应不应成功")
+        } catch let WorkspaceAPIError.rateLimited(resetAt) {
+            try expectEqual(
+                resetAt.timeIntervalSince1970,
+                2_000_000_030,
+                "Retry-After 应优先于 X-RateLimit-Reset"
+            )
+        }
+    },
     TestCase("无效权限响应映射为重新授权") {
         URLProtocolStub.handler = { request in
             try stubResponse(
