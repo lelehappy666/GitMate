@@ -1,6 +1,10 @@
+import Foundation
+
 public enum CommandOutput: Equatable, Sendable {
     case standardOutput(String)
     case standardError(String)
+    case standardOutputData(Data)
+    case standardErrorData(Data)
 }
 
 public protocol CommandExecuting: Sendable {

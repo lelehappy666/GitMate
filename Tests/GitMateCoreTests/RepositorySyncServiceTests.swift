@@ -91,9 +91,11 @@ let repositorySyncServiceTests = [
         try expect(events.contains(.finished), "选中仓库完成后应结束同步")
     },
     TestCase("Git 进度输出会实时传到同步页面") {
+        let progressData = Data("接收对象：42%\n".utf8)
         let executor = FakeCommandExecutor(results: [
             .success([
-                .standardError("Receiving objects: 42%")
+                .standardErrorData(Data(progressData.prefix(1))),
+                .standardErrorData(Data(progressData.dropFirst(1)))
             ])
         ])
         let service = GitRepositorySyncService(executor: executor)
@@ -115,10 +117,88 @@ let repositorySyncServiceTests = [
             events.contains(
                 .fileChanged(
                     repositoryID: 1,
-                    path: "Receiving objects: 42%"
+                    path: "接收对象：42%"
                 )
             ),
-            "同步页应收到 Git 的实时进度文本，实际事件：\(events)"
+            "跨 UTF-8 标量切块后仍应收到完整进度文本，实际事件：\(events)"
+        )
+    },
+    TestCase("Data 进度中的凭据不会进入同步活动") {
+        let executor = FakeCommandExecutor(results: [
+            .success([
+                .standardErrorData(
+                    Data("remote: https://private-".utf8)
+                ),
+                .standardErrorData(
+                    Data("token@example.com/repo.git\n".utf8)
+                )
+            ])
+        ])
+        let service = GitRepositorySyncService(executor: executor)
+        let destination = try temporarySyncDirectory()
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let events = try await collect(
+            service.sync(
+                repositories: [syncRepositoryOne],
+                preferences: [
+                    RepositorySyncPreference(repositoryID: 1, mode: .manual)
+                ],
+                destination: destination,
+                accessToken: nil
+            )
+        )
+        let activities = events.compactMap { event -> String? in
+            guard case let .fileChanged(_, path) = event else {
+                return nil
+            }
+            return path
+        }
+
+        try expect(
+            activities.contains("remote: https://***@example.com/repo.git"),
+            "活动文本应清洗 URL 凭据，实际：\(activities)"
+        )
+        try expect(
+            activities.allSatisfy { !$0.contains("private-token") },
+            "访问令牌不得进入同步活动"
+        )
+    },
+    TestCase("超长活动行丢弃到换行且不泄露余段凭据") {
+        var oversizedLine = Data("remote: https://private-token@".utf8)
+        oversizedLine.append(Data(repeating: 0x61, count: 16_385))
+        let executor = FakeCommandExecutor(results: [
+            .success([
+                .standardErrorData(oversizedLine),
+                .standardErrorData(
+                    Data("private-token@example.com/repo.git\n".utf8)
+                )
+            ])
+        ])
+        let service = GitRepositorySyncService(executor: executor)
+        let destination = try temporarySyncDirectory()
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        let events = try await collect(
+            service.sync(
+                repositories: [syncRepositoryOne],
+                preferences: [
+                    RepositorySyncPreference(repositoryID: 1, mode: .manual)
+                ],
+                destination: destination,
+                accessToken: nil
+            )
+        )
+        let activities = events.compactMap { event -> String? in
+            guard case let .fileChanged(_, path) = event else {
+                return nil
+            }
+            return path
+        }
+
+        try expect(
+            activities.allSatisfy { !$0.contains("private-token") },
+            "超长行的所有余段都不得进入活动，实际：\(activities)"
         )
     },
     TestCase("已存在仓库使用 fetch 并实时上报文件") {
