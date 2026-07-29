@@ -4,6 +4,7 @@
 .worktrees/
 DerivedData/
 dist/
+tmp/
 *.xcuserstate
 xcuserdata/
 .superpowers/brainstorm/.last-port

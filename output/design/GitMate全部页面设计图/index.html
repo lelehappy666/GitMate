@@ -1,0 +1,917 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GitMate 全部页面设计图</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+        "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: #172033;
+      background: #f5f7fa;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      min-height: 72px;
+      padding: 14px 24px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      border-bottom: 1px solid #dfe4eb;
+      background: rgba(255, 255, 255, .92);
+      backdrop-filter: blur(18px);
+    }
+    h1 { margin: 0 0 4px; font-size: 20px; }
+    header p { margin: 0; color: #657287; font-size: 12px; }
+    .count {
+      padding: 7px 10px;
+      border-radius: 999px;
+      color: #1f69b4;
+      background: #eaf3fc;
+      font-size: 12px;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+    main {
+      display: grid;
+      max-width: 1680px;
+      margin: 0 auto;
+      padding: 24px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+    }
+    .card {
+      overflow: hidden;
+      border: 1px solid #dfe4eb;
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: 0 8px 26px rgba(31, 45, 65, .07);
+    }
+    .card a {
+      display: block;
+      overflow: hidden;
+      border-bottom: 1px solid #e8ecf1;
+      background: #edf1f5;
+    }
+    .card img {
+      display: block;
+      width: 100%;
+      height: auto;
+      transition: transform .2s ease;
+    }
+    .card a:hover img { transform: scale(1.008); }
+    .meta {
+      display: flex;
+      min-height: 62px;
+      padding: 12px 14px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .meta strong { font-size: 13px; }
+    .meta span { color: #7b8798; font-size: 11px; white-space: nowrap; }
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; padding: 14px; }
+      header { padding: 12px 14px; }
+      .meta { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>GitMate 全部页面设计图</h1>
+      <p>2× Retina 高保真原图，按页面编号排列，可独立打开、下载或分享。</p>
+    </div>
+    <span class="count">共 91 张</span>
+  </header>
+  <main>
+      <article class="card">
+        <a href="01-welcome.png" target="_blank" rel="noreferrer">
+          <img src="01-welcome.png" alt="页面 01 / 进入与账户 · 欢迎登录页" loading="eager">
+        </a>
+        <div class="meta">
+          <strong>页面 01 / 进入与账户 · 欢迎登录页</strong>
+          <span>2× Retina · V2 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="02-github-auth.png" target="_blank" rel="noreferrer">
+          <img src="02-github-auth.png" alt="页面 02 / 进入与账户 · GitHub.com 登录授权" loading="eager">
+        </a>
+        <div class="meta">
+          <strong>页面 02 / 进入与账户 · GitHub.com 登录授权</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="03-enterprise-connect.png" target="_blank" rel="noreferrer">
+          <img src="03-enterprise-connect.png" alt="页面 03 / 进入与账户 · Enterprise Server 连接" loading="eager">
+        </a>
+        <div class="meta">
+          <strong>页面 03 / 进入与账户 · Enterprise Server 连接</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="04-permission-review.png" target="_blank" rel="noreferrer">
+          <img src="04-permission-review.png" alt="页面 04 / 进入与账户 · 账户与权限确认" loading="eager">
+        </a>
+        <div class="meta">
+          <strong>页面 04 / 进入与账户 · 账户与权限确认</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="05-first-sync.png" target="_blank" rel="noreferrer">
+          <img src="05-first-sync.png" alt="页面 05 / 进入与账户 · 仓库同步设置" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 05 / 进入与账户 · 仓库同步设置</strong>
+          <span>2× Retina · V4 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="06-first-sync-progress.png" target="_blank" rel="noreferrer">
+          <img src="06-first-sync-progress.png" alt="页面 06 / 进入与账户 · 首次同步进度" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 06 / 进入与账户 · 首次同步进度</strong>
+          <span>2× Retina · V2 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="07-sync-errors.png" target="_blank" rel="noreferrer">
+          <img src="07-sync-errors.png" alt="页面 07 / 进入与账户 · 同步错误与恢复" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 07 / 进入与账户 · 同步错误与恢复</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="08-network-interruption.png" target="_blank" rel="noreferrer">
+          <img src="08-network-interruption.png" alt="页面 08 / 进入与账户 · 网络中断与续传" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 08 / 进入与账户 · 网络中断与续传</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="09-auth-error.png" target="_blank" rel="noreferrer">
+          <img src="09-auth-error.png" alt="页面 09 / 进入与账户 · 登录失败与授权恢复" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 09 / 进入与账户 · 登录失败与授权恢复</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="10-dashboard.png" target="_blank" rel="noreferrer">
+          <img src="10-dashboard.png" alt="页面 10 / 全局工作区 · 综合工作台" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 10 / 全局工作区 · 综合工作台</strong>
+          <span>2× Retina · V6 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="11-repositories.png" target="_blank" rel="noreferrer">
+          <img src="11-repositories.png" alt="页面 11 / 全局工作区 · 仓库" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 11 / 全局工作区 · 仓库</strong>
+          <span>2× Retina · V2 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="12-repository-overview.png" target="_blank" rel="noreferrer">
+          <img src="12-repository-overview.png" alt="页面 12 / 仓库工作区 · 仓库总览" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 12 / 仓库工作区 · 仓库总览</strong>
+          <span>2× Retina · V2 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="13-readme-introduction.png" target="_blank" rel="noreferrer">
+          <img src="13-readme-introduction.png" alt="页面 13 / 仓库工作区 · 介绍" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 13 / 仓库工作区 · 介绍</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="14-files-and-commits.png" target="_blank" rel="noreferrer">
+          <img src="14-files-and-commits.png" alt="页面 14 / 仓库工作区 · 文件与提交" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 14 / 仓库工作区 · 文件与提交</strong>
+          <span>2× Retina · V2 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="15-commit-graph.png" target="_blank" rel="noreferrer">
+          <img src="15-commit-graph.png" alt="页面 15 / 仓库工作区 · 提交历史与提交图" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 15 / 仓库工作区 · 提交历史与提交图</strong>
+          <span>2× Retina · V3 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="16-branches-tags.png" target="_blank" rel="noreferrer">
+          <img src="16-branches-tags.png" alt="页面 16 / 仓库工作区 · 分支与标签" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 16 / 仓库工作区 · 分支与标签</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="17-tags.png" target="_blank" rel="noreferrer">
+          <img src="17-tags.png" alt="页面 17 / 仓库工作区 · 标签管理" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 17 / 仓库工作区 · 标签管理</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="18-branch-rules.png" target="_blank" rel="noreferrer">
+          <img src="18-branch-rules.png" alt="页面 18 / 仓库工作区 · 分支规则" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 18 / 仓库工作区 · 分支规则</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="19-issues-overview.png" target="_blank" rel="noreferrer">
+          <img src="19-issues-overview.png" alt="页面 19 / 仓库工作区 · 议题总览" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 19 / 仓库工作区 · 议题总览</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="20-issue-detail.png" target="_blank" rel="noreferrer">
+          <img src="20-issue-detail.png" alt="页面 20 / 仓库工作区 · 议题详情" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 20 / 仓库工作区 · 议题详情</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="21-new-issue.png" target="_blank" rel="noreferrer">
+          <img src="21-new-issue.png" alt="页面 21 / 仓库工作区 · 新建议题" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 21 / 仓库工作区 · 新建议题</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="22-milestones.png" target="_blank" rel="noreferrer">
+          <img src="22-milestones.png" alt="页面 22 / 仓库工作区 · 里程碑管理" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 22 / 仓库工作区 · 里程碑管理</strong>
+          <span>2× Retina · V2 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="23-issue-labels.png" target="_blank" rel="noreferrer">
+          <img src="23-issue-labels.png" alt="页面 23 / 仓库工作区 · 标签管理" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 23 / 仓库工作区 · 标签管理</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="24-pull-requests-overview.png" target="_blank" rel="noreferrer">
+          <img src="24-pull-requests-overview.png" alt="页面 24 / 仓库工作区 · 拉取请求总览" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 24 / 仓库工作区 · 拉取请求总览</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="25-pull-request-detail.png" target="_blank" rel="noreferrer">
+          <img src="25-pull-request-detail.png" alt="页面 25 / 仓库工作区 · 拉取请求详情" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 25 / 仓库工作区 · 拉取请求详情</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="26-pull-request-files.png" target="_blank" rel="noreferrer">
+          <img src="26-pull-request-files.png" alt="页面 26 / 仓库工作区 · 文件变更审查" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 26 / 仓库工作区 · 文件变更审查</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="27-pull-request-checks.png" target="_blank" rel="noreferrer">
+          <img src="27-pull-request-checks.png" alt="页面 27 / 仓库工作区 · 自动化检查详情" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 27 / 仓库工作区 · 自动化检查详情</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="28-pull-request-commits.png" target="_blank" rel="noreferrer">
+          <img src="28-pull-request-commits.png" alt="页面 27 / 仓库工作区 · 自动化检查详情" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 27 / 仓库工作区 · 自动化检查详情</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="29-new-pull-request.png" target="_blank" rel="noreferrer">
+          <img src="29-new-pull-request.png" alt="页面 27 / 仓库工作区 · 自动化检查详情" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 27 / 仓库工作区 · 自动化检查详情</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="30-working-tree.png" target="_blank" rel="noreferrer">
+          <img src="30-working-tree.png" alt="页面 30 / 本地 Git · 工作区变更" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 30 / 本地 Git · 工作区变更</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="31-stage-and-commit.png" target="_blank" rel="noreferrer">
+          <img src="31-stage-and-commit.png" alt="页面 31 / 本地 Git · 暂存与提交" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 31 / 本地 Git · 暂存与提交</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="32-file-diff.png" target="_blank" rel="noreferrer">
+          <img src="32-file-diff.png" alt="页面 32 / 本地 Git · 文件差异" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 32 / 本地 Git · 文件差异</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="33-stash-manager.png" target="_blank" rel="noreferrer">
+          <img src="33-stash-manager.png" alt="页面 33 / 本地 Git · Stash 管理" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 33 / 本地 Git · Stash 管理</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="34-merge-rebase-cherry-pick.png" target="_blank" rel="noreferrer">
+          <img src="34-merge-rebase-cherry-pick.png" alt="页面 34 / 本地 Git · 合并、变基与拣选" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 34 / 本地 Git · 合并、变基与拣选</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="35-conflict-resolver.png" target="_blank" rel="noreferrer">
+          <img src="35-conflict-resolver.png" alt="页面 35 / 本地 Git · 冲突解决" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 35 / 本地 Git · 冲突解决</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="36-remotes.png" target="_blank" rel="noreferrer">
+          <img src="36-remotes.png" alt="页面 36 / 本地 Git · 远程仓库管理" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 36 / 本地 Git · 远程仓库管理</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="37-fetch-pull-push.png" target="_blank" rel="noreferrer">
+          <img src="37-fetch-pull-push.png" alt="页面 37 / 本地 Git · Fetch、Pull 与 Push" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 37 / 本地 Git · Fetch、Pull 与 Push</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="38-clone-repository.png" target="_blank" rel="noreferrer">
+          <img src="38-clone-repository.png" alt="页面 38 / 仓库 · 克隆仓库" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 38 / 仓库 · 克隆仓库</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="39-create-repository.png" target="_blank" rel="noreferrer">
+          <img src="39-create-repository.png" alt="页面 39 / 仓库 · 新建仓库" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 39 / 仓库 · 新建仓库</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="40-import-repository.png" target="_blank" rel="noreferrer">
+          <img src="40-import-repository.png" alt="页面 40 / 仓库 · 导入仓库" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 40 / 仓库 · 导入仓库</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="41-fork-repository.png" target="_blank" rel="noreferrer">
+          <img src="41-fork-repository.png" alt="页面 41 / 仓库 · Fork 仓库" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 41 / 仓库 · Fork 仓库</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="42-submodule-lfs.png" target="_blank" rel="noreferrer">
+          <img src="42-submodule-lfs.png" alt="页面 42 / 本地 Git · Submodule 与 Git LFS" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 42 / 本地 Git · Submodule 与 Git LFS</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="43-discussions-overview.png" target="_blank" rel="noreferrer">
+          <img src="43-discussions-overview.png" alt="页面 43 / Discussions · 讨论总览" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 43 / Discussions · 讨论总览</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="44-discussion-detail.png" target="_blank" rel="noreferrer">
+          <img src="44-discussion-detail.png" alt="页面 44 / Discussions · 讨论详情" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 44 / Discussions · 讨论详情</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="45-new-discussion.png" target="_blank" rel="noreferrer">
+          <img src="45-new-discussion.png" alt="页面 45 / Discussions · 新建讨论" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 45 / Discussions · 新建讨论</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="46-actions-overview.png" target="_blank" rel="noreferrer">
+          <img src="46-actions-overview.png" alt="页面 46 / Actions · 自动化总览" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 46 / Actions · 自动化总览</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="47-workflow-detail.png" target="_blank" rel="noreferrer">
+          <img src="47-workflow-detail.png" alt="页面 47 / Actions · 工作流详情与运行历史" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 47 / Actions · 工作流详情与运行历史</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="48-workflow-run.png" target="_blank" rel="noreferrer">
+          <img src="48-workflow-run.png" alt="页面 48 / Actions · 运行日志详情" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 48 / Actions · 运行日志详情</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="49-workflow-dispatch.png" target="_blank" rel="noreferrer">
+          <img src="49-workflow-dispatch.png" alt="页面 49 / Actions · 手动运行工作流" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 49 / Actions · 手动运行工作流</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="50-artifacts-caches.png" target="_blank" rel="noreferrer">
+          <img src="50-artifacts-caches.png" alt="页面 50 / Actions · 构建产物与缓存" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 50 / Actions · 构建产物与缓存</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="51-releases-overview.png" target="_blank" rel="noreferrer">
+          <img src="51-releases-overview.png" alt="页面 51 / Releases · 发布版本总览" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 51 / Releases · 发布版本总览</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="52-release-detail.png" target="_blank" rel="noreferrer">
+          <img src="52-release-detail.png" alt="页面 52 / Releases · 发布版本详情" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 52 / Releases · 发布版本详情</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="53-release-editor.png" target="_blank" rel="noreferrer">
+          <img src="53-release-editor.png" alt="页面 53 / Releases · 新建与编辑发布版本" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 53 / Releases · 新建与编辑发布版本</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="54-packages-overview.png" target="_blank" rel="noreferrer">
+          <img src="54-packages-overview.png" alt="页面 54 / Packages · 软件包总览" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 54 / Packages · 软件包总览</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="55-package-detail.png" target="_blank" rel="noreferrer">
+          <img src="55-package-detail.png" alt="页面 55 / Packages · 软件包版本与权限" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 55 / Packages · 软件包版本与权限</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="56-security-overview.png" target="_blank" rel="noreferrer">
+          <img src="56-security-overview.png" alt="页面 56 / 安全 · 安全中心总览" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 56 / 安全 · 安全中心总览</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="57-dependabot-alerts.png" target="_blank" rel="noreferrer">
+          <img src="57-dependabot-alerts.png" alt="页面 57 / 安全 · Dependabot 警报总览" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 57 / 安全 · Dependabot 警报总览</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="58-dependabot-detail.png" target="_blank" rel="noreferrer">
+          <img src="58-dependabot-detail.png" alt="页面 58 / 安全 · Dependabot 警报详情" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 58 / 安全 · Dependabot 警报详情</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="59-code-scanning-alerts.png" target="_blank" rel="noreferrer">
+          <img src="59-code-scanning-alerts.png" alt="页面 59 / 安全 · 代码扫描警报总览" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 59 / 安全 · 代码扫描警报总览</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="60-code-scanning-detail.png" target="_blank" rel="noreferrer">
+          <img src="60-code-scanning-detail.png" alt="页面 60 / 安全 · 代码扫描警报详情" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 60 / 安全 · 代码扫描警报详情</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="61-secret-scanning.png" target="_blank" rel="noreferrer">
+          <img src="61-secret-scanning.png" alt="页面 61 / 安全 · 密钥扫描" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 61 / 安全 · 密钥扫描</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="62-dependency-graph.png" target="_blank" rel="noreferrer">
+          <img src="62-dependency-graph.png" alt="页面 62 / 安全 · 依赖关系图与 SBOM" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 62 / 安全 · 依赖关系图与 SBOM</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="63-insights-overview.png" target="_blank" rel="noreferrer">
+          <img src="63-insights-overview.png" alt="页面 63 / 洞察 · 仓库洞察总览" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 63 / 洞察 · 仓库洞察总览</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="64-traffic-contributors.png" target="_blank" rel="noreferrer">
+          <img src="64-traffic-contributors.png" alt="页面 64 / 洞察 · 流量、提交与贡献者" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 64 / 洞察 · 流量、提交与贡献者</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="65-network-forks.png" target="_blank" rel="noreferrer">
+          <img src="65-network-forks.png" alt="页面 65 / 洞察 · 网络、Fork 与活动" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 65 / 洞察 · 网络、Fork 与活动</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="66-repository-general-settings.png" target="_blank" rel="noreferrer">
+          <img src="66-repository-general-settings.png" alt="页面 66 / 仓库设置 · 常规设置" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 66 / 仓库设置 · 常规设置</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="67-repository-access.png" target="_blank" rel="noreferrer">
+          <img src="67-repository-access.png" alt="页面 67 / 仓库设置 · 协作者与访问权限" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 67 / 仓库设置 · 协作者与访问权限</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="68-webhooks.png" target="_blank" rel="noreferrer">
+          <img src="68-webhooks.png" alt="页面 68 / 仓库设置 · Webhook" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 68 / 仓库设置 · Webhook</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="69-environments.png" target="_blank" rel="noreferrer">
+          <img src="69-environments.png" alt="页面 69 / 仓库设置 · 部署环境" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 69 / 仓库设置 · 部署环境</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="70-secrets-variables.png" target="_blank" rel="noreferrer">
+          <img src="70-secrets-variables.png" alt="页面 70 / 仓库设置 · Secrets 与变量" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 70 / 仓库设置 · Secrets 与变量</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="71-deploy-keys-apps.png" target="_blank" rel="noreferrer">
+          <img src="71-deploy-keys-apps.png" alt="页面 71 / 仓库设置 · Deploy Keys 与 GitHub Apps" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 71 / 仓库设置 · Deploy Keys 与 GitHub Apps</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="72-github-pages.png" target="_blank" rel="noreferrer">
+          <img src="72-github-pages.png" alt="页面 72 / 仓库设置 · GitHub Pages" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 72 / 仓库设置 · GitHub Pages</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="73-actions-settings.png" target="_blank" rel="noreferrer">
+          <img src="73-actions-settings.png" alt="页面 73 / 仓库设置 · Actions 策略" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 73 / 仓库设置 · Actions 策略</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="74-repository-danger-zone.png" target="_blank" rel="noreferrer">
+          <img src="74-repository-danger-zone.png" alt="页面 74 / 仓库设置 · 转移、归档与删除仓库" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 74 / 仓库设置 · 转移、归档与删除仓库</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="75-organization-overview.png" target="_blank" rel="noreferrer">
+          <img src="75-organization-overview.png" alt="页面 75 / 组织与企业 · 组织总览" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 75 / 组织与企业 · 组织总览</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="76-organization-members.png" target="_blank" rel="noreferrer">
+          <img src="76-organization-members.png" alt="页面 76 / 组织与企业 · 组织成员" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 76 / 组织与企业 · 组织成员</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="77-organization-teams.png" target="_blank" rel="noreferrer">
+          <img src="77-organization-teams.png" alt="页面 77 / 组织与企业 · 团队与权限" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 77 / 组织与企业 · 团队与权限</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="78-organization-repositories.png" target="_blank" rel="noreferrer">
+          <img src="78-organization-repositories.png" alt="页面 78 / 组织与企业 · 组织仓库与角色" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 78 / 组织与企业 · 组织仓库与角色</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="79-enterprise-audit.png" target="_blank" rel="noreferrer">
+          <img src="79-enterprise-audit.png" alt="页面 79 / 组织与企业 · 企业策略与审计日志" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 79 / 组织与企业 · 企业策略与审计日志</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="80-accounts.png" target="_blank" rel="noreferrer">
+          <img src="80-accounts.png" alt="页面 80 / 全局设置 · GitHub 账户管理" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 80 / 全局设置 · GitHub 账户管理</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="81-sync-storage.png" target="_blank" rel="noreferrer">
+          <img src="81-sync-storage.png" alt="页面 81 / 全局设置 · 同步与本地存储" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 81 / 全局设置 · 同步与本地存储</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="82-appearance-language-shortcuts.png" target="_blank" rel="noreferrer">
+          <img src="82-appearance-language-shortcuts.png" alt="页面 82 / 全局设置 · 外观、语言与快捷键" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 82 / 全局设置 · 外观、语言与快捷键</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="83-global-search.png" target="_blank" rel="noreferrer">
+          <img src="83-global-search.png" alt="页面 83 / 全局工具 · 全局搜索与命令面板" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 83 / 全局工具 · 全局搜索与命令面板</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="84-diagnostics-update-about.png" target="_blank" rel="noreferrer">
+          <img src="84-diagnostics-update-about.png" alt="页面 84 / 全局设置 · 诊断、更新与关于" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 84 / 全局设置 · 诊断、更新与关于</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="85-gists-overview.png" target="_blank" rel="noreferrer">
+          <img src="85-gists-overview.png" alt="页面 85 / Gists · Gist 总览" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 85 / Gists · Gist 总览</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="86-gist-editor.png" target="_blank" rel="noreferrer">
+          <img src="86-gist-editor.png" alt="页面 86 / Gists · Gist 查看与编辑" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 86 / Gists · Gist 查看与编辑</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="87-wiki-overview.png" target="_blank" rel="noreferrer">
+          <img src="87-wiki-overview.png" alt="页面 87 / Wiki · Wiki 总览" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 87 / Wiki · Wiki 总览</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="88-wiki-editor.png" target="_blank" rel="noreferrer">
+          <img src="88-wiki-editor.png" alt="页面 88 / Wiki · Wiki 查看与编辑" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 88 / Wiki · Wiki 查看与编辑</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="89-permission-rate-limit-states.png" target="_blank" rel="noreferrer">
+          <img src="89-permission-rate-limit-states.png" alt="页面 89 / 异常状态 · 权限不足与 API 限流" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 89 / 异常状态 · 权限不足与 API 限流</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="90-offline-sync-conflict-states.png" target="_blank" rel="noreferrer">
+          <img src="90-offline-sync-conflict-states.png" alt="页面 90 / 异常状态 · 离线、同步冲突与网络恢复" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 90 / 异常状态 · 离线、同步冲突与网络恢复</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+      <article class="card">
+        <a href="91-danger-progress-center.png" target="_blank" rel="noreferrer">
+          <img src="91-danger-progress-center.png" alt="页面 91 / 通用流程 · 危险操作确认与任务进度中心" loading="lazy">
+        </a>
+        <div class="meta">
+          <strong>页面 91 / 通用流程 · 危险操作确认与任务进度中心</strong>
+          <span>2× Retina · V1 · 点击查看原图</span>
+        </div>
+      </article>
+  </main>
+</body>
+</html>
