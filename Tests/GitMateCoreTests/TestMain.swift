@@ -8,6 +8,7 @@ struct GitMateCoreTestsMain {
             + onboardingStateTests
             + githubDeviceFlowTests
             + githubAPITests
+            + githubRESTClientTests
             + enterpriseConnectionTests
             + credentialStoreTests
             + repositorySyncServiceTests
