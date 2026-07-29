@@ -16,6 +16,7 @@ struct GitMateCoreTestsMain {
             + gitHistoryOperationServiceTests
             + gitConflictServiceTests
             + gitRemoteServiceTests
+            + gitTransferServiceTests
             + onboardingStateTests
             + githubDeviceFlowTests
             + githubAPITests

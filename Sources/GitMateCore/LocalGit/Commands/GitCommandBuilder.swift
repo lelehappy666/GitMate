@@ -904,6 +904,172 @@ public struct GitCommandBuilder: Sendable {
         )
     }
 
+    public func fetch(
+        repositoryURL: URL,
+        remote: String,
+        environment: [String: String]
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        guard GitInputValidator.isSafeRemoteName(remote) else {
+            throw LocalGitError.invalidReference
+        }
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "fetch",
+                "--progress",
+                "--prune",
+                remote
+            ],
+            environment: environment,
+            cancellation: .terminateProcess
+        )
+    }
+
+    public func aheadBehind(
+        repositoryURL: URL,
+        remote: String,
+        branch: String
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        guard GitInputValidator.isSafeRemoteName(remote),
+              GitInputValidator.isSafeReference(branch)
+        else {
+            throw LocalGitError.invalidReference
+        }
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "rev-list",
+                "--left-right",
+                "--count",
+                "refs/remotes/\(remote)/\(branch)...HEAD"
+            ]
+        )
+    }
+
+    public func remoteTrackingOID(
+        repositoryURL: URL,
+        remote: String,
+        branch: String
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        guard GitInputValidator.isSafeRemoteName(remote),
+              GitInputValidator.isSafeReference(branch)
+        else {
+            throw LocalGitError.invalidReference
+        }
+        return GitCommand(
+            arguments: [
+                "-C",
+                repository.path,
+                "rev-parse",
+                "--verify",
+                "refs/remotes/\(remote)/\(branch)"
+            ]
+        )
+    }
+
+    public func integratePull(
+        repositoryURL: URL,
+        plan: GitTransferPlan
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        guard plan.operation == .pull,
+              let branch = plan.branch,
+              let strategy = plan.pullStrategy,
+              GitInputValidator.isSafeRemoteName(plan.remote),
+              GitInputValidator.isSafeReference(branch)
+        else {
+            throw LocalGitError.invalidReference
+        }
+        let upstream = "refs/remotes/\(plan.remote)/\(branch)"
+        let arguments: [String]
+        switch strategy {
+        case .fastForwardOnly:
+            arguments = [
+                "-C",
+                repository.path,
+                "merge",
+                "--ff-only",
+                upstream
+            ]
+        case .merge:
+            arguments = [
+                "-C",
+                repository.path,
+                "merge",
+                "--no-edit",
+                upstream
+            ]
+        case .rebase:
+            arguments = [
+                "-C",
+                repository.path,
+                "rebase",
+                upstream
+            ]
+        }
+        return GitCommand(
+            arguments: arguments,
+            environment: ["GIT_EDITOR": "true"],
+            cancellation: .finishToSafeState
+        )
+    }
+
+    public func push(
+        repositoryURL: URL,
+        plan: GitTransferPlan,
+        environment: [String: String]
+    ) throws -> GitCommand {
+        let repository = try GitInputValidator.validatedRepositoryURL(
+            repositoryURL
+        )
+        guard plan.operation == .push,
+              let branch = plan.branch,
+              let mode = plan.pushMode,
+              GitInputValidator.isSafeRemoteName(plan.remote),
+              GitInputValidator.isSafeReference(branch)
+        else {
+            throw LocalGitError.invalidReference
+        }
+        var arguments = [
+            "-C",
+            repository.path,
+            "push",
+            "--progress"
+        ]
+        if mode == .forceWithLease {
+            guard let expectedOID = plan.expectedRemoteOID,
+                  GitInputValidator.isSafeHash(expectedOID)
+            else {
+                throw LocalGitError.invalidReference
+            }
+            arguments.append(
+                "--force-with-lease=refs/heads/\(branch):\(expectedOID)"
+            )
+        }
+        arguments.append(contentsOf: [
+            plan.remote,
+            "refs/heads/\(branch):refs/heads/\(branch)"
+        ])
+        return GitCommand(
+            arguments: arguments,
+            environment: environment,
+            cancellation: .terminateProcess
+        )
+    }
+
     private func validateHistoryEndpoint(_ value: String) throws {
         guard value == "HEAD"
                 || GitInputValidator.isSafeReference(value)

@@ -47,6 +47,8 @@ public enum GitConfigurationKey: String, Sendable {
     case userEmail = "user.email"
     case commitGPGSign = "commit.gpgSign"
     case signingFormat = "gpg.format"
+    case pullFF = "pull.ff"
+    case pullRebase = "pull.rebase"
 }
 
 public protocol GitCommitServicing: Sendable {
