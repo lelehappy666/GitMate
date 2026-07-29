@@ -37,6 +37,8 @@ public final class LocalRepositoryCatalog: @unchecked Sendable {
     private let rootDirectory: URL
     private let fileSystem: (any RepositoryFileSystem)?
     private let fileManager: FileManager?
+    private let registeredLocationsLock = NSLock()
+    private var registeredLocations: [Int64: URL] = [:]
 
     public init(
         rootDirectory: URL,
@@ -83,10 +85,35 @@ public final class LocalRepositoryCatalog: @unchecked Sendable {
     }
 
     public func localURL(for repository: Repository) -> URL {
-        rootDirectory.appending(
+        registeredLocationsLock.lock()
+        let registeredURL = registeredLocations[repository.id]
+        registeredLocationsLock.unlock()
+        if let registeredURL {
+            return registeredURL
+        }
+        return rootDirectory.appending(
             path: repository.safeLocalDirectoryName,
             directoryHint: .isDirectory
         )
+    }
+
+    public func register(_ record: ImportedLocalRepository) {
+        register(localURL: record.localURL, repositoryID: record.repository.id)
+    }
+
+    public func register(_ records: [ImportedLocalRepository]) {
+        registeredLocationsLock.lock()
+        for record in records {
+            registeredLocations[record.repository.id] =
+                record.localURL.standardizedFileURL
+        }
+        registeredLocationsLock.unlock()
+    }
+
+    public func register(localURL: URL, repositoryID: Int64) {
+        registeredLocationsLock.lock()
+        registeredLocations[repositoryID] = localURL.standardizedFileURL
+        registeredLocationsLock.unlock()
     }
 
     public func records(repositories: [Repository]) throws -> [LocalRepositoryRecord] {

@@ -18,6 +18,7 @@ struct GitMateCoreTestsMain {
             + workspaceRouteTests
             + localRepositoryCatalogTests
             + importedLocalRepositoryStoreTests
+            + localRepositoryImporterTests
             + workspaceRepositoryClassifierTests
             + localGitReaderTests
             + workspaceContentServiceTests
