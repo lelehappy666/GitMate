@@ -18,6 +18,8 @@ struct GitMateCoreTestsMain {
             + localRepositoryCatalogTests
             + localGitReaderTests
             + workspaceContentServiceTests
+            + readmeBlockParserTests
+            + repositoryCoverExtractorTests
         var failedCount = 0
 
         for test in tests {
