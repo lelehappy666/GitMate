@@ -18,6 +18,7 @@ public final class WorkingTreeViewModel {
     private let repositoryURL: URL
     private let reader: any WorkingTreeReading
     private let watcher: (any RepositoryFileSystemWatching)?
+    private let mutationService: (any GitDiffServicing)?
     private var allFiles: [WorkingTreeFile] = []
     private var refreshGeneration: UInt64 = 0
     private var filterGeneration: UInt64 = 0
@@ -28,11 +29,13 @@ public final class WorkingTreeViewModel {
     public init(
         repositoryURL: URL,
         reader: any WorkingTreeReading,
-        watcher: (any RepositoryFileSystemWatching)? = nil
+        watcher: (any RepositoryFileSystemWatching)? = nil,
+        mutationService: (any GitDiffServicing)? = nil
     ) {
         self.repositoryURL = repositoryURL
         self.reader = reader
         self.watcher = watcher
+        self.mutationService = mutationService
     }
 
     public func refresh() async {
@@ -62,6 +65,48 @@ public final class WorkingTreeViewModel {
             selection.remove(id)
         } else {
             selection.insert(id)
+        }
+    }
+
+    public func stageSelection() async {
+        guard let mutationService else {
+            return
+        }
+        let paths = allFiles
+            .filter {
+                selection.contains($0.id)
+                    && $0.category != .staged
+                    && $0.category != .conflicted
+            }
+            .map(\.path)
+        guard !paths.isEmpty else {
+            return
+        }
+        await performMutation {
+            try await mutationService.stage(
+                repositoryURL: repositoryURL,
+                paths: paths
+            )
+        }
+    }
+
+    public func unstageSelection() async {
+        guard let mutationService else {
+            return
+        }
+        let paths = allFiles
+            .filter {
+                selection.contains($0.id) && $0.category == .staged
+            }
+            .map(\.path)
+        guard !paths.isEmpty else {
+            return
+        }
+        await performMutation {
+            try await mutationService.unstage(
+                repositoryURL: repositoryURL,
+                paths: paths
+            )
         }
     }
 
@@ -158,6 +203,23 @@ public final class WorkingTreeViewModel {
                     error.localizedDescription
                 ),
                 recoverySuggestion: "请刷新仓库状态后重试。"
+            )
+        }
+    }
+
+    private func performMutation(
+        _ operation: () async throws -> Void
+    ) async {
+        do {
+            try await operation()
+            selection.removeAll()
+            await refresh()
+        } catch {
+            self.error = LocalGitUserFacingError(
+                message: GitOutputRedactor.redact(
+                    error.localizedDescription
+                ),
+                recoverySuggestion: "请刷新状态后重试。"
             )
         }
     }

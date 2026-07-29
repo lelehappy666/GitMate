@@ -10,6 +10,7 @@ struct GitMateCoreTestsMain {
             + workingTreeReaderTests
             + workingTreeStressTests
             + workingTreeViewModelTests
+            + gitDiffServiceTests
             + onboardingStateTests
             + githubDeviceFlowTests
             + githubAPITests
