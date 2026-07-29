@@ -3,6 +3,29 @@ import Foundation
 import GitMateCore
 
 let repositoryWallViewModelTests = [
+    TestCase("云端仓库海报保留 GitHub 返回的主要语言") {
+        let repository = Repository(
+            id: 99,
+            name: "mac-client",
+            fullName: "gitmate/mac-client",
+            isPrivate: true,
+            defaultBranch: "main",
+            sizeInKilobytes: 2_048,
+            cloneURL: URL(
+                string: "https://github.com/gitmate/mac-client.git"
+            )!,
+            ownerAvatarURL: nil,
+            primaryLanguage: "Swift"
+        )
+
+        let item = RepositoryPosterBuilder.makeCloud(
+            repositories: [repository]
+        )[0]
+
+        try expectEqual(item.language, "Swift", "语言菜单应获得真实的主要语言")
+        try expectEqual(item.syncMode, .never, "云端仓库默认不自动下载")
+        try expectEqual(item.syncState, .notSynchronized, "云端仓库应标记为尚未同步")
+    },
     TestCase("仓库墙组合搜索可见性语言和同步状态筛选") { @MainActor in
         let items = [
             repositoryPosterFixture(

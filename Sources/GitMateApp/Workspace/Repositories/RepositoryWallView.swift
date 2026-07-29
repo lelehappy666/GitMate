@@ -11,6 +11,8 @@ struct RepositoryWallView: View {
     @Bindable var viewModel: RepositoryWallViewModel
     let scope: RepositoryWallScope
     let onRoute: ((WorkspaceRoute) -> Void)?
+    let onAddLocal: (() -> Void)?
+    let isAddingLocalRepository: Bool
     let onRefresh: (() -> Void)?
     let onLoadNextPage: (() -> Void)?
     let onDownload:
@@ -24,6 +26,8 @@ struct RepositoryWallView: View {
         viewModel: RepositoryWallViewModel,
         scope: RepositoryWallScope = .local,
         onRoute: ((WorkspaceRoute) -> Void)? = nil,
+        onAddLocal: (() -> Void)? = nil,
+        isAddingLocalRepository: Bool = false,
         onRefresh: (() -> Void)? = nil,
         onLoadNextPage: (() -> Void)? = nil,
         onDownload:
@@ -32,6 +36,8 @@ struct RepositoryWallView: View {
         self.viewModel = viewModel
         self.scope = scope
         self.onRoute = onRoute
+        self.onAddLocal = onAddLocal
+        self.isAddingLocalRepository = isAddingLocalRepository
         self.onRefresh = onRefresh
         self.onLoadNextPage = onLoadNextPage
         self.onDownload = onDownload
@@ -73,7 +79,33 @@ struct RepositoryWallView: View {
 
             Spacer(minLength: 16)
 
-            if let onRefresh {
+            if scope == .local {
+                if let onAddLocal {
+                    Button(action: onAddLocal) {
+                        if isAddingLocalRepository {
+                            HStack(spacing: 7) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("正在添加")
+                            }
+                        } else {
+                            Label(
+                                "添加本地仓库",
+                                systemImage: "plus"
+                            )
+                        }
+                    }
+                    .font(.system(size: 12, weight: .bold))
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .tint(GitMateTheme.accent)
+                    .disabled(isAddingLocalRepository)
+                    .accessibilityIdentifier(
+                        "workspace.repositories.local.add"
+                    )
+                }
+                coverCountBadge
+            } else if let onRefresh {
                 Button {
                     onRefresh()
                     scheduleCoverLoading(
@@ -89,113 +121,141 @@ struct RepositoryWallView: View {
                 .accessibilityIdentifier(
                     "workspace.repositories.cloud.refresh"
                 )
-            } else {
-                HStack(spacing: 11) {
-                    Image(systemName: "photo.stack")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(GitMateTheme.accent)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("\(readmeCoverCount) / \(viewModel.items.count)")
-                            .font(.system(size: 17, weight: .bold, design: .rounded))
-                            .foregroundStyle(GitMateTheme.textPrimary)
-                        Text("已缓存封面")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(GitMateTheme.textSecondary)
-                    }
-                }
-                .padding(.horizontal, 15)
-                .frame(height: 52)
-                .background(.white)
-                .clipShape(
-                    RoundedRectangle(
-                        cornerRadius: GitMateTheme.compactCornerRadius,
-                        style: .continuous
-                    )
-                )
-                .overlay {
-                    RoundedRectangle(
-                        cornerRadius: GitMateTheme.compactCornerRadius,
-                        style: .continuous
-                    )
-                    .stroke(GitMateTheme.border, lineWidth: 1)
-                }
             }
         }
         .frame(maxWidth: GitMateTheme.contentMaxWidth, alignment: .leading)
     }
 
     private func toolbar(visibleItemCount: Int) -> some View {
-        VStack(spacing: 10) {
+        ViewThatFits(in: .horizontal) {
             HStack(spacing: 10) {
-                HStack(spacing: 9) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(GitMateTheme.textTertiary)
-                    TextField(
-                        "搜索仓库或所有者",
-                        text: $viewModel.searchText
-                    )
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(GitMateTheme.textPrimary)
-                }
-                .padding(.horizontal, 13)
-                .frame(maxWidth: .infinity, minHeight: 38)
-                .background(.white)
-                .clipShape(
-                    RoundedRectangle(
-                        cornerRadius: GitMateTheme.compactCornerRadius,
-                        style: .continuous
-                    )
-                )
-                .overlay {
-                    RoundedRectangle(
-                        cornerRadius: GitMateTheme.compactCornerRadius,
-                        style: .continuous
-                    )
-                    .stroke(GitMateTheme.border, lineWidth: 1)
-                }
-                .accessibilityIdentifier("workspace.repositories.search")
-
-                filterPicker(
-                    title: "排序",
-                    selection: $viewModel.sort,
-                    options: RepositoryWallSort.allCases,
-                    label: sortTitle,
-                    defaultValue: .recentlyUpdated
-                )
-                .frame(width: 142)
-            }
-
-            HStack(spacing: 10) {
-                filterPicker(
-                    title: "可见性",
-                    selection: $viewModel.visibility,
-                    options: RepositoryVisibilityFilter.allCases,
-                    label: visibilityFilterTitle,
-                    defaultValue: .all
-                )
-
-                languagePicker
-
-                if scope == .local {
-                    filterPicker(
-                        title: "同步状态",
-                        selection: $viewModel.syncState,
-                        options: RepositorySyncStateFilter.allCases,
-                        label: syncFilterTitle,
-                        defaultValue: .all
-                    )
-                }
-
-                Spacer(minLength: 0)
-
-                Text("显示 \(visibleItemCount) 个仓库")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(GitMateTheme.textSecondary)
+                searchField
+                    .frame(minWidth: 230, maxWidth: .infinity)
+                repositoryFilterControls
+                sortPicker
+                    .frame(width: 126)
+                visibleCount(visibleItemCount)
             }
             .accessibilityIdentifier("workspace.repositories.filter")
+
+            VStack(spacing: 10) {
+                HStack(spacing: 10) {
+                    searchField
+                    sortPicker
+                        .frame(width: 126)
+                }
+                HStack(spacing: 10) {
+                    repositoryFilterControls
+                    Spacer(minLength: 0)
+                    visibleCount(visibleItemCount)
+                }
+                .accessibilityIdentifier(
+                    "workspace.repositories.filter"
+                )
+            }
         }
         .frame(maxWidth: GitMateTheme.contentMaxWidth, alignment: .leading)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(GitMateTheme.textTertiary)
+            TextField(
+                "搜索仓库或所有者",
+                text: $viewModel.searchText
+            )
+            .textFieldStyle(.plain)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(GitMateTheme.textPrimary)
+        }
+        .padding(.horizontal, 13)
+        .frame(maxWidth: .infinity, minHeight: 38)
+        .background(.white)
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: GitMateTheme.compactCornerRadius,
+                style: .continuous
+            )
+        )
+        .overlay {
+            RoundedRectangle(
+                cornerRadius: GitMateTheme.compactCornerRadius,
+                style: .continuous
+            )
+            .stroke(GitMateTheme.border, lineWidth: 1)
+        }
+        .accessibilityIdentifier("workspace.repositories.search")
+    }
+
+    @ViewBuilder
+    private var repositoryFilterControls: some View {
+        filterPicker(
+            title: "可见性",
+            selection: $viewModel.visibility,
+            options: RepositoryVisibilityFilter.allCases,
+            label: visibilityFilterTitle,
+            defaultValue: .all
+        )
+        languagePicker
+        if scope == .local {
+            filterPicker(
+                title: "同步状态",
+                selection: $viewModel.syncState,
+                options: RepositorySyncStateFilter.allCases,
+                label: syncFilterTitle,
+                defaultValue: .all
+            )
+        }
+    }
+
+    private var sortPicker: some View {
+        filterPicker(
+            title: "排序",
+            selection: $viewModel.sort,
+            options: RepositoryWallSort.allCases,
+            label: sortTitle,
+            defaultValue: .recentlyUpdated
+        )
+    }
+
+    private func visibleCount(_ count: Int) -> some View {
+        Text("显示 \(count) 个仓库")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(GitMateTheme.textSecondary)
+            .fixedSize()
+    }
+
+    private var coverCountBadge: some View {
+        HStack(spacing: 11) {
+            Image(systemName: "photo.stack")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(GitMateTheme.accent)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(readmeCoverCount) / \(viewModel.items.count)")
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .foregroundStyle(GitMateTheme.textPrimary)
+                Text("已缓存封面")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(GitMateTheme.textSecondary)
+            }
+        }
+        .padding(.horizontal, 15)
+        .frame(height: 52)
+        .background(.white)
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: GitMateTheme.compactCornerRadius,
+                style: .continuous
+            )
+        )
+        .overlay {
+            RoundedRectangle(
+                cornerRadius: GitMateTheme.compactCornerRadius,
+                style: .continuous
+            )
+            .stroke(GitMateTheme.border, lineWidth: 1)
+        }
     }
 
     private func filterPicker<Value: Hashable & Equatable>(
@@ -334,7 +394,8 @@ struct RepositoryWallView: View {
             emptyState(
                 symbol: "square.stack.3d.up.slash",
                 title: "还没有仓库",
-                message: "完成同步或添加本地仓库后，仓库会出现在这里。"
+                message: "完成同步或添加本地仓库后，仓库会出现在这里。",
+                allowsAdding: scope == .local
             )
         } else if visibleItems.isEmpty {
             emptyState(
@@ -359,17 +420,10 @@ struct RepositoryWallView: View {
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 18) {
                         ForEach(visibleItems) { item in
-                            ZStack(alignment: .bottomTrailing) {
-                                RepositoryPosterCard(item: item)
-
-                                if let onDownload {
-                                    downloadMenu(
-                                        repository: item.repository,
-                                        action: onDownload
-                                    )
-                                    .padding(12)
-                                }
-                            }
+                            RepositoryPosterCard(
+                                item: item,
+                                onDownload: onDownload
+                            )
                             .frame(maxWidth: 220)
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -437,40 +491,11 @@ struct RepositoryWallView: View {
         }
     }
 
-    private func downloadMenu(
-        repository: Repository,
-        action:
-            @escaping (Repository, RepositorySyncMode) -> Void
-    ) -> some View {
-        Menu {
-            Button("手动同步") {
-                action(repository, .manual)
-            }
-            Button("自动同步") {
-                action(repository, .automatic)
-            }
-        } label: {
-            Label("下载", systemImage: "arrow.down.to.line")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 11)
-                .frame(height: 30)
-                .background(GitMateTheme.accent)
-                .clipShape(Capsule())
-                .shadow(
-                    color: GitMateTheme.accent.opacity(0.25),
-                    radius: 8,
-                    y: 3
-                )
-        }
-        .menuStyle(.borderlessButton)
-        .accessibilityLabel("下载 \(repository.fullName)")
-    }
-
     private func emptyState(
         symbol: String,
         title: String,
-        message: String
+        message: String,
+        allowsAdding: Bool = false
     ) -> some View {
         VStack(spacing: 10) {
             Image(systemName: symbol)
@@ -482,6 +507,22 @@ struct RepositoryWallView: View {
             Text(message)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(GitMateTheme.textSecondary)
+            if allowsAdding, let onAddLocal {
+                Button(action: onAddLocal) {
+                    Label(
+                        isAddingLocalRepository ? "正在添加" : "添加本地仓库",
+                        systemImage: isAddingLocalRepository
+                            ? "arrow.triangle.2.circlepath"
+                            : "plus"
+                    )
+                }
+                .font(.system(size: 12, weight: .bold))
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .tint(GitMateTheme.accent)
+                .disabled(isAddingLocalRepository)
+                .padding(.top, 6)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -565,6 +606,8 @@ struct RepositoryWallView: View {
 
 private struct RepositoryPosterCard: View {
     let item: RepositoryPosterItem
+    let onDownload:
+        ((Repository, RepositorySyncMode) -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -640,11 +683,18 @@ private struct RepositoryPosterCard: View {
                     Text(syncStateTitle)
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(GitMateTheme.textPrimary)
+                        .lineLimit(1)
                     Spacer(minLength: 4)
-                    Text(syncModeTitle)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(GitMateTheme.textSecondary)
+                    if let onDownload {
+                        downloadMenu(action: onDownload)
+                    } else {
+                        Text(syncModeTitle)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(GitMateTheme.textSecondary)
+                            .lineLimit(1)
+                    }
                 }
+                .frame(height: 30)
             }
             .padding(13)
         }
@@ -769,6 +819,30 @@ private struct RepositoryPosterCard: View {
         case .never:
             "不同步"
         }
+    }
+
+    private func downloadMenu(
+        action:
+            @escaping (Repository, RepositorySyncMode) -> Void
+    ) -> some View {
+        Menu {
+            Button("手动同步") {
+                action(item.repository, .manual)
+            }
+            Button("自动同步") {
+                action(item.repository, .automatic)
+            }
+        } label: {
+            Label("下载", systemImage: "arrow.down.to.line")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(GitMateTheme.accent)
+                .padding(.horizontal, 9)
+                .frame(height: 26)
+                .background(GitMateTheme.accent.opacity(0.10))
+                .clipShape(Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .accessibilityLabel("下载 \(item.repository.fullName)")
     }
 
     private func languageColor(_ language: String?) -> Color {

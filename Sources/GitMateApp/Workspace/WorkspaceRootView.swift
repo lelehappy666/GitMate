@@ -1,3 +1,4 @@
+import AppKit
 import GitMateCore
 import SwiftUI
 
@@ -6,6 +7,7 @@ struct WorkspaceRootView: View {
     @State private var selection: WorkspaceSelection
     @State private var apiAuthorizationRequired = false
     @State private var repositoryGroups: WorkspaceRepositoryGroups
+    @State private var repositoryRevision = 0
 
     let preferences: [RepositorySyncPreference]
     let runtime: WorkspaceRuntimeDependencies
@@ -24,8 +26,33 @@ struct WorkspaceRootView: View {
         onDownloadRepository:
             @escaping (Repository, RepositorySyncMode) -> Void = { _, _ in }
     ) {
-        _session = State(initialValue: session)
-        _selection = State(initialValue: WorkspaceSelection(route: session.route))
+        var initialSession = session
+        let importedRepositories = (
+            try? runtime.importedRepositories(for: session.account)
+        ) ?? []
+        for imported in importedRepositories {
+            if let matchingRepository = initialSession.repositories.first(
+                where: {
+                    $0.fullName.caseInsensitiveCompare(
+                        imported.repository.fullName
+                    ) == .orderedSame
+                }
+            ) {
+                runtime.catalog.register(
+                    localURL: imported.localURL,
+                    repositoryID: matchingRepository.id
+                )
+            } else if !initialSession.repositories.contains(
+                where: { $0.id == imported.repository.id }
+            ) {
+                initialSession.repositories.append(imported.repository)
+            }
+        }
+
+        _session = State(initialValue: initialSession)
+        _selection = State(
+            initialValue: WorkspaceSelection(route: initialSession.route)
+        )
         let cachedRecords = (
             try? runtime.cache.load(accountID: session.account.id)
         )?.repositoryRecords ?? []
@@ -33,7 +60,7 @@ struct WorkspaceRootView: View {
             cachedRecords.map { ($0.repository.id, $0) },
             uniquingKeysWith: { _, newest in newest }
         )
-        let records = session.repositories.map { repository in
+        let records = initialSession.repositories.map { repository in
             (try? runtime.catalog.record(for: repository))
                 ?? cachedRecordsByID[repository.id]
                 ?? LocalRepositoryRecord(
@@ -46,7 +73,7 @@ struct WorkspaceRootView: View {
         }
         _repositoryGroups = State(
             initialValue: WorkspaceRepositoryClassifier.classify(
-                repositories: session.repositories,
+                repositories: initialSession.repositories,
                 records: records,
                 preferences: preferences
             )
@@ -108,6 +135,7 @@ struct WorkspaceRootView: View {
                     selection.route = .repositories
                 }
             )
+            .id("dashboard-\(repositoryRevision)")
         case .repositories:
             RepositoryWallContainer(
                 account: session.account,
@@ -122,8 +150,10 @@ struct WorkspaceRootView: View {
                 ),
                 onRoute: onRoute,
                 onDownloadRepository: onDownloadRepository,
+                onImportLocalRepository: importLocalRepository,
                 onAuthorizationRequired: requireReauthorization
             )
+            .id("repositories-\(repositoryRevision)")
         case let .repositoryOverview(repositoryID):
             if let repository = repository(repositoryID) {
                 RepositoryOverviewPageContainer(
@@ -195,6 +225,57 @@ struct WorkspaceRootView: View {
         session.repositories.first { $0.id == id }
     }
 
+    private func importLocalRepository(at selectedURL: URL) async throws {
+        let imported = try await runtime.importLocalRepository(
+            at: selectedURL,
+            account: session.account
+        )
+        if let matchingIndex = session.repositories.firstIndex(
+            where: {
+                $0.fullName.caseInsensitiveCompare(
+                    imported.repository.fullName
+                ) == .orderedSame
+            }
+        ) {
+            runtime.catalog.register(
+                localURL: imported.localURL,
+                repositoryID: session.repositories[matchingIndex].id
+            )
+        } else if !session.repositories.contains(
+            where: { $0.id == imported.repository.id }
+        ) {
+            session.repositories.append(imported.repository)
+        }
+        refreshRepositoryGroups()
+        repositoryRevision += 1
+    }
+
+    private func refreshRepositoryGroups() {
+        let cachedRecords = (
+            try? runtime.cache.load(accountID: session.account.id)
+        )?.repositoryRecords ?? []
+        let cachedRecordsByID = Dictionary(
+            cachedRecords.map { ($0.repository.id, $0) },
+            uniquingKeysWith: { _, newest in newest }
+        )
+        let records = session.repositories.map { repository in
+            (try? runtime.catalog.record(for: repository))
+                ?? cachedRecordsByID[repository.id]
+                ?? LocalRepositoryRecord(
+                    repository: repository,
+                    localURL: runtime.catalog.localURL(for: repository),
+                    availability: .missing,
+                    localSizeInBytes: 0,
+                    lastInspectedAt: .distantPast
+                )
+        }
+        repositoryGroups = WorkspaceRepositoryClassifier.classify(
+            repositories: session.repositories,
+            records: records,
+            preferences: preferences
+        )
+    }
+
     private var missingRepositoryView: some View {
         ContentUnavailableView(
             "仓库不可用",
@@ -261,6 +342,7 @@ private struct RepositoryWallContainer: View {
     let onRoute: (WorkspaceRoute) -> Void
     let onDownloadRepository:
         (Repository, RepositorySyncMode) -> Void
+    let onImportLocalRepository: (URL) async throws -> Void
     let onAuthorizationRequired: () -> Void
 
     @State private var selectedTab: RepositoryLibraryTab = .local
@@ -268,6 +350,7 @@ private struct RepositoryWallContainer: View {
     @State private var cloudViewModel: CloudRepositoryViewModel?
     @State private var cloudWallViewModel: RepositoryWallViewModel
     @State private var errorMessage: String?
+    @State private var isImportingLocalRepository = false
 
     init(
         account: GitHubAccount,
@@ -281,6 +364,8 @@ private struct RepositoryWallContainer: View {
         onRoute: @escaping (WorkspaceRoute) -> Void,
         onDownloadRepository:
             @escaping (Repository, RepositorySyncMode) -> Void,
+        onImportLocalRepository:
+            @escaping (URL) async throws -> Void,
         onAuthorizationRequired: @escaping () -> Void
     ) {
         self.account = account
@@ -293,6 +378,7 @@ private struct RepositoryWallContainer: View {
         self.cloudAPI = cloudAPI
         self.onRoute = onRoute
         self.onDownloadRepository = onDownloadRepository
+        self.onImportLocalRepository = onImportLocalRepository
         self.onAuthorizationRequired = onAuthorizationRequired
 
         let modes = Dictionary(
@@ -302,9 +388,10 @@ private struct RepositoryWallContainer: View {
         )
         let initialItems = repositories.map { repository in
             let mode = modes[repository.id] ?? .manual
+            let language = repository.primaryLanguage
             return RepositoryPosterItem(
                 repository: repository,
-                language: nil,
+                language: language,
                 syncMode: mode,
                 syncState: mode == .never
                     ? .notSynchronized
@@ -313,7 +400,7 @@ private struct RepositoryWallContainer: View {
                 cover: .fallback(
                     FallbackRepositoryCover.make(
                         repository: repository,
-                        language: nil
+                        language: language
                     )
                 )
             )
@@ -360,7 +447,9 @@ private struct RepositoryWallContainer: View {
                 RepositoryWallView(
                     viewModel: localViewModel,
                     scope: .local,
-                    onRoute: onRoute
+                    onRoute: onRoute,
+                    onAddLocal: chooseLocalRepository,
+                    isAddingLocalRepository: isImportingLocalRepository
                 )
             } else if let cloudViewModel {
                 cloudStatus(for: cloudViewModel.phase)
@@ -584,22 +673,40 @@ private struct RepositoryWallContainer: View {
         _ repositories: [Repository]
     ) {
         cloudWallViewModel.updateItems(
-            repositories.map { repository in
-                RepositoryPosterItem(
-                    repository: repository,
-                    language: nil,
-                    syncMode: .never,
-                    syncState: .notSynchronized,
-                    updatedAt: nil,
-                    cover: .fallback(
-                        FallbackRepositoryCover.make(
-                            repository: repository,
-                            language: nil
-                        )
-                    )
-                )
-            }
+            RepositoryPosterBuilder.makeCloud(
+                repositories: repositories
+            )
         )
+    }
+
+    private func chooseLocalRepository() {
+        let panel = NSOpenPanel()
+        panel.title = "添加本地 GitHub 仓库"
+        panel.message = "选择已有 Git 仓库，GitMate 会原地管理，不复制或移动文件。"
+        panel.prompt = "添加仓库"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+
+        guard panel.runModal() == .OK,
+              let selectedURL = panel.url
+        else {
+            return
+        }
+
+        errorMessage = nil
+        isImportingLocalRepository = true
+        Task {
+            defer {
+                isImportingLocalRepository = false
+            }
+            do {
+                try await onImportLocalRepository(selectedURL)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 }
 

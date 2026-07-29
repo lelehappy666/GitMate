@@ -118,7 +118,8 @@ enum WorkspacePreviewFactory {
             cloneURL: URL(
                 string: "https://github.com/GitMate/mac-client.git"
             )!,
-            ownerAvatarURL: account.avatarURL
+            ownerAvatarURL: account.avatarURL,
+            primaryLanguage: "Swift"
         ),
         Repository(
             id: 102,
@@ -132,7 +133,8 @@ enum WorkspacePreviewFactory {
             )!,
             ownerAvatarURL: URL(
                 string: "https://avatars.githubusercontent.com/u/583231?v=4"
-            )
+            ),
+            primaryLanguage: "TypeScript"
         ),
         Repository(
             id: 103,
@@ -146,7 +148,8 @@ enum WorkspacePreviewFactory {
             )!,
             ownerAvatarURL: URL(
                 string: "https://avatars.githubusercontent.com/u/69631?v=4"
-            )
+            ),
+            primaryLanguage: "Vue"
         )
     ]
 }

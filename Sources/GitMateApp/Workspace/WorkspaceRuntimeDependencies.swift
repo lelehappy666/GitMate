@@ -14,6 +14,8 @@ final class WorkspaceRuntimeDependencies {
     let cache: any WorkspaceCaching
     let coverCache: any RepositoryCoverCaching
     let coverLoader: any RepositoryCoverLoading
+    let importedRepositoryStore: any ImportedLocalRepositoryStoring
+    let localRepositoryImporter: any LocalRepositoryImporting
 
     private var contentServices: [String: WorkspaceContentService] = [:]
     private var workspaceAPIs: [String: any GitHubWorkspaceAPI] = [:]
@@ -40,7 +42,11 @@ final class WorkspaceRuntimeDependencies {
             DefaultGitHubAPIProvider(),
         cache: (any WorkspaceCaching)? = nil,
         coverCache: (any RepositoryCoverCaching)? = nil,
-        coverLoader: (any RepositoryCoverLoading)? = nil
+        coverLoader: (any RepositoryCoverLoading)? = nil,
+        importedRepositoryStore:
+            (any ImportedLocalRepositoryStoring)? = nil,
+        localRepositoryImporter:
+            (any LocalRepositoryImporting)? = nil
     ) {
         self.credentialStore = credentialStore
         self.catalog = catalog ?? LocalRepositoryCatalog(
@@ -69,6 +75,49 @@ final class WorkspaceRuntimeDependencies {
         self.coverLoader = coverLoader ?? RepositoryCoverLoader(
             cache: repositoryCoverCache
         )
+        self.importedRepositoryStore =
+            importedRepositoryStore
+            ?? JSONImportedLocalRepositoryStore(
+                rootDirectory: syncDestination
+                    .deletingLastPathComponent()
+                    .appending(
+                        path: "ImportedRepositories",
+                        directoryHint: .isDirectory
+                    )
+            )
+        self.localRepositoryImporter =
+            localRepositoryImporter
+            ?? LocalRepositoryImporter(
+                executor: ProcessCommandExecutor()
+            )
+    }
+
+    func importedRepositories(
+        for account: GitHubAccount
+    ) throws -> [ImportedLocalRepository] {
+        let records = try importedRepositoryStore.load(
+            accountID: account.id
+        )
+        catalog.register(records)
+        return records
+    }
+
+    func importLocalRepository(
+        at selectedURL: URL,
+        account: GitHubAccount
+    ) async throws -> ImportedLocalRepository {
+        let record = try await localRepositoryImporter.importRepository(
+            at: selectedURL,
+            account: account
+        )
+        var records = try importedRepositoryStore.load(
+            accountID: account.id
+        )
+        records.removeAll { $0.repository.id == record.repository.id }
+        records.append(record)
+        try importedRepositoryStore.save(records, accountID: account.id)
+        catalog.register(record)
+        return record
     }
 
     func authorization(for account: GitHubAccount) -> WorkspaceAuthorization {

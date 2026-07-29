@@ -129,6 +129,27 @@ public struct RepositoryPosterItem: Identifiable, Equatable, Sendable {
 }
 
 public enum RepositoryPosterBuilder {
+    public static func makeCloud(
+        repositories: [Repository]
+    ) -> [RepositoryPosterItem] {
+        repositories.map { repository in
+            let language = repository.primaryLanguage
+            return RepositoryPosterItem(
+                repository: repository,
+                language: language,
+                syncMode: .never,
+                syncState: .notSynchronized,
+                updatedAt: nil,
+                cover: .fallback(
+                    FallbackRepositoryCover.make(
+                        repository: repository,
+                        language: language
+                    )
+                )
+            )
+        }
+    }
+
     public static func make(
         contents: [RepositoryCardContent],
         extractor: RepositoryCoverExtractor,
@@ -146,6 +167,7 @@ public enum RepositoryPosterBuilder {
     ) -> RepositoryPosterItem {
         let content = card.content
         let language = content.onlineSummary?.primaryLanguage
+            ?? content.repository.primaryLanguage
         let fallback = FallbackRepositoryCover.make(
             repository: content.repository,
             language: language
