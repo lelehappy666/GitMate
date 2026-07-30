@@ -115,6 +115,53 @@ let commitGraphSceneStoreTests = [
             nil,
             "仅有临时文件时不得恢复不完整场景"
         )
+    },
+    TestCase("旧场景缺少区域字段时按空数组恢复") {
+        let data = Data(
+            """
+            {
+              "schemaVersion": 1,
+              "nodePositions": {},
+              "groups": [],
+              "edgePorts": {},
+              "boundaryPorts": [],
+              "lineStyle": "curve"
+            }
+            """.utf8
+        )
+
+        let scene = try JSONDecoder().decode(
+            CommitGraphSceneState.self,
+            from: data
+        )
+
+        try expectEqual(
+            scene.regions,
+            [],
+            "旧场景缺少区域字段时必须兼容为无区域"
+        )
+    },
+    TestCase("版本区域随场景完整保存和恢复") {
+        let directory = commitGraphSceneStoreTemporaryDirectory()
+        let store = JSONCommitGraphSceneStore(rootDirectory: directory)
+        let region = CommitGraphRegionMarker(
+            id: UUID(
+                uuidString: "BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF"
+            )!,
+            title: "v2.0",
+            colorHex: "#2F80ED",
+            rect: GraphRect(x: 120, y: 80, width: 640, height: 480)
+        )
+        let scene = CommitGraphSceneState(regions: [region])
+
+        try await store.save(scene, repositoryID: 88)
+        let restored = try await store.load(repositoryID: 88)
+
+        try expectEqual(
+            restored?.regions,
+            [region],
+            "区域标题、颜色和画布范围必须完整恢复"
+        )
     }
 ]
 

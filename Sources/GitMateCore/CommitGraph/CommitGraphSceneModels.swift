@@ -115,6 +115,30 @@ public struct CommitGraphGroup: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+public struct CommitGraphRegionMarker:
+    Codable,
+    Equatable,
+    Identifiable,
+    Sendable
+{
+    public let id: UUID
+    public var title: String
+    public var colorHex: String
+    public var rect: GraphRect
+
+    public init(
+        id: UUID = UUID(),
+        title: String,
+        colorHex: String,
+        rect: GraphRect
+    ) {
+        self.id = id
+        self.title = title
+        self.colorHex = colorHex
+        self.rect = rect
+    }
+}
+
 public enum CommitGraphBoundaryDirection: String, Codable, Sendable {
     case enteringGroup
     case leavingGroup
@@ -142,6 +166,7 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
     public var schemaVersion: Int
     public var nodePositions: [String: GraphPoint]
     public var groups: [CommitGraphGroup]
+    public var regions: [CommitGraphRegionMarker]
     public var edgePorts: [String: CommitGraphEdgePorts]
     public var boundaryPorts: [CollapsedEdgeKey: CommitGraphEdgePorts]
     public var lineStyle: CommitGraphLineStyle
@@ -150,6 +175,7 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
         schemaVersion: Int = currentSchemaVersion,
         nodePositions: [String: GraphPoint] = [:],
         groups: [CommitGraphGroup] = [],
+        regions: [CommitGraphRegionMarker] = [],
         edgePorts: [String: CommitGraphEdgePorts] = [:],
         boundaryPorts: [CollapsedEdgeKey: CommitGraphEdgePorts] = [:],
         lineStyle: CommitGraphLineStyle = .curve
@@ -157,9 +183,52 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
         self.schemaVersion = schemaVersion
         self.nodePositions = nodePositions
         self.groups = groups
+        self.regions = regions
         self.edgePorts = edgePorts
         self.boundaryPorts = boundaryPorts
         self.lineStyle = lineStyle
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case nodePositions
+        case groups
+        case regions
+        case edgePorts
+        case boundaryPorts
+        case lineStyle
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(
+            Int.self,
+            forKey: .schemaVersion
+        )
+        nodePositions = try container.decode(
+            [String: GraphPoint].self,
+            forKey: .nodePositions
+        )
+        groups = try container.decode(
+            [CommitGraphGroup].self,
+            forKey: .groups
+        )
+        regions = try container.decodeIfPresent(
+            [CommitGraphRegionMarker].self,
+            forKey: .regions
+        ) ?? []
+        edgePorts = try container.decode(
+            [String: CommitGraphEdgePorts].self,
+            forKey: .edgePorts
+        )
+        boundaryPorts = try container.decode(
+            [CollapsedEdgeKey: CommitGraphEdgePorts].self,
+            forKey: .boundaryPorts
+        )
+        lineStyle = try container.decode(
+            CommitGraphLineStyle.self,
+            forKey: .lineStyle
+        )
     }
 
     public static func defaultState(

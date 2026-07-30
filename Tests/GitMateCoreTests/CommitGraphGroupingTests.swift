@@ -101,6 +101,80 @@ let commitGraphGroupingTests = [
             originalPorts,
             "聚合键未变化时必须复用原有 side 和 offset"
         )
+    },
+    TestCase("重命名分组只改变标题") {
+        let groupID = UUID(
+            uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+        )!
+        var scene = CommitGraphSceneState.defaultState(
+            layout: groupingLayoutFixture
+        )
+        scene = try CommitGraphGrouping.creatingGroup(
+            id: groupID,
+            title: "旧名称",
+            memberHashes: ["feature-1", "feature-2"],
+            source: .manual,
+            layout: groupingLayoutFixture,
+            scene: scene
+        )
+
+        let renamed = try CommitGraphGrouping.renamingGroup(
+            id: groupID,
+            title: "v2 修复",
+            scene: scene
+        )
+
+        try expectEqual(
+            renamed.groups.first?.title,
+            "v2 修复",
+            "应保存新的分组标题"
+        )
+        try expectEqual(
+            renamed.groups.first?.memberHashes,
+            scene.groups.first?.memberHashes,
+            "重命名不得改变分组成员"
+        )
+        try expectEqual(
+            renamed.boundaryPorts,
+            scene.boundaryPorts,
+            "重命名不得重新分配端口"
+        )
+    },
+    TestCase("删除分组恢复成员绝对坐标且不删除提交") {
+        let groupID = UUID(
+            uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+        )!
+        var scene = CommitGraphSceneState.defaultState(
+            layout: groupingLayoutFixture
+        )
+        scene = try CommitGraphGrouping.creatingGroup(
+            id: groupID,
+            title: "功能分支",
+            memberHashes: ["feature-1", "feature-2"],
+            source: .manual,
+            layout: groupingLayoutFixture,
+            scene: scene
+        )
+        let firstPosition = scene.groups[0].absolutePosition(
+            for: "feature-1"
+        )
+
+        let removed = try CommitGraphGrouping.removingGroup(
+            id: groupID,
+            layout: groupingLayoutFixture,
+            scene: scene
+        )
+
+        try expectEqual(removed.groups, [], "分组应被解散")
+        try expectEqual(
+            removed.nodePositions["feature-1"],
+            firstPosition,
+            "成员应恢复删除分组前的绝对位置"
+        )
+        try expect(
+            removed.nodePositions["feature-2"] != nil,
+            "所有分组成员都必须恢复为普通提交节点"
+        )
     }
 ]
 

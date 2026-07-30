@@ -213,6 +213,43 @@ public enum CommitGraphGrouping {
         return rebuildingBoundaryPorts(layout: layout, scene: updated)
     }
 
+    public static func renamingGroup(
+        id: UUID,
+        title: String,
+        scene: CommitGraphSceneState
+    ) throws -> CommitGraphSceneState {
+        guard let index = scene.groups.firstIndex(where: { $0.id == id })
+        else {
+            throw CommitGraphGroupingError.groupNotFound
+        }
+        var updated = scene
+        updated.groups[index].title = title
+        return updated
+    }
+
+    public static func removingGroup(
+        id: UUID,
+        layout: CommitGraphLayoutResult,
+        scene: CommitGraphSceneState
+    ) throws -> CommitGraphSceneState {
+        guard let index = scene.groups.firstIndex(where: { $0.id == id })
+        else {
+            throw CommitGraphGroupingError.groupNotFound
+        }
+        var updated = scene
+        let group = updated.groups.remove(at: index)
+        for hash in group.memberHashes {
+            let position = group.absolutePosition(for: hash)
+                ?? layout.node(hash: hash).map {
+                    GraphPoint(x: $0.x, y: $0.y)
+                }
+            if let position {
+                updated.nodePositions[hash] = position
+            }
+        }
+        return rebuildingBoundaryPorts(layout: layout, scene: updated)
+    }
+
     public static func movingGroup(
         id: UUID,
         translation: GraphPoint,
