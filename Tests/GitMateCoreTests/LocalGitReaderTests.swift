@@ -613,6 +613,44 @@ let localGitReaderTests = [
         )
         try executor.verifyComplete()
     },
+    TestCase("最近提交覆盖全部本地远程分支并从最新提交开始") {
+        let executor = FakeCommandExecutor(
+            results: [
+                .success([.standardOutput(newestToOldestTwoCommitFixture)])
+            ],
+            expectedInvocations: [
+                expectedInvocation([
+                    "-C", "/repo", "log",
+                    "--branches", "--remotes", "--topo-order",
+                    "--decorate=short", "-n", "2",
+                    CommandLocalGitReader.commitLogFormat
+                ])
+            ]
+        )
+        let reader = CommandLocalGitReader(executor: executor)
+
+        let commits = try await reader.recentCommits(
+            repositoryURL: URL(fileURLWithPath: "/repo"),
+            limit: 2
+        )
+
+        try expectEqual(
+            commits.map(\.shortHash),
+            ["child02", "root001"],
+            "最近提交必须保持 Git 日志的最新优先顺序"
+        )
+        try expectEqual(
+            executor.commands,
+            [[
+                "-C", "/repo", "log",
+                "--branches", "--remotes", "--topo-order",
+                "--decorate=short", "-n", "2",
+                CommandLocalGitReader.commitLogFormat
+            ]],
+            "最近提交不得先统计总数或读取最早端窗口"
+        )
+        try executor.verifyComplete()
+    },
     TestCase("提交详情和差异只执行 show 白名单命令") {
         let executor = FakeCommandExecutor(results: [
             .success([.standardOutput(commitDetailOutput)]),

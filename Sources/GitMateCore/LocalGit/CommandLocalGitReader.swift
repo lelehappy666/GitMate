@@ -92,6 +92,31 @@ public final class CommandLocalGitReader: LocalGitReading, @unchecked Sendable {
         )
     }
 
+    public func recentCommits(
+        repositoryURL: URL,
+        limit: Int
+    ) async throws -> [GitCommit] {
+        let repositoryPath = try validatedRepositoryPath(repositoryURL)
+        guard (1...200).contains(limit) else {
+            throw LocalGitReaderError.invalidLimit(limit)
+        }
+        let parsedCommits = try GitOutputParser.parseCommits(
+            decode(
+                await execute([
+                    "-C", repositoryPath, "log",
+                    "--branches", "--remotes", "--topo-order",
+                    "--decorate=short", "-n", String(limit),
+                    Self.commitLogFormat
+                ]),
+                context: "最近提交"
+            )
+        )
+        var seen: Set<String> = []
+        return parsedCommits.filter {
+            seen.insert($0.fullHash).inserted
+        }
+    }
+
     public func commit(
         repositoryURL: URL,
         hash: String

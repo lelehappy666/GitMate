@@ -95,20 +95,27 @@ private func makeContentCatalog(
 private final class FixtureLocalGitReader: LocalGitReading, @unchecked Sendable {
     typealias StatusHandler = @Sendable (URL) async throws -> LocalRepositoryStatus
     typealias CommitsHandler = @Sendable (URL, String?, Int) async throws -> GitCommitPage
+    typealias RecentCommitsHandler = @Sendable (URL, Int) async throws -> [GitCommit]
 
     private let statusHandler: StatusHandler
     private let commitsHandler: CommitsHandler
+    private let recentCommitsHandler: RecentCommitsHandler
     private let lock = NSLock()
     private var commitLimits: [Int] = []
+    private var recentCommitLimits: [Int] = []
 
     init(
         status: @escaping StatusHandler = { _ in contentStatusFixture },
         commits: @escaping CommitsHandler = { _, _, _ in
             GitCommitPage(commits: [contentCommitFixture(0)], nextCursor: nil)
-        }
+        },
+        recentCommits: RecentCommitsHandler? = nil
     ) {
         statusHandler = status
         commitsHandler = commits
+        recentCommitsHandler = recentCommits ?? { url, limit in
+            try await commits(url, nil, limit).commits
+        }
     }
 
     func status(repositoryURL: URL) async throws -> LocalRepositoryStatus {
@@ -126,10 +133,26 @@ private final class FixtureLocalGitReader: LocalGitReading, @unchecked Sendable 
         return try await commitsHandler(repositoryURL, cursor, limit)
     }
 
+    func recentCommits(
+        repositoryURL: URL,
+        limit: Int
+    ) async throws -> [GitCommit] {
+        lock.withLock {
+            recentCommitLimits.append(limit)
+        }
+        return try await recentCommitsHandler(repositoryURL, limit)
+    }
+
     var recordedCommitLimits: [Int] {
         lock.lock()
         defer { lock.unlock() }
         return commitLimits
+    }
+
+    var recordedRecentCommitLimits: [Int] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recentCommitLimits
     }
 
     func tree(
@@ -564,7 +587,15 @@ let workspaceContentServiceTests = [
         try expectEqual(content.localStatus, contentStatusFixture, "离线时应保留本地状态")
         try expectEqual(content.onlineSummary, contentSummaryFixture, "900 秒边界缓存仍有效")
         try expectEqual(content.recentCommits.count, 8, "最近提交结果最多返回 8 条")
-        try expectEqual(localGit.recordedCommitLimits, [8], "最近提交请求固定为 8 条")
+        try expectEqual(
+            localGit.recordedRecentCommitLimits,
+            [8],
+            "最近提交请求固定为 8 条"
+        )
+        try expect(
+            localGit.recordedCommitLimits.isEmpty,
+            "最近提交不得复用最早优先的历史分页"
+        )
         try expectEqual(
             content.panelErrors.map(\.panel),
             [.readme],
@@ -572,6 +603,46 @@ let workspaceContentServiceTests = [
         )
         try expectEqual(github.summaryRequestCount, 0, "有效磁盘摘要不得立即刷新")
         try expectEqual(cache.accountIDs, [contentAccountFixture.id], "缓存必须按账户编号读取")
+    },
+    TestCase("仓库内容通过最新优先语义读取最近提交") {
+        let localGit = FixtureLocalGitReader(
+            commits: { _, _, _ in
+                GitCommitPage(
+                    commits: [contentCommitFixture(0)],
+                    nextCursor: "1"
+                )
+            },
+            recentCommits: { _, _ in
+                [contentCommitFixture(9), contentCommitFixture(8)]
+            }
+        )
+        let service = WorkspaceContentService(
+            catalog: makeContentCatalog(availability: ["desktop": .available]),
+            localGit: localGit,
+            github: offlineGitHubFixture(),
+            cache: MemoryWorkspaceCache()
+        )
+
+        let content = try await service.repositoryContent(
+            repository: contentRepositoryFixture,
+            account: contentAccountFixture,
+            token: "secret"
+        )
+
+        try expectEqual(
+            content.recentCommits.map(\.shortHash),
+            ["abc9", "abc8"],
+            "总览与工作台必须显示全分支最新提交，而不是历史第一页"
+        )
+        try expect(
+            localGit.recordedCommitLimits.isEmpty,
+            "读取最近提交不得调用最早优先的 commits 分页"
+        )
+        try expectEqual(
+            localGit.recordedRecentCommitLimits,
+            [8],
+            "最近提交必须通过专用语义限制为八条"
+        )
     },
     TestCase("过期和未来缓存都不能作为离线摘要") {
         let now = Date(timeIntervalSince1970: 2_000_000_000)

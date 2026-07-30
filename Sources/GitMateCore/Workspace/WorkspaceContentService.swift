@@ -336,13 +336,12 @@ public final class WorkspaceContentService: @unchecked Sendable {
             return RepositoryContentModuleResult(value: [])
         }
         do {
-            let page = try await localGit.commits(
+            let commits = try await localGit.recentCommits(
                 repositoryURL: localRecord.localURL,
-                cursor: nil,
                 limit: Self.recentCommitLimit
             )
             return RepositoryContentModuleResult(
-                value: Array(page.commits.prefix(Self.recentCommitLimit))
+                value: Array(commits.prefix(Self.recentCommitLimit))
             )
         } catch is CancellationError {
             throw CancellationError()
