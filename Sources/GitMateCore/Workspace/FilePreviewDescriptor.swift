@@ -286,4 +286,14 @@ public enum SourcePreviewLayoutPolicy {
         }
         return max(viewportWidth - max(horizontalPadding, 0), 0)
     }
+
+    public static func minimumContentHeight(
+        viewportHeight: Double,
+        verticalPadding: Double
+    ) -> Double {
+        guard viewportHeight.isFinite, verticalPadding.isFinite else {
+            return 0
+        }
+        return max(viewportHeight - max(verticalPadding, 0), 0)
+    }
 }

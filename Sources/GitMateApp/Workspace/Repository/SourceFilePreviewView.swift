@@ -36,6 +36,11 @@ struct SourceFilePreviewView: View {
                             viewportWidth: geometry.size.width,
                             horizontalPadding: 36
                         ),
+                    minHeight: SourcePreviewLayoutPolicy
+                        .minimumContentHeight(
+                            viewportHeight: geometry.size.height,
+                            verticalPadding: 36
+                        ),
                     alignment: .topLeading
                 )
                 .padding(18)

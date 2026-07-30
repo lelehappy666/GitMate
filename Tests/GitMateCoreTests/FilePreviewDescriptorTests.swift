@@ -204,5 +204,13 @@ let filePreviewDescriptorTests = [
             964,
             "源码容器必须使用扣除内边距后的真实宽度"
         )
+        try expectEqual(
+            SourcePreviewLayoutPolicy.minimumContentHeight(
+                viewportHeight: 760,
+                verticalPadding: 36
+            ),
+            724,
+            "短源码必须从可用区域顶部开始而不是垂直居中"
+        )
     }
 ]
