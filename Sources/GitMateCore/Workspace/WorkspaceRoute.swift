@@ -34,4 +34,23 @@ public enum WorkspaceRoute: Equatable, Sendable {
             id
         }
     }
+
+    public func replacingRepositoryID(_ repositoryID: Int64) -> Self {
+        switch self {
+        case .dashboard, .repositories:
+            self
+        case .repositoryOverview:
+            .repositoryOverview(repositoryID: repositoryID)
+        case .readme:
+            .readme(repositoryID: repositoryID)
+        case .filesAndCommits:
+            .filesAndCommits(repositoryID: repositoryID)
+        case .commitGraph:
+            .commitGraph(repositoryID: repositoryID)
+        }
+    }
+
+    public func fallbackAfterCurrentRepositoryRemoval() -> Self {
+        .repositories
+    }
 }

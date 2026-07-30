@@ -12,5 +12,41 @@ let workspaceRouteTests = [
     TestCase("仓库路由保留当前仓库编号") {
         let route = WorkspaceRoute.commitGraph(repositoryID: 101)
         try expectEqual(route.repositoryID, 101, "应保留当前仓库")
+    },
+    TestCase("切换仓库保持README子页面") {
+        try expectEqual(
+            WorkspaceRoute.readme(repositoryID: 1)
+                .replacingRepositoryID(2),
+            .readme(repositoryID: 2),
+            "仓库切换必须保持 README 页面"
+        )
+    },
+    TestCase("切换仓库保持文件与提交子页面") {
+        try expectEqual(
+            WorkspaceRoute.filesAndCommits(repositoryID: 1)
+                .replacingRepositoryID(2),
+            .filesAndCommits(repositoryID: 2),
+            "仓库切换必须保持文件与提交页面"
+        )
+    },
+    TestCase("全局页面不因仓库选择自动跳转") {
+        try expectEqual(
+            WorkspaceRoute.dashboard.replacingRepositoryID(2),
+            .dashboard,
+            "全局工作台不应因仓库选择跳转"
+        )
+        try expectEqual(
+            WorkspaceRoute.repositories.replacingRepositoryID(2),
+            .repositories,
+            "全部仓库页不应因仓库选择跳转"
+        )
+    },
+    TestCase("浮层打开期间仓库被移除时回退全部仓库") {
+        try expectEqual(
+            WorkspaceRoute.readme(repositoryID: 1)
+                .fallbackAfterCurrentRepositoryRemoval(),
+            .repositories,
+            "当前仓库不可用时应回退全部仓库页"
+        )
     }
 ]
