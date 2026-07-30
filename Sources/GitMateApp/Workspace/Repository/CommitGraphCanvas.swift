@@ -45,11 +45,11 @@ struct CommitGraphCanvas: View {
         size: CGSize,
         viewport: GraphViewport
     ) {
-        let step = max(32 * viewport.scale, 18)
-        let startX = viewport.offsetX.truncatingRemainder(
+        let step = max(CGFloat(32 * viewport.scale), 18)
+        let startX = CGFloat(viewport.offsetX).truncatingRemainder(
             dividingBy: step
         )
-        let startY = viewport.offsetY.truncatingRemainder(
+        let startY = CGFloat(viewport.offsetY).truncatingRemainder(
             dividingBy: step
         )
         var path = Path()
@@ -81,7 +81,7 @@ struct CommitGraphCanvas: View {
         let nodesByHash = Dictionary(
             uniqueKeysWithValues: layout.nodes.map { ($0.hash, $0) }
         )
-        let padding = 180.0
+        let padding: CGFloat = 180
 
         for edge in layout.edges {
             guard let child = nodesByHash[edge.childHash],
@@ -132,8 +132,8 @@ struct CommitGraphCanvas: View {
             layout: layout,
             viewport: viewport,
             screenSize: GraphSize(
-                width: size.width,
-                height: size.height
+                width: Double(size.width),
+                height: Double(size.height)
             ),
             padding: 180
         )
@@ -153,10 +153,10 @@ struct CommitGraphCanvas: View {
         context: inout GraphicsContext,
         viewport: GraphViewport
     ) {
-        let scale = viewport.scale
+        let scale = CGFloat(viewport.scale)
         let center = screenPoint(for: node, viewport: viewport)
-        let width = CommitGraphViewportProjector.nodeWidth * scale
-        let height = CommitGraphViewportProjector.nodeHeight * scale
+        let width = CGFloat(CommitGraphViewportProjector.nodeWidth) * scale
+        let height = CGFloat(CommitGraphViewportProjector.nodeHeight) * scale
         let rect = CGRect(
             x: center.x - width / 2,
             y: center.y - height / 2,
@@ -250,10 +250,10 @@ struct CommitGraphCanvas: View {
         color: Color,
         at trailingPoint: CGPoint,
         context: inout GraphicsContext,
-        scale: Double
+        scale: CGFloat
     ) {
         let width = min(
-            max(Double(decoration.count) * 5.8 + 10, 28),
+            max(CGFloat(decoration.count) * 5.8 + 10, 28),
             88
         ) * scale
         let height = 17 * scale
@@ -284,14 +284,14 @@ struct CommitGraphCanvas: View {
             canvasPoint: GraphPoint(x: node.x, y: node.y),
             viewport: viewport
         )
-        return CGPoint(x: point.x, y: point.y)
+        return CGPoint(x: CGFloat(point.x), y: CGFloat(point.y))
     }
 
     private func edgeMayBeVisible(
         from start: CGPoint,
         to end: CGPoint,
         screenSize: CGSize,
-        padding: Double
+        padding: CGFloat
     ) -> Bool {
         max(start.x, end.x) >= -padding
             && min(start.x, end.x) <= screenSize.width + padding

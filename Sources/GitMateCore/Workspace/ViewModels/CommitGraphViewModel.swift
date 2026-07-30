@@ -167,6 +167,13 @@ public final class CommitGraphViewModel {
         )
     }
 
+    public func applyViewportChanges(_ changes: [GraphViewportChange]) {
+        viewport = CommitGraphViewportProjector.applying(
+            changes,
+            to: viewport
+        )
+    }
+
     public func fitAll(
         in screenSize: GraphSize,
         padding: Double = 48

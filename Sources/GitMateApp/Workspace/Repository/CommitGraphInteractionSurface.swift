@@ -1,19 +1,18 @@
 import AppKit
 import GitMateCore
+import QuartzCore
 import SwiftUI
 
 struct CommitGraphInteractionSurface: NSViewRepresentable {
     let layout: CommitGraphLayoutResult
     let viewport: GraphViewport
-    let onPan: (GraphPoint) -> Void
-    let onZoom: (Double, GraphPoint) -> Void
+    let onViewportChanges: ([GraphViewportChange]) -> Void
     let onClick: (String) -> Void
     let onDoubleClick: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
-            onPan: onPan,
-            onZoom: onZoom,
+            onViewportChanges: onViewportChanges,
             onClick: onClick,
             onDoubleClick: onDoubleClick
         )
@@ -30,8 +29,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
 
     func updateNSView(_ nsView: InteractionView, context: Context) {
         context.coordinator.update(
-            onPan: onPan,
-            onZoom: onZoom,
+            onViewportChanges: onViewportChanges,
             onClick: onClick,
             onDoubleClick: onDoubleClick
         )
@@ -39,54 +37,50 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         nsView.viewport = viewport
     }
 
+    static func dismantleNSView(
+        _ nsView: InteractionView,
+        coordinator: Coordinator
+    ) {
+        nsView.stopFrameScheduler()
+        nsView.coordinator = nil
+    }
+
     @MainActor
     final class Coordinator {
-        private var onPan: (GraphPoint) -> Void
-        private var onZoom: (Double, GraphPoint) -> Void
+        private var onViewportChanges: ([GraphViewportChange]) -> Void
         private var onClick: (String) -> Void
         private var onDoubleClick: () -> Void
-        private var pendingPan = GraphPoint.zero
-        private var pendingZoomMultiplier = 1.0
-        private var pendingZoomAnchor = GraphPoint.zero
-        private var flushScheduled = false
+        private var pendingChanges: [GraphViewportChange] = []
 
         init(
-            onPan: @escaping (GraphPoint) -> Void,
-            onZoom: @escaping (Double, GraphPoint) -> Void,
+            onViewportChanges: @escaping ([GraphViewportChange]) -> Void,
             onClick: @escaping (String) -> Void,
             onDoubleClick: @escaping () -> Void
         ) {
-            self.onPan = onPan
-            self.onZoom = onZoom
+            self.onViewportChanges = onViewportChanges
             self.onClick = onClick
             self.onDoubleClick = onDoubleClick
         }
 
         func update(
-            onPan: @escaping (GraphPoint) -> Void,
-            onZoom: @escaping (Double, GraphPoint) -> Void,
+            onViewportChanges: @escaping ([GraphViewportChange]) -> Void,
             onClick: @escaping (String) -> Void,
             onDoubleClick: @escaping () -> Void
         ) {
-            self.onPan = onPan
-            self.onZoom = onZoom
+            self.onViewportChanges = onViewportChanges
             self.onClick = onClick
             self.onDoubleClick = onDoubleClick
         }
 
         func enqueuePan(_ translation: GraphPoint) {
-            pendingPan = GraphPoint(
-                x: pendingPan.x + translation.x,
-                y: pendingPan.y + translation.y
-            )
-            scheduleFlush()
+            pendingChanges.append(.pan(translation))
         }
 
         func enqueueZoom(multiplier: Double, anchor: GraphPoint) {
             guard multiplier.isFinite, multiplier > 0 else { return }
-            pendingZoomMultiplier *= multiplier
-            pendingZoomAnchor = anchor
-            scheduleFlush()
+            pendingChanges.append(
+                .zoom(multiplier: multiplier, anchor: anchor)
+            )
         }
 
         func select(hash: String) {
@@ -97,28 +91,11 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             onDoubleClick()
         }
 
-        private func scheduleFlush() {
-            guard !flushScheduled else { return }
-            flushScheduled = true
-            DispatchQueue.main.async { [weak self] in
-                self?.flush()
-            }
-        }
-
-        private func flush() {
-            flushScheduled = false
-            let pan = pendingPan
-            let zoomMultiplier = pendingZoomMultiplier
-            let zoomAnchor = pendingZoomAnchor
-            pendingPan = .zero
-            pendingZoomMultiplier = 1
-
-            if pan != .zero {
-                onPan(pan)
-            }
-            if zoomMultiplier != 1 {
-                onZoom(zoomMultiplier, zoomAnchor)
-            }
+        func flush() {
+            guard !pendingChanges.isEmpty else { return }
+            let changes = pendingChanges
+            pendingChanges.removeAll(keepingCapacity: true)
+            onViewportChanges(changes)
         }
     }
 
@@ -128,9 +105,17 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         var graphLayout = CommitGraphLayoutResult()
         var viewport = GraphViewport()
         private var didDrag = false
+        private var frameLink: CADisplayLink?
 
         override var isFlipped: Bool { true }
         override var acceptsFirstResponder: Bool { true }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil {
+                stopFrameScheduler()
+            }
+        }
 
         override func hitTest(_ point: NSPoint) -> NSView? {
             bounds.contains(point) ? self : nil
@@ -147,8 +132,12 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         override func mouseDragged(with event: NSEvent) {
             didDrag = true
             coordinator?.enqueuePan(
-                GraphPoint(x: event.deltaX, y: -event.deltaY)
+                GraphPoint(
+                    x: Double(event.deltaX),
+                    y: -Double(event.deltaY)
+                )
             )
+            requestDisplayFrame()
         }
 
         override func mouseUp(with event: NSEvent) {
@@ -172,21 +161,53 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         override func scrollWheel(with event: NSEvent) {
             let anchor = convertedPoint(event.locationInWindow)
             coordinator?.enqueueZoom(
-                multiplier: exp(event.scrollingDeltaY * 0.012),
+                multiplier: exp(Double(event.scrollingDeltaY) * 0.012),
                 anchor: anchor
             )
+            requestDisplayFrame()
         }
 
         override func magnify(with event: NSEvent) {
             coordinator?.enqueueZoom(
-                multiplier: 1 + event.magnification,
+                multiplier: 1 + Double(event.magnification),
                 anchor: convertedPoint(event.locationInWindow)
             )
+            requestDisplayFrame()
+        }
+
+        func stopFrameScheduler() {
+            frameLink?.invalidate()
+            frameLink = nil
+        }
+
+        private func requestDisplayFrame() {
+            if frameLink == nil {
+                let link = displayLink(
+                    target: self,
+                    selector: #selector(displayFrameDidFire(_:))
+                )
+                link.add(
+                    to: RunLoop.main,
+                    forMode: RunLoop.Mode.common
+                )
+                link.isPaused = true
+                frameLink = link
+            }
+            frameLink?.isPaused = false
+        }
+
+        @objc
+        private func displayFrameDidFire(_ displayLink: CADisplayLink) {
+            displayLink.isPaused = true
+            coordinator?.flush()
         }
 
         private func convertedPoint(_ windowPoint: NSPoint) -> GraphPoint {
             let point = convert(windowPoint, from: nil)
-            return GraphPoint(x: point.x, y: point.y)
+            return GraphPoint(
+                x: Double(point.x),
+                y: Double(point.y)
+            )
         }
     }
 }

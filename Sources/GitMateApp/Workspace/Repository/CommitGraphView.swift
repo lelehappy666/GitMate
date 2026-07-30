@@ -103,8 +103,8 @@ struct CommitGraphView: View {
     private var graphCanvas: some View {
         GeometryReader { geometry in
             let screenSize = GraphSize(
-                width: geometry.size.width,
-                height: geometry.size.height
+                width: Double(geometry.size.width),
+                height: Double(geometry.size.height)
             )
             ZStack {
                 CommitGraphCanvas(
@@ -116,12 +116,9 @@ struct CommitGraphView: View {
                 CommitGraphInteractionSurface(
                     layout: viewModel.layout,
                     viewport: viewModel.viewport,
-                    onPan: { translation in
-                        viewModel.pan(by: translation)
+                    onViewportChanges: { changes in
+                        viewModel.applyViewportChanges(changes)
                         loadOlderIfNeeded()
-                    },
-                    onZoom: { multiplier, anchor in
-                        viewModel.zoom(by: multiplier, anchor: anchor)
                     },
                     onClick: { hash in
                         Task {
@@ -193,12 +190,19 @@ struct CommitGraphView: View {
             Rectangle()
                 .fill(.clear)
                 .frame(
-                    width: CommitGraphViewportProjector.nodeWidth
-                        * viewModel.viewport.scale,
-                    height: CommitGraphViewportProjector.nodeHeight
-                        * viewModel.viewport.scale
+                    width: CGFloat(
+                        CommitGraphViewportProjector.nodeWidth
+                            * viewModel.viewport.scale
+                    ),
+                    height: CGFloat(
+                        CommitGraphViewportProjector.nodeHeight
+                            * viewModel.viewport.scale
+                    )
                 )
-                .position(x: point.x, y: point.y)
+                .position(
+                    x: CGFloat(point.x),
+                    y: CGFloat(point.y)
+                )
                 .allowsHitTesting(false)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(

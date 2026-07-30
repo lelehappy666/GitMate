@@ -76,6 +76,42 @@ let commitGraphViewportProjectorTests = [
 
         try expectEqual(enlarged.scale, 2, "最大缩放必须限制为 2")
         try expectEqual(reduced.scale, 0.35, "最小缩放必须限制为 0.35")
+    },
+    TestCase("同一帧多个缩放按各自锚点顺序折叠") {
+        let initial = GraphViewport(
+            offsetX: 36,
+            offsetY: -24,
+            scale: 0.9
+        )
+        let firstAnchor = GraphPoint(x: 140, y: 90)
+        let secondAnchor = GraphPoint(x: 760, y: 410)
+        let changes: [GraphViewportChange] = [
+            .zoom(multiplier: 1.2, anchor: firstAnchor),
+            .pan(GraphPoint(x: 18, y: -12)),
+            .zoom(multiplier: 0.82, anchor: secondAnchor)
+        ]
+        let firstZoom = CommitGraphViewportProjector.zoomed(
+            initial,
+            by: 1.2,
+            anchor: firstAnchor
+        )
+        var panned = firstZoom
+        panned.offsetX += 18
+        panned.offsetY -= 12
+        let expected = CommitGraphViewportProjector.zoomed(
+            panned,
+            by: 0.82,
+            anchor: secondAnchor
+        )
+
+        try expectEqual(
+            CommitGraphViewportProjector.applying(
+                changes,
+                to: initial
+            ),
+            expected,
+            "批量变换不得丢失较早缩放事件的锚点和事件顺序"
+        )
     }
 ]
 

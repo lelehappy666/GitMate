@@ -10,6 +10,11 @@ public struct GraphSize: Equatable, Sendable {
     }
 }
 
+public enum GraphViewportChange: Equatable, Sendable {
+    case pan(GraphPoint)
+    case zoom(multiplier: Double, anchor: GraphPoint)
+}
+
 public enum CommitGraphViewportProjector {
     public static let minimumScale = 0.35
     public static let maximumScale = 2.0
@@ -117,6 +122,27 @@ public enum CommitGraphViewportProjector {
             offsetY: anchor.y - canvasAnchor.y * newScale,
             scale: newScale
         )
+    }
+
+    public static func applying(
+        _ changes: [GraphViewportChange],
+        to viewport: GraphViewport
+    ) -> GraphViewport {
+        changes.reduce(viewport) { current, change in
+            switch change {
+            case let .pan(translation):
+                var updated = current
+                updated.offsetX += translation.x
+                updated.offsetY += translation.y
+                return updated
+            case let .zoom(multiplier, anchor):
+                return zoomed(
+                    current,
+                    by: multiplier,
+                    anchor: anchor
+                )
+            }
+        }
     }
 
     private static func validScale(_ scale: Double) -> Double {

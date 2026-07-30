@@ -14,6 +14,35 @@ let commitGraphViewModelTests = [
         viewModel.zoom(by: 0.01, anchor: .zero)
         try expectEqual(viewModel.viewport.scale, 0.35, "最小缩放必须限制为 0.35")
     },
+    TestCase("视口模型一次应用同一显示帧的有序交互") { @MainActor in
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL
+        )
+        let changes: [GraphViewportChange] = [
+            .zoom(
+                multiplier: 1.1,
+                anchor: GraphPoint(x: 120, y: 80)
+            ),
+            .pan(GraphPoint(x: 24, y: -16)),
+            .zoom(
+                multiplier: 0.9,
+                anchor: GraphPoint(x: 640, y: 360)
+            )
+        ]
+        let expected = CommitGraphViewportProjector.applying(
+            changes,
+            to: viewModel.viewport
+        )
+
+        viewModel.applyViewportChanges(changes)
+
+        try expectEqual(
+            viewModel.viewport,
+            expected,
+            "同一显示帧的交互必须按事件顺序一次应用到视口"
+        )
+    },
     TestCase("双击空白区域可适配全部提交内容") { @MainActor in
         let viewModel = CommitGraphViewModel(
             reader: PagedCommitGraphReader(),
