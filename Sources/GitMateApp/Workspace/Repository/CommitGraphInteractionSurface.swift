@@ -3,14 +3,33 @@ import GitMateCore
 import QuartzCore
 import SwiftUI
 
+enum CommitGraphMarqueePurpose: Equatable {
+    case createGroup
+    case addToGroup(UUID)
+    case createRegion
+}
+
+enum CommitGraphContextAction: Equatable {
+    case renameGroup(UUID)
+    case addToGroup(UUID)
+    case deleteGroup(UUID)
+    case editRegion(UUID)
+    case deleteRegion(UUID)
+}
+
 struct CommitGraphInteractionSurface: NSViewRepresentable {
     let projection: CommitGraphSceneProjection
+    let regions: [CommitGraphRegionMarker]
     let viewport: GraphViewport
+    let marqueePurpose: CommitGraphMarqueePurpose
     let onViewportChanges: ([GraphViewportChange]) -> Void
     let onPointerChanges: ([CommitGraphPointerChange]) -> Void
     let onNodeClick:
         (String, CommitGraphSelectionModifiers, Bool) -> Void
-    let onMarqueeSelectionCompleted: (Set<String>) -> Void
+    let onMarqueeSelectionCompleted:
+        (CommitGraphMarqueePurpose, Set<String>, GraphRect) -> Void
+    let onContextAction: (CommitGraphContextAction) -> Void
+    let onCancelMarqueeMode: () -> Void
     let onGroupDoubleClick: (UUID, Bool) -> Void
     let onDoubleClickBlank: () -> Void
     let onInteractionEnded: () -> Void
@@ -21,6 +40,8 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             onPointerChanges: onPointerChanges,
             onNodeClick: onNodeClick,
             onMarqueeSelectionCompleted: onMarqueeSelectionCompleted,
+            onContextAction: onContextAction,
+            onCancelMarqueeMode: onCancelMarqueeMode,
             onGroupDoubleClick: onGroupDoubleClick,
             onDoubleClickBlank: onDoubleClickBlank,
             onInteractionEnded: onInteractionEnded
@@ -31,7 +52,9 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         let view = InteractionView()
         view.coordinator = context.coordinator
         view.projection = projection
+        view.regions = regions
         view.viewport = viewport
+        view.marqueePurpose = marqueePurpose
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor.clear.cgColor
         view.setAccessibilityElement(false)
@@ -44,12 +67,16 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             onPointerChanges: onPointerChanges,
             onNodeClick: onNodeClick,
             onMarqueeSelectionCompleted: onMarqueeSelectionCompleted,
+            onContextAction: onContextAction,
+            onCancelMarqueeMode: onCancelMarqueeMode,
             onGroupDoubleClick: onGroupDoubleClick,
             onDoubleClickBlank: onDoubleClickBlank,
             onInteractionEnded: onInteractionEnded
         )
         nsView.projection = projection
+        nsView.regions = regions
         nsView.viewport = viewport
+        nsView.marqueePurpose = marqueePurpose
         if nsView.isMarqueeActive {
             nsView.refreshMarquee()
         }
@@ -69,7 +96,10 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         private var onPointerChanges: ([CommitGraphPointerChange]) -> Void
         private var onNodeClick:
             (String, CommitGraphSelectionModifiers, Bool) -> Void
-        private var onMarqueeSelectionCompleted: (Set<String>) -> Void
+        private var onMarqueeSelectionCompleted:
+            (CommitGraphMarqueePurpose, Set<String>, GraphRect) -> Void
+        private var onContextAction: (CommitGraphContextAction) -> Void
+        private var onCancelMarqueeMode: () -> Void
         private var onGroupDoubleClick: (UUID, Bool) -> Void
         private var onDoubleClickBlank: () -> Void
         private var onInteractionEnded: () -> Void
@@ -84,7 +114,13 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                 CommitGraphSelectionModifiers,
                 Bool
             ) -> Void,
-            onMarqueeSelectionCompleted: @escaping (Set<String>) -> Void,
+            onMarqueeSelectionCompleted: @escaping (
+                CommitGraphMarqueePurpose,
+                Set<String>,
+                GraphRect
+            ) -> Void,
+            onContextAction: @escaping (CommitGraphContextAction) -> Void,
+            onCancelMarqueeMode: @escaping () -> Void,
             onGroupDoubleClick: @escaping (UUID, Bool) -> Void,
             onDoubleClickBlank: @escaping () -> Void,
             onInteractionEnded: @escaping () -> Void
@@ -94,6 +130,8 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             self.onNodeClick = onNodeClick
             self.onMarqueeSelectionCompleted =
                 onMarqueeSelectionCompleted
+            self.onContextAction = onContextAction
+            self.onCancelMarqueeMode = onCancelMarqueeMode
             self.onGroupDoubleClick = onGroupDoubleClick
             self.onDoubleClickBlank = onDoubleClickBlank
             self.onInteractionEnded = onInteractionEnded
@@ -107,7 +145,13 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                 CommitGraphSelectionModifiers,
                 Bool
             ) -> Void,
-            onMarqueeSelectionCompleted: @escaping (Set<String>) -> Void,
+            onMarqueeSelectionCompleted: @escaping (
+                CommitGraphMarqueePurpose,
+                Set<String>,
+                GraphRect
+            ) -> Void,
+            onContextAction: @escaping (CommitGraphContextAction) -> Void,
+            onCancelMarqueeMode: @escaping () -> Void,
             onGroupDoubleClick: @escaping (UUID, Bool) -> Void,
             onDoubleClickBlank: @escaping () -> Void,
             onInteractionEnded: @escaping () -> Void
@@ -117,6 +161,8 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             self.onNodeClick = onNodeClick
             self.onMarqueeSelectionCompleted =
                 onMarqueeSelectionCompleted
+            self.onContextAction = onContextAction
+            self.onCancelMarqueeMode = onCancelMarqueeMode
             self.onGroupDoubleClick = onGroupDoubleClick
             self.onDoubleClickBlank = onDoubleClickBlank
             self.onInteractionEnded = onInteractionEnded
@@ -142,8 +188,20 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             onGroupDoubleClick(id, isCollapsed)
         }
 
-        func marqueeSelectionCompleted(hashes: Set<String>) {
-            onMarqueeSelectionCompleted(hashes)
+        func marqueeSelectionCompleted(
+            purpose: CommitGraphMarqueePurpose,
+            hashes: Set<String>,
+            rect: GraphRect
+        ) {
+            onMarqueeSelectionCompleted(purpose, hashes, rect)
+        }
+
+        func contextAction(_ action: CommitGraphContextAction) {
+            onContextAction(action)
+        }
+
+        func cancelMarqueeMode() {
+            onCancelMarqueeMode()
         }
 
         func blankDoubleClick() {
@@ -174,6 +232,13 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             case canvas
             case node(String)
             case group(UUID)
+            case region(UUID)
+            case resizeRegion(UUID)
+        }
+
+        private enum ContextTarget {
+            case group(UUID)
+            case region(UUID)
         }
 
         weak var coordinator: Coordinator?
@@ -182,7 +247,9 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             groups: [],
             edges: []
         )
+        var regions: [CommitGraphRegionMarker] = []
         var viewport = GraphViewport()
+        var marqueePurpose = CommitGraphMarqueePurpose.createGroup
         private var dragTarget: DragTarget = .canvas
         private var didDrag = false
         private var accumulatedDistance = 0.0
@@ -194,6 +261,8 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         private var marqueePointerScreenPoint: GraphPoint?
         private var marqueeSelectedHashes: Set<String> = []
         private var marqueeScreenRect: NSRect?
+        private var marqueeCanvasRect: GraphRect?
+        private var contextTarget: ContextTarget?
 
         private let marqueeThreshold = 2.0
         private let edgeHotZone = 40.0
@@ -261,6 +330,20 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                         translation: canvasTranslation(screenTranslation)
                     )
                 )
+            case let .region(id):
+                coordinator?.enqueuePointer(
+                    .moveRegion(
+                        id: id,
+                        translation: canvasTranslation(screenTranslation)
+                    )
+                )
+            case let .resizeRegion(id):
+                coordinator?.enqueuePointer(
+                    .resizeRegion(
+                        id: id,
+                        translation: canvasTranslation(screenTranslation)
+                    )
+                )
             }
             requestDisplayFrame()
         }
@@ -298,6 +381,8 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                 if event.clickCount >= 2 {
                     coordinator?.blankDoubleClick()
                 }
+            case .region, .resizeRegion:
+                return
             }
         }
 
@@ -306,6 +391,13 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             didDrag = false
             accumulatedDistance = 0
             let screenPoint = convertedPoint(event.locationInWindow)
+            if let contextTarget = contextTarget(at: screenPoint) {
+                showContextMenu(
+                    for: contextTarget,
+                    event: event
+                )
+                return
+            }
             canStartMarquee = isCanvasBlank(at: screenPoint)
             guard canStartMarquee else { return }
             marqueeAnchorCanvasPoint =
@@ -348,14 +440,26 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                 coordinator?.flush()
             }
             let selectedHashes = marqueeSelectedHashes
+            let canvasRect = marqueeCanvasRect
             let completedSelection = didDrag && isMarqueeActive
             resetMarquee()
             NSCursor.openHand.set()
-            if completedSelection {
+            if completedSelection, let canvasRect {
                 coordinator?.marqueeSelectionCompleted(
-                    hashes: selectedHashes
+                    purpose: marqueePurpose,
+                    hashes: selectedHashes,
+                    rect: canvasRect
                 )
             }
+        }
+
+        override func keyDown(with event: NSEvent) {
+            if event.keyCode == 53 {
+                resetMarquee()
+                coordinator?.cancelMarqueeMode()
+                return
+            }
+            super.keyDown(with: event)
         }
 
         override func scrollWheel(with event: NSEvent) {
@@ -420,21 +524,25 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             selectionPath.fill()
             selectionPath.stroke()
 
-            for node in projection.nodes
-                where marqueeSelectedHashes.contains(node.node.hash) {
-                let rect = screenRect(for: node)
-                let path = NSBezierPath(
-                    roundedRect: rect.insetBy(dx: -2, dy: -2),
-                    xRadius: 11,
-                    yRadius: 11
-                )
-                path.lineWidth = 2.5
-                highlightColor.setStroke()
-                path.stroke()
+            if marqueePurpose != .createRegion {
+                for node in projection.nodes
+                    where marqueeSelectedHashes.contains(node.node.hash) {
+                    let rect = screenRect(for: node)
+                    let path = NSBezierPath(
+                        roundedRect: rect.insetBy(dx: -2, dy: -2),
+                        xRadius: 11,
+                        yRadius: 11
+                    )
+                    path.lineWidth = 2.5
+                    highlightColor.setStroke()
+                    path.stroke()
+                }
             }
 
             drawMarqueeCount(
-                marqueeSelectedHashes.count,
+                marqueePurpose == .createRegion
+                    ? nil
+                    : marqueeSelectedHashes.count,
                 near: pointer
             )
         }
@@ -455,16 +563,21 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                 from: anchor,
                 to: currentCanvasPoint
             )
-            marqueeSelectedHashes = Set(
-                projection.nodes.compactMap { visibleNode in
-                    intersects(
-                        canvasRect,
-                        nodeAt: visibleNode.position
-                    )
-                        ? visibleNode.node.hash
-                        : nil
-                }
-            )
+            marqueeCanvasRect = canvasRect
+            if marqueePurpose == .createRegion {
+                marqueeSelectedHashes.removeAll(keepingCapacity: true)
+            } else {
+                marqueeSelectedHashes = Set(
+                    projection.nodes.compactMap { visibleNode in
+                        intersects(
+                            canvasRect,
+                            nodeAt: visibleNode.position
+                        )
+                            ? visibleNode.node.hash
+                            : nil
+                    }
+                )
+            }
             let anchorScreenPoint =
                 CommitGraphViewportProjector.screenPoint(
                     canvasPoint: anchor,
@@ -526,7 +639,144 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                     return .group(group.id)
                 }
             }
+            for region in regions.reversed() {
+                let rect = region.rect
+                let handleSize = 20.0
+                let isInResizeHandle =
+                    point.x >= rect.maximumX - handleSize
+                    && point.x <= rect.maximumX + 4
+                    && point.y >= rect.maximumY - handleSize
+                    && point.y <= rect.maximumY + 4
+                if isInResizeHandle {
+                    return .resizeRegion(region.id)
+                }
+                let isInHeader = point.x >= rect.minimumX
+                    && point.x <= rect.maximumX
+                    && point.y >= rect.minimumY
+                    && point.y <= rect.minimumY + 36
+                if isInHeader {
+                    return .region(region.id)
+                }
+            }
             return .canvas
+        }
+
+        private func contextTarget(
+            at screenPoint: GraphPoint
+        ) -> ContextTarget? {
+            let point = CommitGraphViewportProjector.canvasPoint(
+                screenPoint: screenPoint,
+                viewport: viewport
+            )
+            for group in projection.groups.reversed() {
+                let rect = group.rect
+                let isInHeader = point.x >= rect.minimumX
+                    && point.x <= rect.maximumX
+                    && point.y >= rect.minimumY
+                    && point.y <= (
+                        group.isCollapsed
+                            ? rect.maximumY
+                            : rect.minimumY + 38
+                    )
+                if isInHeader {
+                    return .group(group.id)
+                }
+            }
+            for region in regions.reversed() {
+                let rect = region.rect
+                let isInHeader = point.x >= rect.minimumX
+                    && point.x <= rect.maximumX
+                    && point.y >= rect.minimumY
+                    && point.y <= rect.minimumY + 36
+                if isInHeader {
+                    return .region(region.id)
+                }
+            }
+            return nil
+        }
+
+        private func showContextMenu(
+            for target: ContextTarget,
+            event: NSEvent
+        ) {
+            contextTarget = target
+            let menu = NSMenu()
+            switch target {
+            case .group:
+                addMenuItem(
+                    "重命名分组",
+                    selector: #selector(renameGroupFromMenu),
+                    to: menu
+                )
+                addMenuItem(
+                    "添加提交",
+                    selector: #selector(addToGroupFromMenu),
+                    to: menu
+                )
+                menu.addItem(.separator())
+                addMenuItem(
+                    "删除分组",
+                    selector: #selector(deleteGroupFromMenu),
+                    to: menu
+                )
+            case .region:
+                addMenuItem(
+                    "编辑名称与颜色",
+                    selector: #selector(editRegionFromMenu),
+                    to: menu
+                )
+                menu.addItem(.separator())
+                addMenuItem(
+                    "删除区域标识",
+                    selector: #selector(deleteRegionFromMenu),
+                    to: menu
+                )
+            }
+            NSMenu.popUpContextMenu(menu, with: event, for: self)
+        }
+
+        private func addMenuItem(
+            _ title: String,
+            selector: Selector,
+            to menu: NSMenu
+        ) {
+            let item = NSMenuItem(
+                title: title,
+                action: selector,
+                keyEquivalent: ""
+            )
+            item.target = self
+            menu.addItem(item)
+        }
+
+        @objc
+        private func renameGroupFromMenu() {
+            guard case let .group(id) = contextTarget else { return }
+            coordinator?.contextAction(.renameGroup(id))
+        }
+
+        @objc
+        private func addToGroupFromMenu() {
+            guard case let .group(id) = contextTarget else { return }
+            coordinator?.contextAction(.addToGroup(id))
+        }
+
+        @objc
+        private func deleteGroupFromMenu() {
+            guard case let .group(id) = contextTarget else { return }
+            coordinator?.contextAction(.deleteGroup(id))
+        }
+
+        @objc
+        private func editRegionFromMenu() {
+            guard case let .region(id) = contextTarget else { return }
+            coordinator?.contextAction(.editRegion(id))
+        }
+
+        @objc
+        private func deleteRegionFromMenu() {
+            guard case let .region(id) = contextTarget else { return }
+            coordinator?.contextAction(.deleteRegion(id))
         }
 
         private func isCanvasBlank(at screenPoint: GraphPoint) -> Bool {
@@ -661,10 +911,11 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         }
 
         private func drawMarqueeCount(
-            _ count: Int,
+            _ count: Int?,
             near point: GraphPoint
         ) {
-            let value = "已选 \(count) 个"
+            let value = count.map { "已选 \($0) 个" }
+                ?? "版本区域"
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(
                     ofSize: 11.5,
@@ -713,6 +964,8 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             marqueePointerScreenPoint = nil
             marqueeSelectedHashes.removeAll(keepingCapacity: true)
             marqueeScreenRect = nil
+            marqueeCanvasRect = nil
+            contextTarget = nil
             frameLink?.isPaused = true
             needsDisplay = true
         }

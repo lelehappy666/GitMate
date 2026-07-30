@@ -2,9 +2,29 @@ import GitMateCore
 import SwiftUI
 
 struct CommitGraphView: View {
+    private struct BranchLegendEntry: Identifiable {
+        var id: String { name }
+        let name: String
+        let colorIndex: Int
+    }
+
+    private enum RegionEditorTarget {
+        case create(GraphRect)
+        case edit(UUID)
+    }
+
     @Bindable var viewModel: CommitGraphViewModel
     @State private var showsCreateGroup = false
     @State private var newGroupTitle = ""
+    @State private var marqueePurpose =
+        CommitGraphMarqueePurpose.createGroup
+    @State private var renamingGroupID: UUID?
+    @State private var groupEditorTitle = ""
+    @State private var deletingGroupID: UUID?
+    @State private var regionEditorTarget: RegionEditorTarget?
+    @State private var regionEditorTitle = ""
+    @State private var regionEditorColorHex = "#2F80ED"
+    @State private var deletingRegionID: UUID?
     @State private var showsGroupSuggestions = false
     @State private var groupNoticeMessage: String?
     @State private var canvasSize = GraphSize(
@@ -56,15 +76,19 @@ struct CommitGraphView: View {
         }
         .alert("创建提交分组", isPresented: $showsCreateGroup) {
             TextField("分组名称", text: $newGroupTitle)
-            Button("取消", role: .cancel) {}
+            Button("取消", role: .cancel) {
+                viewModel.clearCanvasSelection()
+            }
             Button("创建") {
                 do {
                     _ = try viewModel.createManualGroup(
                         title: newGroupTitle
                     )
                     newGroupTitle = ""
+                    viewModel.clearCanvasSelection()
                 } catch {
                     let message = groupMessage(for: error)
+                    viewModel.clearCanvasSelection()
                     Task { @MainActor in
                         groupNoticeMessage = message
                     }
@@ -72,6 +96,66 @@ struct CommitGraphView: View {
             }
         } message: {
             Text("将已选择的 \(viewModel.selectedHashes.count) 个连通提交组成一个分组。")
+        }
+        .alert("重命名分组", isPresented: renameGroupPresented) {
+            TextField("分组名称", text: $groupEditorTitle)
+            Button("取消", role: .cancel) {
+                renamingGroupID = nil
+            }
+            Button("保存") {
+                guard let id = renamingGroupID else { return }
+                do {
+                    try viewModel.renameGroup(
+                        id: id,
+                        title: groupEditorTitle
+                    )
+                } catch {
+                    groupNoticeMessage = groupMessage(for: error)
+                }
+                renamingGroupID = nil
+            }
+        } message: {
+            Text("只修改名称，不会改变成员、坐标或连线。")
+        }
+        .alert("删除分组", isPresented: deleteGroupPresented) {
+            Button("取消", role: .cancel) {
+                deletingGroupID = nil
+            }
+            Button("删除", role: .destructive) {
+                guard let id = deletingGroupID else { return }
+                do {
+                    try viewModel.deleteGroup(id: id)
+                } catch {
+                    groupNoticeMessage = groupMessage(for: error)
+                }
+                deletingGroupID = nil
+            }
+        } message: {
+            Text("只会解散分组，所有提交和画布位置都会保留。")
+        }
+        .alert("删除区域标识", isPresented: deleteRegionPresented) {
+            Button("取消", role: .cancel) {
+                deletingRegionID = nil
+            }
+            Button("删除", role: .destructive) {
+                if let id = deletingRegionID {
+                    viewModel.deleteRegion(id: id)
+                }
+                deletingRegionID = nil
+            }
+        } message: {
+            Text("只删除视觉标识，不会改变提交、分组或连线。")
+        }
+        .sheet(isPresented: regionEditorPresented) {
+            CommitGraphRegionEditor(
+                title: regionEditorTitle,
+                colorHex: regionEditorColorHex,
+                actionTitle: regionEditorActionTitle,
+                confirm: saveRegionEditor,
+                cancel: {
+                    regionEditorTarget = nil
+                }
+            )
         }
         .alert("提交分组", isPresented: groupNoticePresented) {
             Button("知道了") {}
@@ -103,15 +187,43 @@ struct CommitGraphView: View {
     private var graphToolbar: some View {
         HStack(spacing: 8) {
             Button {
-                groupNoticeMessage =
-                    "在画布空白处按住鼠标右键拖动即可框选提交；靠近画布边缘会自动滚动。"
+                marqueePurpose = .createGroup
+                viewModel.clearCanvasSelection()
             } label: {
                 Label(
-                    "右键框选创建",
+                    "右键框选分组",
                     systemImage: "rectangle.dashed.badge.record"
                 )
             }
             .help("在画布空白处按住右键拖动，框选连通提交")
+
+            Button {
+                marqueePurpose = .createRegion
+                viewModel.clearCanvasSelection()
+            } label: {
+                Label(
+                    marqueePurpose == .createRegion
+                        ? "框选版本区域"
+                        : "创建区域标识",
+                    systemImage: "rectangle.inset.filled.and.person.filled"
+                )
+            }
+            .tint(
+                marqueePurpose == .createRegion
+                    ? GitMateTheme.accent
+                    : nil
+            )
+            .help("下一次右键框选将创建大版本区域")
+
+            if case let .addToGroup(id) = marqueePurpose,
+               let group = viewModel.group(id: id) {
+                Label(
+                    "正在为「\(group.title)」添加提交",
+                    systemImage: "plus.rectangle.on.folder"
+                )
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(GitMateTheme.accent)
+            }
 
             Button {
                 Task {
@@ -209,6 +321,7 @@ struct CommitGraphView: View {
             ZStack {
                 CommitGraphCanvas(
                     projection: viewModel.projection,
+                    regions: viewModel.scene.regions,
                     viewport: viewModel.viewport,
                     lineStyle: viewModel.scene.lineStyle,
                     selectedHashes: viewModel.selectedHashes,
@@ -217,7 +330,9 @@ struct CommitGraphView: View {
 
                 CommitGraphInteractionSurface(
                     projection: viewModel.projection,
+                    regions: viewModel.scene.regions,
                     viewport: viewModel.viewport,
+                    marqueePurpose: marqueePurpose,
                     onViewportChanges: { changes in
                         viewModel.applyViewportChanges(changes)
                         loadOlderIfNeeded()
@@ -236,16 +351,21 @@ struct CommitGraphView: View {
                             }
                         }
                     },
-                    onMarqueeSelectionCompleted: { hashes in
-                        viewModel.replaceSelection(with: hashes)
-                        do {
-                            try viewModel.validateManualGroupSelection()
-                            newGroupTitle = ""
-                            showsCreateGroup = true
-                        } catch {
-                            groupNoticeMessage =
-                                groupMessage(for: error)
-                        }
+                    onMarqueeSelectionCompleted: {
+                        purpose,
+                        hashes,
+                        rect in
+                        handleMarqueeCompletion(
+                            purpose: purpose,
+                            hashes: hashes,
+                            rect: rect
+                        )
+                    },
+                    onContextAction: { action in
+                        handleContextAction(action)
+                    },
+                    onCancelMarqueeMode: {
+                        cancelMarqueeMode()
                     },
                     onGroupDoubleClick: { id, isCollapsed in
                         viewModel.setGroupCollapsed(
@@ -277,7 +397,7 @@ struct CommitGraphView: View {
 
                 VStack {
                     HStack {
-                        branchLegend
+                        branchLegend(screenSize: screenSize)
                         Spacer()
                     }
                     Spacer()
@@ -297,11 +417,9 @@ struct CommitGraphView: View {
                                 }
                         }
                         Spacer()
-                        groupSelectionHint
                     }
                 }
                 .padding(14)
-                .allowsHitTesting(false)
             }
             .onAppear {
                 canvasSize = screenSize
@@ -312,39 +430,9 @@ struct CommitGraphView: View {
                     height: Double(newSize.height)
                 )
             }
-        }
-    }
-
-    private var groupSelectionHint: some View {
-        Label(
-            groupSelectionHintText,
-            systemImage: viewModel.selectedHashes.isEmpty
-                ? "rectangle.dashed"
-                : "checkmark.circle.fill"
-        )
-        .font(.system(size: 11.5, weight: .semibold))
-        .foregroundStyle(
-            viewModel.selectedHashes.count >= 2
-                ? GitMateTheme.success
-                : GitMateTheme.textSecondary
-        )
-        .padding(.horizontal, 11)
-        .padding(.vertical, 7)
-        .background(.white.opacity(0.94))
-        .clipShape(Capsule())
-        .overlay {
-            Capsule().stroke(GitMateTheme.border, lineWidth: 1)
-        }
-    }
-
-    private var groupSelectionHintText: String {
-        switch viewModel.selectedHashes.count {
-        case 0:
-            "空白处按住右键框选，靠近边缘自动滚动"
-        case 1:
-            "已框选 1 个，请扩大范围选择相邻提交"
-        default:
-            "已框选 \(viewModel.selectedHashes.count) 个提交"
+            .onExitCommand {
+                cancelMarqueeMode()
+            }
         }
     }
 
@@ -403,27 +491,56 @@ struct CommitGraphView: View {
         }
     }
 
-    private var branchLegend: some View {
-        HStack(spacing: 10) {
-            legendItem(color: CommitGraphPalette.color(0), title: "主分支")
-            legendItem(color: CommitGraphPalette.color(1), title: "功能分支")
-            legendItem(color: CommitGraphPalette.color(2), title: "发布分支")
-            HStack(spacing: 4) {
-                Rectangle()
-                    .fill(CommitGraphPalette.color(3))
-                    .frame(width: 18, height: 2)
-                Text("合并")
+    private func branchLegend(
+        screenSize: GraphSize
+    ) -> some View {
+        let entries = visibleBranchLegendEntries(
+            screenSize: screenSize
+        )
+        return HStack(spacing: 7) {
+            ForEach(Array(entries.prefix(3))) { entry in
+                legendItem(
+                    color: CommitGraphPalette.color(entry.colorIndex),
+                    title: entry.name
+                )
             }
+
+            if entries.count > 3 {
+                Menu {
+                    ForEach(Array(entries.dropFirst(3))) { entry in
+                        Label {
+                            Text(entry.name)
+                        } icon: {
+                            Image(systemName: "circle.fill")
+                                .foregroundStyle(
+                                    CommitGraphPalette.color(
+                                        entry.colorIndex
+                                    )
+                                )
+                        }
+                    }
+                } label: {
+                    Label(
+                        "更多 \(entries.count - 3)",
+                        systemImage: "ellipsis"
+                    )
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(GitMateTheme.panel.opacity(0.94))
+                .clipShape(Capsule())
+            }
+
+            Label("合并", systemImage: "arrow.triangle.merge")
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(GitMateTheme.panel.opacity(0.94))
+                .clipShape(Capsule())
         }
         .font(.system(size: 10.5, weight: .medium))
         .foregroundStyle(GitMateTheme.textSecondary)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(.white)
-        .clipShape(Capsule())
-        .overlay {
-            Capsule().stroke(GitMateTheme.border, lineWidth: 1)
-        }
     }
 
     private func legendItem(color: Color, title: String) -> some View {
@@ -432,7 +549,58 @@ struct CommitGraphView: View {
                 .fill(color)
                 .frame(width: 7, height: 7)
             Text(title)
+                .lineLimit(1)
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(GitMateTheme.panel.opacity(0.94))
+        .clipShape(Capsule())
+    }
+
+    private func visibleBranchLegendEntries(
+        screenSize: GraphSize
+    ) -> [BranchLegendEntry] {
+        var seen = Set<String>()
+        var result: [BranchLegendEntry] = []
+        for visibleNode in viewModel.projection.nodes
+            where isVisible(
+                position: visibleNode.position,
+                screenSize: screenSize,
+                padding: 0
+            ) {
+            for decoration in visibleNode.node.decorations {
+                guard let name = branchName(from: decoration),
+                      seen.insert(name).inserted
+                else {
+                    continue
+                }
+                result.append(
+                    BranchLegendEntry(
+                        name: name,
+                        colorIndex: visibleNode.node.colorIndex
+                    )
+                )
+            }
+        }
+        return result
+    }
+
+    private func branchName(from decoration: String) -> String? {
+        var name = decoration.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard !name.isEmpty,
+              !name.hasPrefix("tag:")
+        else {
+            return nil
+        }
+        if name.hasPrefix("HEAD -> ") {
+            name.removeFirst("HEAD -> ".count)
+        }
+        guard name != "HEAD", !name.isEmpty else {
+            return nil
+        }
+        return name
     }
 
     private var loadingState: some View {
@@ -489,6 +657,61 @@ struct CommitGraphView: View {
         )
     }
 
+    private var renameGroupPresented: Binding<Bool> {
+        Binding(
+            get: { renamingGroupID != nil },
+            set: {
+                if !$0 {
+                    renamingGroupID = nil
+                }
+            }
+        )
+    }
+
+    private var deleteGroupPresented: Binding<Bool> {
+        Binding(
+            get: { deletingGroupID != nil },
+            set: {
+                if !$0 {
+                    deletingGroupID = nil
+                }
+            }
+        )
+    }
+
+    private var deleteRegionPresented: Binding<Bool> {
+        Binding(
+            get: { deletingRegionID != nil },
+            set: {
+                if !$0 {
+                    deletingRegionID = nil
+                }
+            }
+        )
+    }
+
+    private var regionEditorPresented: Binding<Bool> {
+        Binding(
+            get: { regionEditorTarget != nil },
+            set: {
+                if !$0 {
+                    regionEditorTarget = nil
+                }
+            }
+        )
+    }
+
+    private var regionEditorActionTitle: String {
+        switch regionEditorTarget {
+        case .create:
+            "创建区域标识"
+        case .edit:
+            "编辑区域标识"
+        case nil:
+            "区域标识"
+        }
+    }
+
     private var groupNoticePresented: Binding<Bool> {
         Binding(
             get: { groupNoticeMessage != nil },
@@ -498,6 +721,110 @@ struct CommitGraphView: View {
                 }
             }
         )
+    }
+
+    private func handleMarqueeCompletion(
+        purpose: CommitGraphMarqueePurpose,
+        hashes: Set<String>,
+        rect: GraphRect
+    ) {
+        defer {
+            marqueePurpose = .createGroup
+        }
+        switch purpose {
+        case .createGroup:
+            viewModel.replaceSelection(with: hashes)
+            do {
+                try viewModel.validateManualGroupSelection()
+                newGroupTitle = ""
+                showsCreateGroup = true
+            } catch {
+                viewModel.clearCanvasSelection()
+                groupNoticeMessage = groupMessage(for: error)
+            }
+        case let .addToGroup(groupID):
+            guard let group = viewModel.group(id: groupID) else {
+                viewModel.clearCanvasSelection()
+                groupNoticeMessage =
+                    groupMessage(for: CommitGraphGroupingError.groupNotFound)
+                return
+            }
+            let addedHashes = hashes.subtracting(group.memberHashes)
+            guard !addedHashes.isEmpty else {
+                viewModel.clearCanvasSelection()
+                groupNoticeMessage = "请框选至少一个尚未加入该分组的提交。"
+                return
+            }
+            viewModel.replaceSelection(with: addedHashes)
+            do {
+                try viewModel.addSelectedCommits(to: groupID)
+            } catch {
+                viewModel.clearCanvasSelection()
+                groupNoticeMessage = groupMessage(for: error)
+            }
+        case .createRegion:
+            viewModel.clearCanvasSelection()
+            guard rect.width >= 120, rect.height >= 90 else {
+                groupNoticeMessage =
+                    "区域范围太小，请至少框选 120 × 90 的画布范围。"
+                return
+            }
+            regionEditorTitle = ""
+            regionEditorColorHex = "#2F80ED"
+            regionEditorTarget = .create(rect)
+        }
+    }
+
+    private func handleContextAction(
+        _ action: CommitGraphContextAction
+    ) {
+        switch action {
+        case let .renameGroup(id):
+            guard let group = viewModel.group(id: id) else { return }
+            groupEditorTitle = group.title
+            renamingGroupID = id
+        case let .addToGroup(id):
+            guard viewModel.group(id: id) != nil else { return }
+            viewModel.clearCanvasSelection()
+            marqueePurpose = .addToGroup(id)
+        case let .deleteGroup(id):
+            deletingGroupID = id
+        case let .editRegion(id):
+            guard let region = viewModel.region(id: id) else { return }
+            regionEditorTitle = region.title
+            regionEditorColorHex = region.colorHex
+            regionEditorTarget = .edit(id)
+        case let .deleteRegion(id):
+            deletingRegionID = id
+        }
+    }
+
+    private func cancelMarqueeMode() {
+        marqueePurpose = .createGroup
+        viewModel.clearCanvasSelection()
+    }
+
+    private func saveRegionEditor(
+        title: String,
+        colorHex: String
+    ) {
+        guard let target = regionEditorTarget else { return }
+        switch target {
+        case let .create(rect):
+            _ = viewModel.createRegion(
+                title: title,
+                colorHex: colorHex,
+                rect: rect
+            )
+        case let .edit(id):
+            viewModel.updateRegion(
+                id: id,
+                title: title,
+                colorHex: colorHex,
+                rect: nil
+            )
+        }
+        regionEditorTarget = nil
     }
 
     private func groupMessage(for error: Error) -> String {

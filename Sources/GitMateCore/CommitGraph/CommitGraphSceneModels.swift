@@ -62,6 +62,8 @@ public enum CommitGraphPointerChange: Equatable, Sendable {
     case pan(GraphPoint)
     case moveNode(hash: String, translation: GraphPoint)
     case moveGroup(id: UUID, translation: GraphPoint)
+    case moveRegion(id: UUID, translation: GraphPoint)
+    case resizeRegion(id: UUID, translation: GraphPoint)
 }
 
 public struct CommitGraphEdgePorts: Codable, Equatable, Sendable {

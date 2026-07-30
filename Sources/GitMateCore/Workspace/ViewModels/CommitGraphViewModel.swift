@@ -225,6 +225,18 @@ public final class CommitGraphViewModel {
                     translation: translation,
                     scene: updatedScene
                 )
+            case let .moveRegion(id, translation):
+                updatedScene = sceneByMovingRegion(
+                    id: id,
+                    by: translation,
+                    scene: updatedScene
+                )
+            case let .resizeRegion(id, translation):
+                updatedScene = sceneByResizingRegion(
+                    id: id,
+                    by: translation,
+                    scene: updatedScene
+                )
             }
         }
         guard updatedScene != scene else { return }
@@ -526,40 +538,24 @@ public final class CommitGraphViewModel {
     }
 
     public func moveRegion(id: UUID, translation: GraphPoint) {
-        guard translation.x.isFinite,
-              translation.y.isFinite,
-              let index = scene.regions.firstIndex(
-                where: { $0.id == id }
-              )
-        else {
-            return
-        }
-        let rect = scene.regions[index].rect
-        scene.regions[index].rect = GraphRect(
-            x: rect.x + translation.x,
-            y: rect.y + translation.y,
-            width: rect.width,
-            height: rect.height
+        let updated = sceneByMovingRegion(
+            id: id,
+            by: translation,
+            scene: scene
         )
+        guard updated != scene else { return }
+        scene = updated
         scheduleSceneSave()
     }
 
     public func resizeRegion(id: UUID, translation: GraphPoint) {
-        guard translation.x.isFinite,
-              translation.y.isFinite,
-              let index = scene.regions.firstIndex(
-                where: { $0.id == id }
-              )
-        else {
-            return
-        }
-        let rect = scene.regions[index].rect
-        scene.regions[index].rect = GraphRect(
-            x: rect.x,
-            y: rect.y,
-            width: max(rect.width + translation.x, 120),
-            height: max(rect.height + translation.y, 90)
+        let updated = sceneByResizingRegion(
+            id: id,
+            by: translation,
+            scene: scene
         )
+        guard updated != scene else { return }
+        scene = updated
         scheduleSceneSave()
     }
 
@@ -792,6 +788,54 @@ public final class CommitGraphViewModel {
                 y: position.y + translation.y
             )
         }
+        return updated
+    }
+
+    private func sceneByMovingRegion(
+        id: UUID,
+        by translation: GraphPoint,
+        scene currentScene: CommitGraphSceneState
+    ) -> CommitGraphSceneState {
+        guard translation.x.isFinite,
+              translation.y.isFinite,
+              let index = currentScene.regions.firstIndex(
+                where: { $0.id == id }
+              )
+        else {
+            return currentScene
+        }
+        var updated = currentScene
+        let rect = updated.regions[index].rect
+        updated.regions[index].rect = GraphRect(
+            x: rect.x + translation.x,
+            y: rect.y + translation.y,
+            width: rect.width,
+            height: rect.height
+        )
+        return updated
+    }
+
+    private func sceneByResizingRegion(
+        id: UUID,
+        by translation: GraphPoint,
+        scene currentScene: CommitGraphSceneState
+    ) -> CommitGraphSceneState {
+        guard translation.x.isFinite,
+              translation.y.isFinite,
+              let index = currentScene.regions.firstIndex(
+                where: { $0.id == id }
+              )
+        else {
+            return currentScene
+        }
+        var updated = currentScene
+        let rect = updated.regions[index].rect
+        updated.regions[index].rect = GraphRect(
+            x: rect.x,
+            y: rect.y,
+            width: max(rect.width + translation.x, 120),
+            height: max(rect.height + translation.y, 90)
+        )
         return updated
     }
 

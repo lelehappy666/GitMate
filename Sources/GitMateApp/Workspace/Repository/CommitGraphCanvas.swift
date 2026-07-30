@@ -26,6 +26,7 @@ enum CommitGraphPalette {
 
 struct CommitGraphCanvas: View {
     let projection: CommitGraphSceneProjection
+    let regions: [CommitGraphRegionMarker]
     let viewport: GraphViewport
     let lineStyle: CommitGraphLineStyle
     let selectedHashes: Set<String>
@@ -34,12 +35,87 @@ struct CommitGraphCanvas: View {
     var body: some View {
         Canvas { context, size in
             drawGrid(context: &context, size: size)
+            drawRegions(context: &context, size: size)
             drawExpandedGroups(context: &context, size: size)
             drawVisibleEdges(context: &context, size: size)
             drawVisibleNodes(context: &context, size: size)
             drawCollapsedGroups(context: &context, size: size)
         }
         .background(.white)
+    }
+
+    private func drawRegions(
+        context: inout GraphicsContext,
+        size: CGSize
+    ) {
+        for region in regions {
+            let rect = screenRect(region.rect)
+            guard isVisible(rect, in: size, padding: 120) else {
+                continue
+            }
+            let color = CommitGraphRegionColor.color(
+                hex: region.colorHex
+            )
+            let shape = Path(
+                roundedRect: rect,
+                cornerRadius: max(15 * viewport.scale, 7)
+            )
+            context.fill(shape, with: .color(color.opacity(0.045)))
+            context.stroke(
+                shape,
+                with: .color(color.opacity(0.62)),
+                style: StrokeStyle(
+                    lineWidth: max(1.4 * viewport.scale, 1),
+                    dash: [10 * viewport.scale, 5 * viewport.scale]
+                )
+            )
+
+            let headerHeight = min(
+                36 * viewport.scale,
+                rect.height
+            )
+            let headerRect = CGRect(
+                x: rect.minX,
+                y: rect.minY,
+                width: rect.width,
+                height: headerHeight
+            )
+            context.fill(
+                Path(
+                    roundedRect: headerRect,
+                    cornerRadius: max(15 * viewport.scale, 7)
+                ),
+                with: .color(color.opacity(0.13))
+            )
+            drawFittedText(
+                region.title,
+                in: headerRect.insetBy(
+                    dx: 13 * viewport.scale,
+                    dy: 4 * viewport.scale
+                ),
+                font: .systemFont(
+                    ofSize: max(12 * viewport.scale, 7),
+                    weight: .bold
+                ),
+                color: NSColor.labelColor,
+                context: &context
+            )
+
+            let handleSize = max(10 * viewport.scale, 7)
+            let handleRect = CGRect(
+                x: rect.maxX - handleSize - 5 * viewport.scale,
+                y: rect.maxY - handleSize - 5 * viewport.scale,
+                width: handleSize,
+                height: handleSize
+            )
+            context.fill(
+                Path(
+                    roundedRect: handleRect,
+                    cornerRadius: max(3 * viewport.scale, 2)
+                ),
+                with: .color(color.opacity(0.75))
+            )
+        }
     }
 
     private func drawGrid(
