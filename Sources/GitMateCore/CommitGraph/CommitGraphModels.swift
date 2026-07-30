@@ -1,6 +1,6 @@
 import Foundation
 
-public struct GraphPoint: Equatable, Sendable {
+public struct GraphPoint: Codable, Equatable, Sendable {
     public static let zero = GraphPoint(x: 0, y: 0)
 
     public let x: Double
