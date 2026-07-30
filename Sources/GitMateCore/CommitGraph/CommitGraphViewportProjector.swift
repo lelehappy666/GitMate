@@ -27,24 +27,93 @@ public enum CommitGraphViewportProjector {
         screenSize: GraphSize,
         padding: Double = 180
     ) -> [CommitGraphNode] {
-        let safePadding = max(padding, 0)
-        let minimumX = -safePadding
-        let minimumY = -safePadding
-        let maximumX = max(screenSize.width, 0) + safePadding
-        let maximumY = max(screenSize.height, 0) + safePadding
-        let halfWidth = nodeWidth * validScale(viewport.scale) / 2
-        let halfHeight = nodeHeight * validScale(viewport.scale) / 2
+        let bounds = visibleCanvasBounds(
+            viewport: viewport,
+            screenSize: screenSize,
+            padding: padding
+        )
+        let candidateIndices = layout.spatialIndex.nodeIndices(
+            minimumY: bounds.minimumY - nodeHeight / 2,
+            maximumY: bounds.maximumY + nodeHeight / 2
+        )
+        let halfWidth = nodeWidth / 2
+        let halfHeight = nodeHeight / 2
 
-        return layout.nodes.filter { node in
-            let center = screenPoint(
-                canvasPoint: GraphPoint(x: node.x, y: node.y),
-                viewport: viewport
-            )
-            return center.x + halfWidth >= minimumX
-                && center.x - halfWidth <= maximumX
-                && center.y + halfHeight >= minimumY
-                && center.y - halfHeight <= maximumY
+        return candidateIndices.compactMap { index in
+            let node = layout.nodes[index]
+            guard node.x + halfWidth >= bounds.minimumX,
+                  node.x - halfWidth <= bounds.maximumX,
+                  node.y + halfHeight >= bounds.minimumY,
+                  node.y - halfHeight <= bounds.maximumY
+            else {
+                return nil
+            }
+            return node
         }
+    }
+
+    public static func visibleEdges(
+        layout: CommitGraphLayoutResult,
+        viewport: GraphViewport,
+        screenSize: GraphSize,
+        padding: Double = 180
+    ) -> [CommitGraphEdge] {
+        let bounds = visibleCanvasBounds(
+            viewport: viewport,
+            screenSize: screenSize,
+            padding: padding
+        )
+        let candidateIndices = layout.spatialIndex.edgeIndices(
+            minimumY: bounds.minimumY,
+            maximumY: bounds.maximumY
+        )
+
+        return candidateIndices.compactMap { index in
+            let edge = layout.edges[index]
+            guard let child = layout.node(hash: edge.childHash),
+                  let parent = layout.node(hash: edge.parentHash),
+                  max(child.x, parent.x) >= bounds.minimumX,
+                  min(child.x, parent.x) <= bounds.maximumX,
+                  max(child.y, parent.y) >= bounds.minimumY,
+                  min(child.y, parent.y) <= bounds.maximumY
+            else {
+                return nil
+            }
+            return edge
+        }
+    }
+
+    private static func visibleCanvasBounds(
+        viewport: GraphViewport,
+        screenSize: GraphSize,
+        padding: Double
+    ) -> (
+        minimumX: Double,
+        minimumY: Double,
+        maximumX: Double,
+        maximumY: Double
+    ) {
+        let safePadding = max(padding, 0)
+        let topLeft = canvasPoint(
+            screenPoint: GraphPoint(
+                x: -safePadding,
+                y: -safePadding
+            ),
+            viewport: viewport
+        )
+        let bottomRight = canvasPoint(
+            screenPoint: GraphPoint(
+                x: max(screenSize.width, 0) + safePadding,
+                y: max(screenSize.height, 0) + safePadding
+            ),
+            viewport: viewport
+        )
+        return (
+            minimumX: min(topLeft.x, bottomRight.x),
+            minimumY: min(topLeft.y, bottomRight.y),
+            maximumX: max(topLeft.x, bottomRight.x),
+            maximumY: max(topLeft.y, bottomRight.y)
+        )
     }
 
     public static func node(
@@ -58,13 +127,21 @@ public enum CommitGraphViewportProjector {
         )
         let halfWidth = nodeWidth / 2
         let halfHeight = nodeHeight / 2
+        let candidateIndices = layout.spatialIndex.nodeIndices(
+            minimumY: point.y - halfHeight,
+            maximumY: point.y + halfHeight
+        )
 
-        return layout.nodes.reversed().first { node in
-            point.x >= node.x - halfWidth
-                && point.x <= node.x + halfWidth
-                && point.y >= node.y - halfHeight
-                && point.y <= node.y + halfHeight
+        for index in candidateIndices.reversed() {
+            let node = layout.nodes[index]
+            if point.x >= node.x - halfWidth,
+               point.x <= node.x + halfWidth,
+               point.y >= node.y - halfHeight,
+               point.y <= node.y + halfHeight {
+                return node
+            }
         }
+        return nil
     }
 
     public static func screenPoint(

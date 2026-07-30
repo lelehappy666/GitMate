@@ -105,6 +105,7 @@ public struct CommitGraphLayoutResult: Equatable, Sendable {
     public let edges: [CommitGraphEdge]
     public let contentWidth: Double
     public let contentHeight: Double
+    let spatialIndex: CommitGraphSpatialIndex
 
     public init(
         nodes: [CommitGraphNode] = [],
@@ -116,5 +117,105 @@ public struct CommitGraphLayoutResult: Equatable, Sendable {
         self.edges = edges
         self.contentWidth = contentWidth
         self.contentHeight = contentHeight
+        spatialIndex = CommitGraphSpatialIndex(
+            nodes: nodes,
+            edges: edges
+        )
+    }
+
+    public func node(hash: String) -> CommitGraphNode? {
+        guard let index = spatialIndex.nodeIndexByHash[hash] else {
+            return nil
+        }
+        return nodes[index]
+    }
+}
+
+struct CommitGraphSpatialIndex: Equatable, Sendable {
+    static let bucketHeight = 256.0
+
+    let nodeIndexByHash: [String: Int]
+    private let nodeIndicesByBucket: [Int: [Int]]
+    private let edgeIndicesByBucket: [Int: [Int]]
+
+    init(nodes: [CommitGraphNode], edges: [CommitGraphEdge]) {
+        let indicesByHash = Dictionary(
+            nodes.enumerated().map {
+                ($0.element.hash, $0.offset)
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var nodeBuckets: [Int: [Int]] = [:]
+        for (index, node) in nodes.enumerated() {
+            nodeBuckets[Self.bucket(for: node.y), default: []].append(index)
+        }
+
+        var edgeBuckets: [Int: [Int]] = [:]
+        for (index, edge) in edges.enumerated() {
+            guard let childIndex = indicesByHash[edge.childHash],
+                  let parentIndex = indicesByHash[edge.parentHash]
+            else {
+                continue
+            }
+            let childY = nodes[childIndex].y
+            let parentY = nodes[parentIndex].y
+            let firstBucket = Self.bucket(for: min(childY, parentY))
+            let lastBucket = Self.bucket(for: max(childY, parentY))
+            for bucket in firstBucket...lastBucket {
+                edgeBuckets[bucket, default: []].append(index)
+            }
+        }
+
+        nodeIndexByHash = indicesByHash
+        nodeIndicesByBucket = nodeBuckets
+        edgeIndicesByBucket = edgeBuckets
+    }
+
+    func nodeIndices(minimumY: Double, maximumY: Double) -> [Int] {
+        indices(
+            in: nodeIndicesByBucket,
+            minimumY: minimumY,
+            maximumY: maximumY,
+            deduplicating: false
+        )
+    }
+
+    func edgeIndices(minimumY: Double, maximumY: Double) -> [Int] {
+        indices(
+            in: edgeIndicesByBucket,
+            minimumY: minimumY,
+            maximumY: maximumY,
+            deduplicating: true
+        )
+    }
+
+    private func indices(
+        in buckets: [Int: [Int]],
+        minimumY: Double,
+        maximumY: Double,
+        deduplicating: Bool
+    ) -> [Int] {
+        guard minimumY.isFinite,
+              maximumY.isFinite,
+              minimumY <= maximumY
+        else {
+            return []
+        }
+        let firstBucket = Self.bucket(for: minimumY)
+        let lastBucket = Self.bucket(for: maximumY)
+        if deduplicating {
+            var indices: Set<Int> = []
+            for bucket in firstBucket...lastBucket {
+                indices.formUnion(buckets[bucket] ?? [])
+            }
+            return indices.sorted()
+        }
+        return (firstBucket...lastBucket)
+            .flatMap { buckets[$0] ?? [] }
+            .sorted()
+    }
+
+    private static func bucket(for y: Double) -> Int {
+        Int(floor(y / bucketHeight))
     }
 }

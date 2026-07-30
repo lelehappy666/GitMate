@@ -62,6 +62,50 @@ let commitGraphViewportProjectorTests = [
             "卡片矩形外不得误命中提交"
         )
     },
+    TestCase("画布只返回穿过视口的提交连线") {
+        let layout = CommitGraphLayoutResult(
+            nodes: [
+                viewportNode(hash: "above", x: 260, y: -500),
+                viewportNode(hash: "visible", x: 260, y: 220),
+                viewportNode(hash: "below", x: 260, y: 1_200),
+                viewportNode(hash: "far-left", x: -1_000, y: 220)
+            ],
+            edges: [
+                CommitGraphEdge(
+                    id: "above-visible",
+                    childHash: "above",
+                    parentHash: "visible",
+                    kind: .parent,
+                    colorIndex: 0
+                ),
+                CommitGraphEdge(
+                    id: "visible-below",
+                    childHash: "visible",
+                    parentHash: "below",
+                    kind: .parent,
+                    colorIndex: 0
+                ),
+                CommitGraphEdge(
+                    id: "far-left",
+                    childHash: "far-left",
+                    parentHash: "far-left",
+                    kind: .parent,
+                    colorIndex: 0
+                )
+            ]
+        )
+
+        try expectEqual(
+            CommitGraphViewportProjector.visibleEdges(
+                layout: layout,
+                viewport: GraphViewport(),
+                screenSize: GraphSize(width: 1_000, height: 700),
+                padding: 0
+            ).map(\.id),
+            ["above-visible", "visible-below"],
+            "只保留视口相交连线，离屏连线不得进入绘制集合"
+        )
+    },
     TestCase("缩放限制在百分之三十五到百分之二百") {
         let enlarged = CommitGraphViewportProjector.zoomed(
             GraphViewport(),

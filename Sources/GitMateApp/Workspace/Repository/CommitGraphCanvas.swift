@@ -78,27 +78,23 @@ struct CommitGraphCanvas: View {
         layout: CommitGraphLayoutResult,
         viewport: GraphViewport
     ) {
-        let nodesByHash = Dictionary(
-            uniqueKeysWithValues: layout.nodes.map { ($0.hash, $0) }
+        let edges = CommitGraphViewportProjector.visibleEdges(
+            layout: layout,
+            viewport: viewport,
+            screenSize: GraphSize(
+                width: Double(size.width),
+                height: Double(size.height)
+            ),
+            padding: 180
         )
-        let padding: CGFloat = 180
-
-        for edge in layout.edges {
-            guard let child = nodesByHash[edge.childHash],
-                  let parent = nodesByHash[edge.parentHash]
+        for edge in edges {
+            guard let child = layout.node(hash: edge.childHash),
+                  let parent = layout.node(hash: edge.parentHash)
             else {
                 continue
             }
             let start = screenPoint(for: child, viewport: viewport)
             let end = screenPoint(for: parent, viewport: viewport)
-            guard edgeMayBeVisible(
-                from: start,
-                to: end,
-                screenSize: size,
-                padding: padding
-            ) else {
-                continue
-            }
 
             let midpointY = (start.y + end.y) / 2
             var path = Path()
@@ -285,18 +281,6 @@ struct CommitGraphCanvas: View {
             viewport: viewport
         )
         return CGPoint(x: CGFloat(point.x), y: CGFloat(point.y))
-    }
-
-    private func edgeMayBeVisible(
-        from start: CGPoint,
-        to end: CGPoint,
-        screenSize: CGSize,
-        padding: CGFloat
-    ) -> Bool {
-        max(start.x, end.x) >= -padding
-            && min(start.x, end.x) <= screenSize.width + padding
-            && max(start.y, end.y) >= -padding
-            && min(start.y, end.y) <= screenSize.height + padding
     }
 
     private func authorInitials(_ author: String) -> String {
