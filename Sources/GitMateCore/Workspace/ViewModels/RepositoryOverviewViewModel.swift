@@ -204,6 +204,7 @@ public final class RepositoryOverviewViewModel {
                     hasLoadedSuccessfully = true
                 }
             }
+            try Task.checkCancellation()
         } catch is CancellationError {
             if !hasAppliedContent {
                 state = stateBeforeLoad

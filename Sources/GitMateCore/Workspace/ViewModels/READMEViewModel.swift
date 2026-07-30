@@ -180,6 +180,7 @@ public final class READMEViewModel {
                     hasLoadedSuccessfully = true
                 }
             }
+            try Task.checkCancellation()
         } catch is CancellationError {
             if !hasAppliedContent {
                 state = stateBeforeLoad

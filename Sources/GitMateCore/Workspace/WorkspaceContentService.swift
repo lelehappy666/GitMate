@@ -223,6 +223,14 @@ public final class WorkspaceContentService: @unchecked Sendable {
             }
         }
 
+        let rateLimitError: WorkspaceAPIError?
+        do {
+            try rateLimitGate.check(now: currentDate)
+            rateLimitError = nil
+        } catch let error as WorkspaceAPIError {
+            rateLimitError = error
+        }
+
         async let localStatusResult = loadLocalStatus(
             localRecord: localRecord,
             fallback: fallback?.localStatus
@@ -236,14 +244,14 @@ public final class WorkspaceContentService: @unchecked Sendable {
             token: token,
             accountID: accountID,
             localRecord: localRecord,
-            currentDate: currentDate,
+            rateLimitError: rateLimitError,
             cachedSummary: validSnapshot?.onlineSummaries[repository.id],
             fallback: fallback?.onlineSummary
         )
         async let readmeResult = loadREADME(
             repository: repository,
             token: token,
-            currentDate: currentDate,
+            rateLimitError: rateLimitError,
             includeREADME: includeREADME,
             fallback: fallback?.readme
         )
@@ -358,7 +366,7 @@ public final class WorkspaceContentService: @unchecked Sendable {
         token: String,
         accountID: String,
         localRecord: LocalRepositoryRecord,
-        currentDate: Date,
+        rateLimitError: WorkspaceAPIError?,
         cachedSummary: RepositoryOnlineSummary?,
         fallback: RepositoryOnlineSummary?
     ) async throws -> RepositoryContentModuleResult<RepositoryOnlineSummary?> {
@@ -366,7 +374,9 @@ public final class WorkspaceContentService: @unchecked Sendable {
             return RepositoryContentModuleResult(value: cachedSummary)
         }
         do {
-            try rateLimitGate.check(now: currentDate)
+            if let rateLimitError {
+                throw rateLimitError
+            }
             let summary = try await github.repositorySummary(
                 repository: repository,
                 token: token
@@ -417,7 +427,7 @@ public final class WorkspaceContentService: @unchecked Sendable {
     private func loadREADME(
         repository: Repository,
         token: String,
-        currentDate: Date,
+        rateLimitError: WorkspaceAPIError?,
         includeREADME: Bool,
         fallback: GitHubREADME?
     ) async throws -> RepositoryContentModuleResult<GitHubREADME?> {
@@ -425,7 +435,9 @@ public final class WorkspaceContentService: @unchecked Sendable {
             return RepositoryContentModuleResult(value: nil)
         }
         do {
-            try rateLimitGate.check(now: currentDate)
+            if let rateLimitError {
+                throw rateLimitError
+            }
             return RepositoryContentModuleResult(
                 value: try await github.readme(
                     repository: repository,
