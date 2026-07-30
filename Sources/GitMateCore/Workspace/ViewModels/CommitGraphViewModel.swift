@@ -375,6 +375,46 @@ public final class CommitGraphViewModel {
         )
     }
 
+    public func group(id: UUID) -> CommitGraphGroup? {
+        scene.groups.first { $0.id == id }
+    }
+
+    public func renameGroup(id: UUID, title: String) throws {
+        scene = try CommitGraphGrouping.renamingGroup(
+            id: id,
+            title: normalizedGroupTitle(title),
+            scene: scene
+        )
+        refreshProjection(incrementingPathRevision: false)
+        scheduleSceneSave()
+    }
+
+    public func addSelectedCommits(to groupID: UUID) throws {
+        guard let group = group(id: groupID) else {
+            throw CommitGraphGroupingError.groupNotFound
+        }
+        scene = try CommitGraphGrouping.updatingGroupMembers(
+            groupID: groupID,
+            memberHashes: group.memberHashes.union(selectedHashes),
+            layout: layout,
+            scene: scene
+        )
+        selectedHashes.removeAll()
+        refreshProjection(incrementingPathRevision: true)
+        scheduleSceneSave()
+    }
+
+    public func deleteGroup(id: UUID) throws {
+        scene = try CommitGraphGrouping.removingGroup(
+            id: id,
+            layout: layout,
+            scene: scene
+        )
+        selectedHashes.removeAll()
+        refreshProjection(incrementingPathRevision: true)
+        scheduleSceneSave()
+    }
+
     @discardableResult
     public func createManualGroup(title: String) throws -> UUID {
         let id = UUID()
@@ -443,6 +483,88 @@ public final class CommitGraphViewModel {
         }
         scene.groups[index].isCollapsed = isCollapsed
         refreshProjection(incrementingPathRevision: true)
+        scheduleSceneSave()
+    }
+
+    public func region(id: UUID) -> CommitGraphRegionMarker? {
+        scene.regions.first { $0.id == id }
+    }
+
+    @discardableResult
+    public func createRegion(
+        title: String,
+        colorHex: String,
+        rect: GraphRect
+    ) -> UUID {
+        let region = CommitGraphRegionMarker(
+            title: normalizedRegionTitle(title),
+            colorHex: colorHex,
+            rect: rect
+        )
+        scene.regions.append(region)
+        scheduleSceneSave()
+        return region.id
+    }
+
+    public func updateRegion(
+        id: UUID,
+        title: String,
+        colorHex: String,
+        rect: GraphRect?
+    ) {
+        guard let index = scene.regions.firstIndex(
+            where: { $0.id == id }
+        ) else {
+            return
+        }
+        scene.regions[index].title = normalizedRegionTitle(title)
+        scene.regions[index].colorHex = colorHex
+        if let rect {
+            scene.regions[index].rect = rect
+        }
+        scheduleSceneSave()
+    }
+
+    public func moveRegion(id: UUID, translation: GraphPoint) {
+        guard translation.x.isFinite,
+              translation.y.isFinite,
+              let index = scene.regions.firstIndex(
+                where: { $0.id == id }
+              )
+        else {
+            return
+        }
+        let rect = scene.regions[index].rect
+        scene.regions[index].rect = GraphRect(
+            x: rect.x + translation.x,
+            y: rect.y + translation.y,
+            width: rect.width,
+            height: rect.height
+        )
+        scheduleSceneSave()
+    }
+
+    public func resizeRegion(id: UUID, translation: GraphPoint) {
+        guard translation.x.isFinite,
+              translation.y.isFinite,
+              let index = scene.regions.firstIndex(
+                where: { $0.id == id }
+              )
+        else {
+            return
+        }
+        let rect = scene.regions[index].rect
+        scene.regions[index].rect = GraphRect(
+            x: rect.x,
+            y: rect.y,
+            width: max(rect.width + translation.x, 120),
+            height: max(rect.height + translation.y, 90)
+        )
+        scheduleSceneSave()
+    }
+
+    public func deleteRegion(id: UUID) {
+        scene.regions.removeAll { $0.id == id }
         scheduleSceneSave()
     }
 
@@ -718,6 +840,13 @@ public final class CommitGraphViewModel {
             in: .whitespacesAndNewlines
         )
         return trimmed.isEmpty ? "提交分组" : String(trimmed.prefix(80))
+    }
+
+    private func normalizedRegionTitle(_ title: String) -> String {
+        let trimmed = title.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        return trimmed.isEmpty ? "版本区域" : String(trimmed.prefix(80))
     }
 
     private func uniqueCommits(_ values: [GitCommit]) -> [GitCommit] {

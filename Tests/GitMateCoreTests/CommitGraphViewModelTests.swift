@@ -273,6 +273,91 @@ let commitGraphViewModelTests = [
             "拖动节点不得重新分配 Group 端口"
         )
     },
+    TestCase("分组支持重命名添加成员和安全解散") { @MainActor in
+        let viewModel = CommitGraphViewModel(
+            reader: PagedCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            pageSize: 2
+        )
+        await viewModel.load()
+        await viewModel.loadOlderCommits()
+        viewModel.replaceSelection(with: ["hash-a", "hash-b"])
+        let groupID = try viewModel.createManualGroup(title: "旧名称")
+
+        try viewModel.renameGroup(id: groupID, title: "v2 修复")
+        viewModel.replaceSelection(with: ["hash-c"])
+        try viewModel.addSelectedCommits(to: groupID)
+
+        try expectEqual(
+            viewModel.group(id: groupID)?.title,
+            "v2 修复",
+            "重命名应立即反映在场景"
+        )
+        try expectEqual(
+            viewModel.group(id: groupID)?.memberHashes,
+            Set(["hash-a", "hash-b", "hash-c"]),
+            "添加提交应与已有成员取并集"
+        )
+
+        try viewModel.deleteGroup(id: groupID)
+        try expectEqual(viewModel.scene.groups, [], "删除后不应保留分组")
+        try expectEqual(
+            Set(viewModel.scene.nodePositions.keys),
+            Set(["hash-a", "hash-b", "hash-c"]),
+            "解散分组后所有提交都应恢复为普通节点"
+        )
+    },
+    TestCase("版本区域可创建移动缩放改色和删除") { @MainActor in
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL
+        )
+        let initialRect = GraphRect(
+            x: 100,
+            y: 120,
+            width: 500,
+            height: 360
+        )
+
+        let regionID = viewModel.createRegion(
+            title: "v2.0",
+            colorHex: "#2F80ED",
+            rect: initialRect
+        )
+        viewModel.moveRegion(
+            id: regionID,
+            translation: GraphPoint(x: 20, y: -10)
+        )
+        viewModel.resizeRegion(
+            id: regionID,
+            translation: GraphPoint(x: 40, y: 30)
+        )
+        viewModel.updateRegion(
+            id: regionID,
+            title: "v2.1",
+            colorHex: "#7B61FF",
+            rect: nil
+        )
+
+        try expectEqual(
+            viewModel.region(id: regionID),
+            CommitGraphRegionMarker(
+                id: regionID,
+                title: "v2.1",
+                colorHex: "#7B61FF",
+                rect: GraphRect(
+                    x: 120,
+                    y: 110,
+                    width: 540,
+                    height: 390
+                )
+            ),
+            "区域应保存编辑后的标题、颜色和范围"
+        )
+
+        viewModel.deleteRegion(id: regionID)
+        try expectEqual(viewModel.scene.regions, [], "区域应可独立删除")
+    },
     TestCase("自动分组建议确认前不创建分组") { @MainActor in
         let viewModel = CommitGraphViewModel(
             reader: PagedCommitGraphReader(),
