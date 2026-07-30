@@ -26,6 +26,7 @@ public enum SourceLanguage: String, Codable, Equatable, Sendable {
 
 public enum FilePreviewKind: Equatable, Sendable {
     case source(SourceLanguage?)
+    case markdown
     case html
     case rasterImage
     case vectorImage
@@ -96,6 +97,8 @@ public enum FilePreviewClassifier {
                 kind = .vectorImage
             } else if isHTML(path: path, text: decodedText) {
                 kind = .html
+            } else if language(for: path) == .markdown {
+                kind = .markdown
             } else {
                 kind = .source(language(for: path))
             }

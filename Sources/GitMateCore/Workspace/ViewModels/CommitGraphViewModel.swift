@@ -270,16 +270,34 @@ public final class CommitGraphViewModel {
     }
 
     public func resetLayout() {
-        layout = graphLayout.layout(
+        let updatedLayout = graphLayout.layout(
             page: CommitGraphPage(
                 commits: commits,
                 nextCursor: nextCursor
             )
         )
-        scene = CommitGraphSceneState.defaultState(layout: layout)
+        let defaults = CommitGraphSceneState.defaultState(
+            layout: updatedLayout
+        )
+        let groupedHashes = Set(
+            scene.groups.flatMap(\.memberHashes)
+        )
+        var updatedScene = scene
+        updatedScene.nodePositions = defaults.nodePositions.filter {
+            !groupedHashes.contains($0.key)
+        }
+        updatedScene.edgePorts = defaults.edgePorts
+
+        layout = updatedLayout
+        scene = CommitGraphGrouping.rebuildingBoundaryPorts(
+            layout: updatedLayout,
+            scene: updatedScene
+        )
+        selectedHashes.formIntersection(
+            Set(updatedLayout.nodes.map(\.hash))
+        )
         refreshProjection(incrementingPathRevision: true)
         scheduleSceneSave()
-        viewport = GraphViewport()
     }
 
     public func focusCurrentBranch(
@@ -293,8 +311,29 @@ public final class CommitGraphViewModel {
         }) ?? layout.nodes.first else {
             return
         }
-        viewport.offsetX = canvasWidth / 2 - node.x * viewport.scale
-        viewport.offsetY = canvasHeight / 3 - node.y * viewport.scale
+        let position: GraphPoint
+        if let group = scene.groups.first(
+            where: { $0.memberHashes.contains(node.hash) }
+        ) {
+            if group.isCollapsed {
+                let rect = CommitGraphSceneGeometry
+                    .collapsedGroupRect(group)
+                position = GraphPoint(
+                    x: rect.midpointX,
+                    y: rect.midpointY
+                )
+            } else {
+                position = group.absolutePosition(for: node.hash)
+                    ?? GraphPoint(x: node.x, y: node.y)
+            }
+        } else {
+            position = scene.nodePositions[node.hash]
+                ?? GraphPoint(x: node.x, y: node.y)
+        }
+        viewport.offsetX =
+            canvasWidth / 2 - position.x * viewport.scale
+        viewport.offsetY =
+            canvasHeight / 3 - position.y * viewport.scale
     }
 
     public func toggleSelection(

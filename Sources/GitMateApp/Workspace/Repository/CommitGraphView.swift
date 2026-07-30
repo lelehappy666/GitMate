@@ -6,6 +6,11 @@ struct CommitGraphView: View {
     @State private var showsCreateGroup = false
     @State private var newGroupTitle = ""
     @State private var showsGroupSuggestions = false
+    @State private var groupNoticeMessage: String?
+    @State private var canvasSize = GraphSize(
+        width: 1_040,
+        height: 680
+    )
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,13 +58,25 @@ struct CommitGraphView: View {
             TextField("分组名称", text: $newGroupTitle)
             Button("取消", role: .cancel) {}
             Button("创建") {
-                _ = try? viewModel.createManualGroup(
-                    title: newGroupTitle
-                )
-                newGroupTitle = ""
+                do {
+                    _ = try viewModel.createManualGroup(
+                        title: newGroupTitle
+                    )
+                    newGroupTitle = ""
+                } catch {
+                    let message = groupMessage(for: error)
+                    Task { @MainActor in
+                        groupNoticeMessage = message
+                    }
+                }
             }
         } message: {
             Text("将已选择的 \(viewModel.selectedHashes.count) 个连通提交组成一个分组。")
+        }
+        .alert("提交分组", isPresented: groupNoticePresented) {
+            Button("知道了") {}
+        } message: {
+            Text(groupNoticeMessage ?? "")
         }
     }
 
@@ -86,15 +103,22 @@ struct CommitGraphView: View {
     private var graphToolbar: some View {
         HStack(spacing: 8) {
             Button {
-                newGroupTitle = ""
-                showsCreateGroup = true
+                if viewModel.selectedHashes.count < 2 {
+                    groupNoticeMessage =
+                        "按住 Command 点击可切换选择，按住 Shift 点击可追加选择。请先选择至少 2 个相互连通的提交。"
+                } else {
+                    newGroupTitle = ""
+                    showsCreateGroup = true
+                }
             } label: {
                 Label(
-                    "创建分组",
+                    viewModel.selectedHashes.isEmpty
+                        ? "创建分组"
+                        : "创建分组 \(viewModel.selectedHashes.count)",
                     systemImage: "square.stack.3d.up.badge.a"
                 )
             }
-            .disabled(viewModel.selectedHashes.count < 2)
+            .help("按住 Command 点击切换选择，Shift 点击追加选择")
 
             Button {
                 Task {
@@ -136,12 +160,17 @@ struct CommitGraphView: View {
             } label: {
                 Label("自动布局", systemImage: "wand.and.stars")
             }
+            .help("重新排列未分组提交，保留现有分组、折叠状态和分组位置")
 
             Button {
-                viewModel.focusCurrentBranch()
+                viewModel.focusCurrentBranch(
+                    canvasWidth: canvasSize.width,
+                    canvasHeight: canvasSize.height
+                )
             } label: {
                 Label("聚焦主分支", systemImage: "scope")
             }
+            .help("只移动画布视口，不改变分组和折叠状态")
             .accessibilityIdentifier("workspace.commitGraph.focus")
 
             Divider()
@@ -264,11 +293,54 @@ struct CommitGraphView: View {
                                 }
                         }
                         Spacer()
+                        groupSelectionHint
                     }
                 }
                 .padding(14)
                 .allowsHitTesting(false)
             }
+            .onAppear {
+                canvasSize = screenSize
+            }
+            .onChange(of: geometry.size) { _, newSize in
+                canvasSize = GraphSize(
+                    width: Double(newSize.width),
+                    height: Double(newSize.height)
+                )
+            }
+        }
+    }
+
+    private var groupSelectionHint: some View {
+        Label(
+            groupSelectionHintText,
+            systemImage: viewModel.selectedHashes.count >= 2
+                ? "checkmark.circle.fill"
+                : "command"
+        )
+        .font(.system(size: 11.5, weight: .semibold))
+        .foregroundStyle(
+            viewModel.selectedHashes.count >= 2
+                ? GitMateTheme.success
+                : GitMateTheme.textSecondary
+        )
+        .padding(.horizontal, 11)
+        .padding(.vertical, 7)
+        .background(.white.opacity(0.94))
+        .clipShape(Capsule())
+        .overlay {
+            Capsule().stroke(GitMateTheme.border, lineWidth: 1)
+        }
+    }
+
+    private var groupSelectionHintText: String {
+        switch viewModel.selectedHashes.count {
+        case 0:
+            "按 ⌘ 点击多个提交后创建分组"
+        case 1:
+            "已选择 1 个，请再选择相邻提交"
+        default:
+            "已选择 \(viewModel.selectedHashes.count) 个，可创建分组"
         }
     }
 
@@ -411,6 +483,35 @@ struct CommitGraphView: View {
                 }
             }
         )
+    }
+
+    private var groupNoticePresented: Binding<Bool> {
+        Binding(
+            get: { groupNoticeMessage != nil },
+            set: {
+                if !$0 {
+                    groupNoticeMessage = nil
+                }
+            }
+        )
+    }
+
+    private func groupMessage(for error: Error) -> String {
+        guard let error = error as? CommitGraphGroupingError else {
+            return "暂时无法创建提交分组。"
+        }
+        switch error {
+        case .insufficientMembers:
+            return "请先选择至少 2 个提交。"
+        case .disconnectedSelection:
+            return "所选提交必须处在同一个连通的提交关系中，可以包含分叉和合并。"
+        case .membersAlreadyGrouped:
+            return "所选提交中已有提交属于其他分组，请调整选择后重试。"
+        case .unknownMembers:
+            return "部分提交已经不在当前画布中，请重新选择。"
+        case .groupNotFound:
+            return "目标分组已经不存在。"
+        }
     }
 
     private func loadOlderIfNeeded() {

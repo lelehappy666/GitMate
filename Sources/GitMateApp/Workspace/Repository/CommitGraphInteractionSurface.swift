@@ -167,6 +167,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         private var dragTarget: DragTarget = .canvas
         private var didDrag = false
         private var accumulatedDistance = 0.0
+        private var lastDragScreenPoint: GraphPoint?
         private var frameLink: CADisplayLink?
 
         override var isFlipped: Bool { true }
@@ -188,18 +189,26 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         }
 
         override func mouseDown(with event: NSEvent) {
+            window?.makeFirstResponder(self)
             didDrag = false
             accumulatedDistance = 0
-            dragTarget = target(
-                at: convertedPoint(event.locationInWindow)
-            )
+            let screenPoint = convertedPoint(event.locationInWindow)
+            lastDragScreenPoint = screenPoint
+            dragTarget = target(at: screenPoint)
+            NSCursor.closedHand.set()
         }
 
         override func mouseDragged(with event: NSEvent) {
+            let currentPoint = convertedPoint(event.locationInWindow)
+            guard let previousPoint = lastDragScreenPoint else {
+                lastDragScreenPoint = currentPoint
+                return
+            }
             let screenTranslation = GraphPoint(
-                x: Double(event.deltaX),
-                y: -Double(event.deltaY)
+                x: currentPoint.x - previousPoint.x,
+                y: currentPoint.y - previousPoint.y
             )
+            lastDragScreenPoint = currentPoint
             accumulatedDistance += hypot(
                 screenTranslation.x,
                 screenTranslation.y
@@ -229,6 +238,8 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
 
         override func mouseUp(with event: NSEvent) {
             coordinator?.flush()
+            lastDragScreenPoint = nil
+            NSCursor.openHand.set()
             if didDrag {
                 coordinator?.interactionEnded()
                 return
@@ -262,11 +273,20 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         }
 
         override func scrollWheel(with event: NSEvent) {
+            let sensitivity = event.hasPreciseScrollingDeltas
+                ? 0.004
+                : 0.08
+            let zoomDelta = min(
+                max(
+                    Double(event.scrollingDeltaY) * sensitivity,
+                    -0.35
+                ),
+                0.35
+            )
+            guard zoomDelta != 0 else { return }
             coordinator?.enqueueViewport(
                 .zoom(
-                    multiplier: exp(
-                        Double(event.scrollingDeltaY) * 0.012
-                    ),
+                    multiplier: exp(zoomDelta),
                     anchor: convertedPoint(event.locationInWindow)
                 )
             )
@@ -286,6 +306,11 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         func stopFrameScheduler() {
             frameLink?.invalidate()
             frameLink = nil
+        }
+
+        override func resetCursorRects() {
+            super.resetCursorRects()
+            addCursorRect(bounds, cursor: .openHand)
         }
 
         private func requestDisplayFrame() {

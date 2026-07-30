@@ -7,17 +7,25 @@ import WebKit
 struct RasterImagePreviewView: View {
     let data: Data
 
-    @State private var zoom = 1.0
+    @State private var manualZoom: Double?
+    @State private var fitZoom = 1.0
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Button {
-                    zoom = max(zoom / 1.25, 0.1)
+                    manualZoom = max(
+                        (manualZoom ?? fitZoom) / 1.25,
+                        0.1
+                    )
                 } label: {
                     Image(systemName: "minus.magnifyingglass")
                 }
-                Text("\(Int(zoom * 100))%")
+                Text(
+                    manualZoom.map {
+                        "\(Int($0 * 100))%"
+                    } ?? "自适应"
+                )
                     .font(
                         .system(
                             size: 11,
@@ -25,14 +33,20 @@ struct RasterImagePreviewView: View {
                             design: .monospaced
                         )
                     )
-                    .frame(width: 48)
+                    .frame(width: 58)
                 Button {
-                    zoom = min(zoom * 1.25, 8)
+                    manualZoom = min(
+                        (manualZoom ?? fitZoom) * 1.25,
+                        8
+                    )
                 } label: {
                     Image(systemName: "plus.magnifyingglass")
                 }
                 Button("实际大小") {
-                    zoom = 1
+                    manualZoom = 1
+                }
+                Button("适合窗口") {
+                    manualZoom = nil
                 }
                 Spacer()
             }
@@ -45,22 +59,48 @@ struct RasterImagePreviewView: View {
             Divider()
 
             if let image = NSImage(data: data) {
-                ScrollView([.horizontal, .vertical]) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(
-                            width: max(image.size.width * zoom, 1),
-                            height: max(image.size.height * zoom, 1)
-                        )
-                        .padding(24)
-                }
-                .background(GitMateTheme.panel)
+                imageCanvas(image)
             } else {
                 previewUnavailable(
                     title: "图片无法解码",
                     message: "文件签名有效，但系统图片解码器无法打开该内容。"
                 )
+            }
+        }
+    }
+
+    private func imageCanvas(_ image: NSImage) -> some View {
+        GeometryReader { geometry in
+            let availableWidth = max(geometry.size.width - 48, 1)
+            let availableHeight = max(geometry.size.height - 48, 1)
+            let nextFitZoom = min(
+                availableWidth / max(image.size.width, 1),
+                availableHeight / max(image.size.height, 1),
+                1
+            )
+            let resolvedZoom = manualZoom ?? nextFitZoom
+
+            ScrollView([.horizontal, .vertical]) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(
+                        width: max(image.size.width * resolvedZoom, 1),
+                        height: max(image.size.height * resolvedZoom, 1)
+                    )
+                    .frame(
+                        minWidth: max(geometry.size.width, 1),
+                        minHeight: max(geometry.size.height, 1),
+                        alignment: .center
+                    )
+            }
+            .background(GitMateTheme.panel)
+            .onAppear {
+                fitZoom = nextFitZoom
+            }
+            .onChange(of: geometry.size) { _, _ in
+                fitZoom = nextFitZoom
             }
         }
     }
@@ -151,7 +191,7 @@ struct HTMLFilePreviewView: View {
     @State private var mode = Mode.preview
 
     private enum Mode: String, CaseIterable {
-        case preview = "预览"
+        case preview = "网页预览"
         case source = "源码"
     }
 
@@ -202,6 +242,33 @@ struct HTMLFilePreviewView: View {
     }
 }
 
+struct MarkdownFilePreviewView: View {
+    let document: FilePreviewDocument
+
+    private var markdownDocument: READMEDocument {
+        READMEBlockParser().parse(document.text ?? "")
+    }
+
+    var body: some View {
+        ScrollView(.vertical) {
+            LazyVStack(alignment: .leading, spacing: 18) {
+                ForEach(
+                    Array(markdownDocument.blocks.enumerated()),
+                    id: \.offset
+                ) { _, block in
+                    READMEBlockView(block: block)
+                }
+            }
+            .frame(maxWidth: 860, alignment: .leading)
+            .padding(.horizontal, 30)
+            .padding(.vertical, 26)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .background(.white)
+        .accessibilityLabel("Markdown 文档预览")
+    }
+}
+
 private struct SafeHTMLPreviewView: NSViewRepresentable {
     let text: String
     let treatsContentAsSVG: Bool
@@ -234,40 +301,89 @@ private struct SafeHTMLPreviewView: NSViewRepresentable {
     private var securedHTML: String {
         let policy =
             "default-src 'none'; "
-            + "style-src 'unsafe-inline'; "
-            + "img-src data:; "
-            + "font-src data:; "
-            + "media-src 'none'; "
+            + "style-src 'unsafe-inline' https: data:; "
+            + "img-src data: blob: https:; "
+            + "font-src data: https:; "
+            + "media-src data: https:; "
             + "connect-src 'none'; "
             + "frame-src 'none'; "
+            + "object-src 'none'; "
             + "script-src 'none';"
-        let style = """
+        let injectedHead = """
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta http-equiv="Content-Security-Policy" content="\(policy)">
+        """
+
+        if treatsContentAsSVG {
+            return """
+            <!doctype html>
+            <html>
+            <head>
+            \(injectedHead)
+            <style>
+            html, body {
+              margin: 0;
+              width: 100%;
+              height: 100%;
+              overflow: auto;
+              background: #fff;
+            }
+            main {
+              display: grid;
+              width: 100%;
+              min-height: 100%;
+              place-items: center;
+            }
+            svg { max-width: 100%; max-height: 100vh; }
+            </style>
+            </head>
+            <body><main aria-label="SVG 预览">\(text)</main></body>
+            </html>
+            """
+        }
+
+        if let closingHead = text.range(
+            of: "</head>",
+            options: .caseInsensitive
+        ) {
+            var completeDocument = text
+            completeDocument.insert(
+                contentsOf: injectedHead,
+                at: closingHead.lowerBound
+            )
+            return completeDocument
+        }
+
+        if let openingHTML = text.range(
+            of: #"<html(?:\s[^>]*)?>"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) {
+            var completeDocument = text
+            completeDocument.insert(
+                contentsOf: "<head>\(injectedHead)</head>",
+                at: openingHTML.upperBound
+            )
+            return completeDocument
+        }
+
+        return """
+        <!doctype html>
+        <html>
+        <head>
+        \(injectedHead)
         <style>
-        :root { color-scheme: light; }
         html, body { margin: 0; min-height: 100%; background: #fff; }
         body {
           box-sizing: border-box;
           padding: 24px;
           color: #132033;
           font: 14px -apple-system, BlinkMacSystemFont, sans-serif;
-          overflow: auto;
         }
         img, svg { max-width: 100%; height: auto; }
-        pre, code { white-space: pre-wrap; overflow-wrap: anywhere; }
         </style>
-        """
-        let content = treatsContentAsSVG
-            ? "<main aria-label='SVG 预览'>\(text)</main>"
-            : text
-        return """
-        <!doctype html>
-        <html>
-        <head>
-        <meta charset="utf-8">
-        <meta http-equiv="Content-Security-Policy" content="\(policy)">
-        \(style)
         </head>
-        <body>\(content)</body>
+        <body>\(text)</body>
         </html>
         """
     }

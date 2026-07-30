@@ -115,6 +115,8 @@ struct FileContentView: View {
         switch document.kind {
         case .source:
             SourceFilePreviewView(document: document)
+        case .markdown:
+            MarkdownFilePreviewView(document: document)
         case .html, .vectorImage:
             HTMLFilePreviewView(document: document)
         case .rasterImage:
@@ -261,6 +263,8 @@ struct FileContentView: View {
         switch document.kind {
         case .source:
             return "chevron.left.forwardslash.chevron.right"
+        case .markdown:
+            return "text.document"
         case .html:
             return "globe"
         case .rasterImage, .vectorImage:
