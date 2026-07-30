@@ -272,9 +272,112 @@ let filesCommitsViewModelTests = [
 
         try expectEqual(
             viewModel.state.fileDisplayState,
-            .invalidUTF8(path: "Legacy.txt", byteCount: 3),
+            .preview(
+                FilePreviewDocument(
+                    path: "Legacy.txt",
+                    data: Data([0xFF, 0xFE, 0x41]),
+                    text: nil,
+                    kind: .invalidText,
+                    byteCount: 3
+                )
+            ),
             "生产内容类型必须直达无法解码空状态"
         )
+    },
+    TestCase("图片和 PDF 二进制进入富媒体预览") { @MainActor in
+        let png = Data([
+            0x89, 0x50, 0x4E, 0x47,
+            0x0D, 0x0A, 0x1A, 0x0A
+        ])
+        let imageReader = StaticPreviewFileReader(
+            content: GitFileContent(
+                path: "Assets/cover.png",
+                data: png,
+                text: nil,
+                byteCount: png.count,
+                kind: .binary
+            )
+        )
+        let imageViewModel = FilesCommitsViewModel(
+            reader: imageReader,
+            repositoryURL: filesCommitsRepositoryURL
+        )
+        await imageViewModel.loadTree()
+        await imageViewModel.selectFile(path: "Assets/cover.png")
+
+        guard case let .preview(imageDocument) =
+            imageViewModel.state.fileDisplayState else {
+            throw TestFailure(description: "PNG 必须进入统一预览状态")
+        }
+        try expectEqual(
+            imageDocument.kind,
+            .rasterImage,
+            "二进制标记不得阻止真实图片预览"
+        )
+
+        let pdf = Data("%PDF-1.7".utf8)
+        let pdfReader = StaticPreviewFileReader(
+            content: GitFileContent(
+                path: "Docs/manual.pdf",
+                data: pdf,
+                text: nil,
+                byteCount: pdf.count,
+                kind: .binary
+            )
+        )
+        let pdfViewModel = FilesCommitsViewModel(
+            reader: pdfReader,
+            repositoryURL: filesCommitsRepositoryURL
+        )
+        await pdfViewModel.loadTree()
+        await pdfViewModel.selectFile(path: "Docs/manual.pdf")
+        guard case let .preview(pdfDocument) =
+            pdfViewModel.state.fileDisplayState else {
+            throw TestFailure(description: "PDF 必须进入统一预览状态")
+        }
+        try expectEqual(pdfDocument.kind, .pdf, "PDF 签名必须保留")
+    },
+    TestCase("HTML Markdown 与脚本进入可显示预览") { @MainActor in
+        let values: [(String, String, FilePreviewKind)] = [
+            (
+                "Preview/index.html",
+                "<html><body>预览</body></html>",
+                .html
+            ),
+            ("README.md", "# 标题", .source(.markdown)),
+            ("Scripts/build.py", "print('ok')", .source(.python))
+        ]
+
+        for (path, text, expectedKind) in values {
+            let data = Data(text.utf8)
+            let reader = StaticPreviewFileReader(
+                content: GitFileContent(
+                    path: path,
+                    data: data,
+                    text: text,
+                    byteCount: data.count,
+                    kind: .text
+                )
+            )
+            let viewModel = FilesCommitsViewModel(
+                reader: reader,
+                repositoryURL: filesCommitsRepositoryURL
+            )
+            await viewModel.loadTree()
+            await viewModel.selectFile(path: path)
+
+            guard case let .preview(document) =
+                viewModel.state.fileDisplayState else {
+                throw TestFailure(
+                    description: "\(path) 必须进入统一预览状态"
+                )
+            }
+            try expectEqual(
+                document.kind,
+                expectedKind,
+                "\(path) 应使用对应预览器"
+            )
+        }
     }
 ]
 
@@ -669,6 +772,35 @@ private actor InvalidUTF8FileReader: FilesCommitsTestReading {
             byteCount: 3,
             kind: .invalidUTF8
         )
+    }
+}
+
+private actor StaticPreviewFileReader: FilesCommitsTestReading {
+    private let content: GitFileContent
+
+    init(content: GitFileContent) {
+        self.content = content
+    }
+
+    func tree(
+        repositoryURL _: URL,
+        revision _: String,
+        path _: String
+    ) async throws -> [GitFileEntry] {
+        [
+            makeFileEntry(
+                path: content.path,
+                byteCount: Int64(content.byteCount)
+            )
+        ]
+    }
+
+    func file(
+        repositoryURL _: URL,
+        revision _: String,
+        path _: String
+    ) async throws -> GitFileContent {
+        content
     }
 }
 

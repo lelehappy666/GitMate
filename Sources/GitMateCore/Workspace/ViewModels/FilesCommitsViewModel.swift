@@ -9,6 +9,7 @@ public enum FilesCommitsMode: String, CaseIterable, Equatable, Sendable {
 public enum FilesCommitsFileDisplayState: Equatable, Sendable {
     case empty
     case loading(path: String)
+    case preview(FilePreviewDocument)
     case text(path: String, text: String, byteCount: Int)
     case binary(path: String, byteCount: Int)
     case tooLarge(path: String, byteCount: Int)
@@ -122,7 +123,7 @@ public final class FilesCommitsViewModel {
     private let commitPageSize: Int
 
     @ObservationIgnored
-    private let maximumDisplayedFileBytes: Int
+    private let maximumDisplayedFileBytes: Int?
 
     @ObservationIgnored
     private let maximumPatchCharacters: Int
@@ -167,14 +168,16 @@ public final class FilesCommitsViewModel {
         repositoryURL: URL,
         revision: String = "HEAD",
         commitPageSize: Int = 50,
-        maximumDisplayedFileBytes: Int = 1_000_000,
+        maximumDisplayedFileBytes: Int? = nil,
         maximumPatchCharacters: Int = 200_000
     ) {
         self.reader = reader
         self.repositoryURL = repositoryURL
         self.revision = revision
         self.commitPageSize = min(max(commitPageSize, 1), 200)
-        self.maximumDisplayedFileBytes = max(maximumDisplayedFileBytes, 1)
+        self.maximumDisplayedFileBytes = maximumDisplayedFileBytes.map {
+            max($0, 1)
+        }
         self.maximumPatchCharacters = max(maximumPatchCharacters, 1)
     }
 
@@ -264,8 +267,9 @@ public final class FilesCommitsViewModel {
             return
         }
 
+        let maximumBytes = previewMaximumBytes(for: path)
         if let byteCount = fileEntry.byteCount,
-           byteCount > Int64(maximumDisplayedFileBytes) {
+           byteCount > Int64(maximumBytes) {
             state.fileDisplayState = .tooLarge(
                 path: path,
                 byteCount: Int(clamping: byteCount)
@@ -479,36 +483,28 @@ public final class FilesCommitsViewModel {
     private func displayState(
         for content: GitFileContent
     ) -> FilesCommitsFileDisplayState {
-        if content.byteCount > maximumDisplayedFileBytes {
+        if content.byteCount > previewMaximumBytes(for: content.path) {
             return .tooLarge(
                 path: content.path,
                 byteCount: content.byteCount
             )
         }
-        switch content.kind {
-        case .binary:
-            return .binary(
+        let decodedText = content.text
+            ?? String(data: content.data, encoding: .utf8)
+        return .preview(
+            FilePreviewClassifier.classify(
                 path: content.path,
-                byteCount: content.byteCount
+                data: content.data,
+                decodedText: decodedText
             )
-        case .invalidUTF8:
-            return .invalidUTF8(
-                path: content.path,
-                byteCount: content.byteCount
-            )
-        case .text:
-            guard let text = content.text else {
-                return .failed(
-                    path: content.path,
-                    message: "文本内容缺少可显示字符。"
-                )
-            }
-            return .text(
-                path: content.path,
-                text: text,
-                byteCount: content.byteCount
-            )
-        }
+        )
+    }
+
+    private func previewMaximumBytes(for path: String) -> Int {
+        let policyMaximum = FilePreviewPolicy.maximumBytes(for: path)
+        return maximumDisplayedFileBytes.map {
+            min(policyMaximum, $0)
+        } ?? policyMaximum
     }
 
     private func normalizedTreePath(_ path: String) -> String? {
