@@ -38,7 +38,7 @@ struct FilesCommitsView: View {
                 Text("文件与提交")
                     .font(.system(size: 23, weight: .bold))
                     .foregroundStyle(GitMateTheme.textPrimary)
-                Text("只读浏览仓库内容、历史记录和纯文本差异")
+                Text("只读预览源码、图片、PDF、HTML 与提交差异")
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(GitMateTheme.textSecondary)
             }

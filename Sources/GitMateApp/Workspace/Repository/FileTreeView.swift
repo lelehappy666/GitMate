@@ -103,33 +103,45 @@ struct FileTreeView: View {
         Button {
             activate(entry)
         } label: {
-            HStack(spacing: 7) {
-                if entry.kind == .directory {
-                    Image(
-                        systemName: expandedDirectories.contains(entry.path)
-                            ? "chevron.down"
-                            : "chevron.right"
-                    )
-                    .font(.system(size: 9, weight: .bold))
-                    .frame(width: 10)
-                    .foregroundStyle(GitMateTheme.textTertiary)
-                } else {
-                    Color.clear.frame(width: 10, height: 1)
+            HStack(spacing: 0) {
+                ForEach(
+                    0..<FileTreePresentation.depth(for: entry.path),
+                    id: \.self
+                ) { _ in
+                    Rectangle()
+                        .fill(GitMateTheme.border.opacity(0.72))
+                        .frame(width: 1, height: 34)
+                        .frame(width: 18)
                 }
 
-                Image(systemName: symbol(for: entry))
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(color(for: entry))
-                    .frame(width: 17)
+                HStack(spacing: 7) {
+                    if entry.kind == .directory {
+                        Image(
+                            systemName: expandedDirectories
+                                .contains(entry.path)
+                                ? "chevron.down"
+                                : "chevron.right"
+                        )
+                        .font(.system(size: 9, weight: .bold))
+                        .frame(width: 10)
+                        .foregroundStyle(GitMateTheme.textTertiary)
+                    } else {
+                        Color.clear.frame(width: 10, height: 1)
+                    }
 
-                Text(entry.name)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(GitMateTheme.textPrimary)
-                    .lineLimit(1)
+                    Image(systemName: symbol(for: entry))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(color(for: entry))
+                        .frame(width: 17)
 
-                Spacer(minLength: 4)
+                    Text(entry.name)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(GitMateTheme.textPrimary)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 4)
+                }
             }
-            .padding(.leading, indentation(for: entry))
             .padding(.horizontal, 8)
             .frame(height: 34)
             .background(
@@ -167,10 +179,6 @@ struct FileTreeView: View {
                 await viewModel.selectFile(path: entry.path)
             }
         }
-    }
-
-    private func indentation(for entry: GitFileEntry) -> CGFloat {
-        CGFloat(max(entry.path.split(separator: "/").count - 1, 0)) * 14
     }
 
     private func symbol(for entry: GitFileEntry) -> String {

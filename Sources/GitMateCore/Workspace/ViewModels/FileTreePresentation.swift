@@ -1,6 +1,16 @@
 import Foundation
 
 public enum FileTreePresentation {
+    public static func depth(for path: String) -> Int {
+        max(
+            path.split(
+                separator: "/",
+                omittingEmptySubsequences: true
+            ).count - 1,
+            0
+        )
+    }
+
     public static func visibleEntries(
         entries: [GitFileEntry],
         expandedDirectories: Set<String>,

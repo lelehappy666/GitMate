@@ -39,6 +39,25 @@ let fileTreePresentationTests = [
             ["Sources", "Sources/App", "Sources/App/App.swift"],
             "搜索结果必须带上祖先路径"
         )
+    },
+    TestCase("文件树层级按完整父路径计算") {
+        try expectEqual(
+            FileTreePresentation.depth(for: "Sources"),
+            0,
+            "根目录深度必须为零"
+        )
+        try expectEqual(
+            FileTreePresentation.depth(for: "Sources/App"),
+            1,
+            "子目录必须比父目录缩进一级"
+        )
+        try expectEqual(
+            FileTreePresentation.depth(
+                for: "Sources/App/Features/Home.swift"
+            ),
+            3,
+            "深层文件必须保留全部父目录层级"
+        )
     }
 ]
 

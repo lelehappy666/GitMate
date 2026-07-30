@@ -16,7 +16,7 @@ struct FileContentView: View {
 
     private var metadataBar: some View {
         HStack(spacing: 12) {
-            Image(systemName: "doc.text")
+            Image(systemName: fileSymbol)
                 .foregroundStyle(GitMateTheme.accent)
             VStack(alignment: .leading, spacing: 2) {
                 Text(viewModel.state.selectedFilePath ?? "选择文件")
@@ -74,6 +74,8 @@ struct FileContentView: View {
                 ProgressView()
                     .controlSize(.small)
             }
+        case let .preview(document):
+            preview(document)
         case let .text(path, text, _):
             textContent(text, path: path)
         case let .binary(path, byteCount):
@@ -99,6 +101,32 @@ struct FileContentView: View {
                 symbol: "exclamationmark.triangle.fill",
                 title: "文件内容无法显示",
                 message: message
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func preview(_ document: FilePreviewDocument) -> some View {
+        switch document.kind {
+        case .source:
+            SourceFilePreviewView(document: document)
+        case .html, .vectorImage:
+            HTMLFilePreviewView(document: document)
+        case .rasterImage:
+            RasterImagePreviewView(data: document.data)
+        case .pdf:
+            PDFFilePreviewView(data: document.data)
+        case .unsupportedBinary:
+            emptyState(
+                symbol: "doc.zipper",
+                title: "暂不支持此二进制格式",
+                message: "\(document.path) · \(byteCount(document.byteCount))"
+            )
+        case .invalidText:
+            emptyState(
+                symbol: "text.badge.xmark",
+                title: "文件不是有效 UTF-8 文本",
+                message: "\(document.path) · \(byteCount(document.byteCount))"
             )
         }
     }
@@ -217,5 +245,27 @@ struct FileContentView: View {
             fromByteCount: Int64(value),
             countStyle: .file
         )
+    }
+
+    private var fileSymbol: String {
+        guard case let .preview(document) =
+            viewModel.state.fileDisplayState
+        else {
+            return "doc.text"
+        }
+        switch document.kind {
+        case .source:
+            return "chevron.left.forwardslash.chevron.right"
+        case .html:
+            return "globe"
+        case .rasterImage, .vectorImage:
+            return "photo"
+        case .pdf:
+            return "doc.richtext"
+        case .unsupportedBinary:
+            return "doc.zipper"
+        case .invalidText:
+            return "text.badge.xmark"
+        }
     }
 }
