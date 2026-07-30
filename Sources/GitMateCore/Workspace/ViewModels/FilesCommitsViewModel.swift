@@ -495,7 +495,10 @@ public final class FilesCommitsViewModel {
             FilePreviewClassifier.classify(
                 path: content.path,
                 data: content.data,
-                decodedText: decodedText
+                decodedText: decodedText,
+                baseURL: repositoryURL
+                    .appending(path: content.path)
+                    .deletingLastPathComponent()
             )
         )
     }

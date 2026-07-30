@@ -207,8 +207,12 @@ struct HTMLFilePreviewView: View {
                 .frame(width: 170)
                 Spacer()
                 Label(
-                    "脚本、网络和本地文件已禁用",
-                    systemImage: "lock.shield"
+                    document.kind == .vectorImage
+                        ? "SVG 静态预览"
+                        : "完整网页预览 · 脚本已启用",
+                    systemImage: document.kind == .vectorImage
+                        ? "shield"
+                        : "globe"
                 )
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(GitMateTheme.success)
@@ -221,10 +225,11 @@ struct HTMLFilePreviewView: View {
 
             switch mode {
             case .preview:
-                SafeHTMLPreviewView(
-                    text: document.text ?? "",
-                    treatsContentAsSVG: document.kind == .vectorImage
-                )
+                HTMLDocumentPreviewView(document: document)
+                    .id(
+                        "\(document.path)-"
+                            + "\(document.kind == .vectorImage)"
+                    )
             case .source:
                 SourceFilePreviewView(
                     document: FilePreviewDocument(
@@ -269,9 +274,16 @@ struct MarkdownFilePreviewView: View {
     }
 }
 
-private struct SafeHTMLPreviewView: NSViewRepresentable {
-    let text: String
-    let treatsContentAsSVG: Bool
+private struct HTMLDocumentPreviewView: NSViewRepresentable {
+    let document: FilePreviewDocument
+
+    private var text: String {
+        document.text ?? ""
+    }
+
+    private var treatsContentAsSVG: Bool {
+        document.kind == .vectorImage
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -280,8 +292,10 @@ private struct SafeHTMLPreviewView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
-        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        configuration.defaultWebpagePreferences.allowsContentJavaScript =
+            !treatsContentAsSVG
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically =
+            !treatsContentAsSVG
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.setValue(false, forKey: "drawsBackground")
@@ -295,20 +309,38 @@ private struct SafeHTMLPreviewView: NSViewRepresentable {
             return
         }
         context.coordinator.fingerprint = fingerprint
-        view.loadHTMLString(html, baseURL: nil)
+        view.loadHTMLString(
+            html,
+            baseURL: treatsContentAsSVG ? nil : document.baseURL
+        )
     }
 
     private var securedHTML: String {
-        let policy =
-            "default-src 'none'; "
-            + "style-src 'unsafe-inline' https: data:; "
-            + "img-src data: blob: https:; "
-            + "font-src data: https:; "
-            + "media-src data: https:; "
-            + "connect-src 'none'; "
-            + "frame-src 'none'; "
-            + "object-src 'none'; "
-            + "script-src 'none';"
+        let policy: String
+        if treatsContentAsSVG {
+            policy =
+                "default-src 'none'; "
+                + "style-src 'unsafe-inline' data:; "
+                + "img-src data: blob:; "
+                + "font-src data:; "
+                + "media-src data:; "
+                + "connect-src 'none'; "
+                + "frame-src 'none'; "
+                + "object-src 'none'; "
+                + "script-src 'none';"
+        } else {
+            policy =
+                "default-src 'self' data: blob: file: http: https:; "
+                + "style-src 'self' 'unsafe-inline' data: blob: file: http: https:; "
+                + "img-src 'self' data: blob: file: http: https:; "
+                + "font-src 'self' data: blob: file: http: https:; "
+                + "media-src 'self' data: blob: file: http: https:; "
+                + "connect-src 'self' data: blob: file: http: https: ws: wss:; "
+                + "frame-src 'self' data: blob: file: http: https:; "
+                + "worker-src 'self' data: blob:; "
+                + "object-src 'none'; "
+                + "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: file: http: https:;"
+        }
         let injectedHead = """
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">

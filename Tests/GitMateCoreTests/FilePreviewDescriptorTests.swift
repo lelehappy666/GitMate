@@ -64,8 +64,8 @@ let filePreviewDescriptorTests = [
                 data: Data("# 标题".utf8),
                 decodedText: "# 标题"
             ).kind,
-            .source(.markdown),
-            "Markdown 应使用靠左源码预览"
+            .markdown,
+            "Markdown 应使用渲染后的文档预览"
         )
         try expectEqual(
             FilePreviewClassifier.classify(
@@ -168,7 +168,7 @@ let filePreviewDescriptorTests = [
             "PDF 预览上限应为 50MB"
         )
     },
-    TestCase("安全 HTML 只允许内存页面导航") {
+    TestCase("HTML 完整网页预览允许本地与网页资源") {
         try expect(
             HTMLPreviewSecurityPolicy.allowsNavigation(
                 to: URL(string: "about:blank")!
@@ -185,15 +185,20 @@ let filePreviewDescriptorTests = [
             "https://example.com",
             "http://example.com",
             "file:///tmp/secret",
-            "gitmate://open"
         ] {
             try expect(
-                !HTMLPreviewSecurityPolicy.allowsNavigation(
+                HTMLPreviewSecurityPolicy.allowsNavigation(
                     to: URL(string: value)!
                 ),
-                "\(value) 必须被安全策略拒绝"
+                "\(value) 必须允许完整网页预览使用"
             )
         }
+        try expect(
+            !HTMLPreviewSecurityPolicy.allowsNavigation(
+                to: URL(string: "gitmate://open")!
+            ),
+            "自定义原生协议不得暴露给网页脚本"
+        )
     },
     TestCase("短源码容器至少铺满真实可用宽度") {
         try expectEqual(

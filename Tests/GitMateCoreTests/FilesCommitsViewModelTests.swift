@@ -278,7 +278,10 @@ let filesCommitsViewModelTests = [
                     data: Data([0xFF, 0xFE, 0x41]),
                     text: nil,
                     kind: .invalidText,
-                    byteCount: 3
+                    byteCount: 3,
+                    baseURL: filesCommitsRepositoryURL
+                        .appending(path: "Legacy.txt")
+                        .deletingLastPathComponent()
                 )
             ),
             "生产内容类型必须直达无法解码空状态"
@@ -344,7 +347,7 @@ let filesCommitsViewModelTests = [
                 "<html><body>预览</body></html>",
                 .html
             ),
-            ("README.md", "# 标题", .source(.markdown)),
+            ("README.md", "# 标题", .markdown),
             ("Scripts/build.py", "print('ok')", .source(.python))
         ]
 
@@ -376,6 +379,13 @@ let filesCommitsViewModelTests = [
                 document.kind,
                 expectedKind,
                 "\(path) 应使用对应预览器"
+            )
+            try expectEqual(
+                document.baseURL,
+                filesCommitsRepositoryURL
+                    .appending(path: path)
+                    .deletingLastPathComponent(),
+                "\(path) 应保留相对资源基础目录"
             )
         }
     }

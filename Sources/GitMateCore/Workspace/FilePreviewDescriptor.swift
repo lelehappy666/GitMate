@@ -41,19 +41,22 @@ public struct FilePreviewDocument: Equatable, Sendable {
     public let text: String?
     public let kind: FilePreviewKind
     public let byteCount: Int
+    public let baseURL: URL?
 
     public init(
         path: String,
         data: Data,
         text: String?,
         kind: FilePreviewKind,
-        byteCount: Int
+        byteCount: Int,
+        baseURL: URL? = nil
     ) {
         self.path = path
         self.data = data
         self.text = text
         self.kind = kind
         self.byteCount = max(byteCount, 0)
+        self.baseURL = baseURL
     }
 }
 
@@ -85,7 +88,8 @@ public enum FilePreviewClassifier {
     public static func classify(
         path: String,
         data: Data,
-        decodedText: String?
+        decodedText: String?,
+        baseURL: URL? = nil
     ) -> FilePreviewDocument {
         let kind: FilePreviewKind
         if isPDF(data) {
@@ -113,7 +117,8 @@ public enum FilePreviewClassifier {
             data: data,
             text: decodedText,
             kind: kind,
-            byteCount: data.count
+            byteCount: data.count,
+            baseURL: baseURL
         )
     }
 
@@ -275,7 +280,14 @@ public enum HTMLPreviewSecurityPolicy {
         guard let scheme = url?.scheme?.lowercased() else {
             return false
         }
-        return scheme == "about" || scheme == "data"
+        return [
+            "about",
+            "data",
+            "blob",
+            "file",
+            "http",
+            "https",
+        ].contains(scheme)
     }
 }
 
