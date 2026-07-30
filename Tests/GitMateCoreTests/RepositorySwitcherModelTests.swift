@@ -58,5 +58,40 @@ let repositorySwitcherModelTests = [
             [1, 2],
             "空搜索应保留输入仓库的顺序"
         )
+    },
+    TestCase("仓库切换选择门拒绝已移除仓库") {
+        let gate = RepositorySelectionGate(
+            repositories: repositorySwitcherRepositories
+        )
+        gate.replaceRepositories([repositorySwitcherRepositories[0]])
+
+        try expectEqual(
+            gate.selectionState(
+                for: 2,
+                from: .readme(repositoryID: 1)
+            ),
+            RepositorySwitchState(
+                selectedRepositoryID: nil,
+                route: .repositories
+            ),
+            "过期列表行不得选择已移除仓库"
+        )
+    },
+    TestCase("仓库切换选择门在当前仓库失效时回退全部仓库") {
+        let gate = RepositorySelectionGate(
+            repositories: [repositorySwitcherRepositories[0]]
+        )
+
+        try expectEqual(
+            gate.validatedSelectionState(
+                selectedRepositoryID: 2,
+                route: .commitGraph(repositoryID: 2)
+            ),
+            RepositorySwitchState(
+                selectedRepositoryID: nil,
+                route: .repositories
+            ),
+            "当前仓库失效时不得保留失效路由"
+        )
     }
 ]

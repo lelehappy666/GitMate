@@ -5,7 +5,7 @@ struct RepositorySwitcherView: View {
     let repositories: [Repository]
     let selectedRepositoryID: Int64?
     let onSelect: (Repository) -> Void
-    let onSelectedRepositoryRemoved: () -> Void
+    let onRepositoriesChanged: () -> Bool
 
     @State private var isPresented = false
     @State private var query = ""
@@ -41,23 +41,14 @@ struct RepositorySwitcherView: View {
             )
             .frame(width: 320, height: 390)
         }
-        .onChange(of: repositories.map(\.id)) { _, repositoryIDs in
-            guard let selectedRepositoryID,
-                  !repositoryIDs.contains(selectedRepositoryID)
-            else {
-                return
+        .onChange(of: repositories.map(\.id)) { _, _ in
+            if onRepositoriesChanged() {
+                isPresented = false
             }
-            isPresented = false
-            onSelectedRepositoryRemoved()
         }
     }
 
     private func select(_ repository: Repository) {
-        guard repositories.contains(where: { $0.id == repository.id }) else {
-            isPresented = false
-            onSelectedRepositoryRemoved()
-            return
-        }
         onSelect(repository)
         isPresented = false
     }

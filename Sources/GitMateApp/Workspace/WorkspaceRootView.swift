@@ -7,6 +7,7 @@ struct WorkspaceRootView: View {
     @State private var selection: WorkspaceSelection
     @State private var apiAuthorizationRequired = false
     @State private var repositoryGroups: WorkspaceRepositoryGroups
+    @State private var repositorySelectionGate: RepositorySelectionGate
     @State private var repositoryRevision = 0
 
     let preferences: [RepositorySyncPreference]
@@ -70,11 +71,15 @@ struct WorkspaceRootView: View {
                     lastInspectedAt: .distantPast
                 )
         }
-        _repositoryGroups = State(
-            initialValue: WorkspaceRepositoryClassifier.classify(
-                repositories: initialSession.repositories,
-                records: records,
-                preferences: preferences
+        let initialRepositoryGroups = WorkspaceRepositoryClassifier.classify(
+            repositories: initialSession.repositories,
+            records: records,
+            preferences: preferences
+        )
+        _repositoryGroups = State(initialValue: initialRepositoryGroups)
+        _repositorySelectionGate = State(
+            initialValue: RepositorySelectionGate(
+                repositories: initialRepositoryGroups.local
             )
         )
         self.preferences = preferences
@@ -90,6 +95,7 @@ struct WorkspaceRootView: View {
             WorkspaceSidebar(
                 selection: $selection,
                 repositories: repositoryGroups.local,
+                selectionGate: repositorySelectionGate,
                 account: session.account
             )
         } detail: {
@@ -298,12 +304,14 @@ struct WorkspaceRootView: View {
             localFullNames.contains($0.normalizedFullName)
         }
         let localIDs = Set(local.map(\.id))
-        repositoryGroups = WorkspaceRepositoryGroups(
+        let updatedGroups = WorkspaceRepositoryGroups(
             local: local,
             cloud: session.repositories.filter {
                 !localIDs.contains($0.id)
             }
         )
+        repositorySelectionGate.replaceRepositories(updatedGroups.local)
+        repositoryGroups = updatedGroups
     }
 
     private var missingRepositoryView: some View {

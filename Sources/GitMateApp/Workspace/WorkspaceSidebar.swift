@@ -4,16 +4,19 @@ import SwiftUI
 struct WorkspaceSidebar: View {
     @Binding var selection: WorkspaceSelection
     let repositories: [Repository]
+    let selectionGate: RepositorySelectionGate
     let account: GitHubAccount
     @State private var currentRepositoryID: Int64?
 
     init(
         selection: Binding<WorkspaceSelection>,
         repositories: [Repository],
+        selectionGate: RepositorySelectionGate,
         account: GitHubAccount
     ) {
         _selection = selection
         self.repositories = repositories
+        self.selectionGate = selectionGate
         self.account = account
         _currentRepositoryID = State(
             initialValue: selection.wrappedValue.route.repositoryID
@@ -57,7 +60,7 @@ struct WorkspaceSidebar: View {
                     repositories: repositories,
                     selectedRepositoryID: currentRepositoryID,
                     onSelect: selectRepository,
-                    onSelectedRepositoryRemoved: selectedRepositoryWasRemoved
+                    onRepositoriesChanged: validateCurrentRepository
                 )
                 .padding(.horizontal, 10)
                 .padding(.bottom, 9)
@@ -107,9 +110,17 @@ struct WorkspaceSidebar: View {
         }
         .frame(minWidth: 232, idealWidth: 248, maxWidth: 260, maxHeight: .infinity)
         .background(.white)
+        .onAppear {
+            _ = validateCurrentRepository()
+        }
         .onChange(of: selection.route) { _, route in
             if let repositoryID = route.repositoryID {
-                currentRepositoryID = repositoryID
+                apply(
+                    selectionGate.validatedSelectionState(
+                        selectedRepositoryID: repositoryID,
+                        route: route
+                    )
+                )
             }
         }
     }
@@ -152,17 +163,32 @@ struct WorkspaceSidebar: View {
     }
 
     private func selectRepository(_ repository: Repository) {
-        guard repositories.contains(where: { $0.id == repository.id }) else {
-            selectedRepositoryWasRemoved()
-            return
-        }
-        currentRepositoryID = repository.id
-        selection.route = selection.route.replacingRepositoryID(repository.id)
+        apply(
+            selectionGate.selectionState(
+                for: repository.id,
+                from: selection.route
+            )
+        )
     }
 
-    private func selectedRepositoryWasRemoved() {
-        currentRepositoryID = nil
-        selection.route = selection.route.fallbackAfterCurrentRepositoryRemoval()
+    private func validateCurrentRepository() -> Bool {
+        let state = selectionGate.validatedSelectionState(
+            selectedRepositoryID: currentRepositoryID,
+            route: selection.route
+        )
+        let didInvalidateSelection = currentRepositoryID != nil
+            && state.selectedRepositoryID == nil
+        apply(state)
+        return didInvalidateSelection
+    }
+
+    private func apply(_ state: RepositorySwitchState) {
+        if currentRepositoryID != state.selectedRepositoryID {
+            currentRepositoryID = state.selectedRepositoryID
+        }
+        if selection.route != state.route {
+            selection.route = state.route
+        }
     }
 
     private func routeButton(
