@@ -16,6 +16,7 @@ final class WorkspaceRuntimeDependencies {
     let coverLoader: any RepositoryCoverLoading
     let importedRepositoryStore: any ImportedLocalRepositoryStoring
     let localRepositoryImporter: any LocalRepositoryImporting
+    let commitGraphSceneStore: any CommitGraphSceneStoring
 
     private var contentServices: [String: WorkspaceContentService] = [:]
     private var workspaceAPIs: [String: any GitHubWorkspaceAPI] = [:]
@@ -46,7 +47,9 @@ final class WorkspaceRuntimeDependencies {
         importedRepositoryStore:
             (any ImportedLocalRepositoryStoring)? = nil,
         localRepositoryImporter:
-            (any LocalRepositoryImporting)? = nil
+            (any LocalRepositoryImporting)? = nil,
+        commitGraphSceneStore:
+            (any CommitGraphSceneStoring)? = nil
     ) {
         self.credentialStore = credentialStore
         self.catalog = catalog ?? LocalRepositoryCatalog(
@@ -89,6 +92,14 @@ final class WorkspaceRuntimeDependencies {
             localRepositoryImporter
             ?? LocalRepositoryImporter(
                 executor: ProcessCommandExecutor()
+            )
+        self.commitGraphSceneStore =
+            commitGraphSceneStore
+            ?? JSONCommitGraphSceneStore(
+                rootDirectory: cacheDirectory.appending(
+                    path: "CommitGraphScenes",
+                    directoryHint: .isDirectory
+                )
             )
     }
 

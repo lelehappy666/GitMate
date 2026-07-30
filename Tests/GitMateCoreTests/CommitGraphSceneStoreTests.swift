@@ -1,0 +1,131 @@
+import Foundation
+import GitMateCore
+
+let commitGraphSceneStoreTests = [
+    TestCase("提交图场景按仓库保存并完整恢复") {
+        let directory = commitGraphSceneStoreTemporaryDirectory()
+        let store = JSONCommitGraphSceneStore(rootDirectory: directory)
+        let groupID = UUID(
+            uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+        )!
+        let key = CollapsedEdgeKey(
+            groupID: groupID,
+            externalNodeID: "outside",
+            direction: .leavingGroup
+        )
+        let scene = CommitGraphSceneState(
+            nodePositions: ["outside": GraphPoint(x: 80, y: 120)],
+            groups: [
+                CommitGraphGroup(
+                    id: groupID,
+                    title: "同步修复",
+                    memberHashes: ["a", "b"],
+                    source: .manual,
+                    origin: GraphPoint(x: 300, y: 240),
+                    relativePositions: [
+                        "a": GraphPoint(x: -40, y: 0),
+                        "b": GraphPoint(x: 40, y: 120)
+                    ],
+                    isCollapsed: true
+                )
+            ],
+            boundaryPorts: [
+                key: CommitGraphEdgePorts(
+                    source: PortAnchor(side: .right, offset: 0.25),
+                    target: PortAnchor(side: .left, offset: 0.75)
+                )
+            ],
+            lineStyle: .orthogonal
+        )
+
+        try await store.save(scene, repositoryID: 42)
+        let restored = try await store.load(repositoryID: 42)
+
+        try expectEqual(restored, scene, "保存后必须完整恢复 Group、坐标和固定端口")
+    },
+    TestCase("不同仓库的提交图场景相互隔离") {
+        let directory = commitGraphSceneStoreTemporaryDirectory()
+        let store = JSONCommitGraphSceneStore(rootDirectory: directory)
+        let first = CommitGraphSceneState(
+            nodePositions: ["a": GraphPoint(x: 10, y: 20)]
+        )
+        let second = CommitGraphSceneState(
+            nodePositions: ["b": GraphPoint(x: 30, y: 40)],
+            lineStyle: .orthogonal
+        )
+
+        try await store.save(first, repositoryID: 1)
+        try await store.save(second, repositoryID: 2)
+        let restoredFirst = try await store.load(repositoryID: 1)
+        let restoredSecond = try await store.load(repositoryID: 2)
+        let missing = try await store.load(repositoryID: 3)
+
+        try expectEqual(
+            restoredFirst,
+            first,
+            "仓库一不得读取仓库二的场景"
+        )
+        try expectEqual(
+            restoredSecond,
+            second,
+            "仓库二不得读取仓库一的场景"
+        )
+        try expectEqual(
+            missing,
+            nil,
+            "不存在的仓库应返回空场景"
+        )
+    },
+    TestCase("损坏场景返回稳定错误") {
+        let directory = commitGraphSceneStoreTemporaryDirectory()
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        try Data("{broken".utf8).write(
+            to: directory.appending(path: "7.json")
+        )
+        let store = JSONCommitGraphSceneStore(rootDirectory: directory)
+
+        do {
+            _ = try await store.load(repositoryID: 7)
+            throw TestFailure(description: "损坏 JSON 必须抛出错误")
+        } catch let error as CommitGraphSceneStoreError {
+            try expectEqual(
+                error,
+                .corruptedScene(repositoryID: 7),
+                "损坏 JSON 必须映射为稳定错误"
+            )
+        }
+    },
+    TestCase("临时文件不会被识别为仓库场景") {
+        let directory = commitGraphSceneStoreTemporaryDirectory()
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        try JSONEncoder().encode(CommitGraphSceneState()).write(
+            to: directory.appending(path: ".9.pending-\(UUID()).json")
+        )
+        let store = JSONCommitGraphSceneStore(rootDirectory: directory)
+        let restored = try await store.load(repositoryID: 9)
+
+        try expectEqual(
+            restored,
+            nil,
+            "仅有临时文件时不得恢复不完整场景"
+        )
+    }
+]
+
+private func commitGraphSceneStoreTemporaryDirectory() -> URL {
+    FileManager.default.temporaryDirectory
+        .appending(
+            path: "GitMateCommitGraphSceneTests",
+            directoryHint: .isDirectory
+        )
+        .appending(
+            path: UUID().uuidString,
+            directoryHint: .isDirectory
+        )
+}

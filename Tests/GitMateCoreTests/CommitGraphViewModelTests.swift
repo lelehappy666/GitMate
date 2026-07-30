@@ -183,6 +183,169 @@ let commitGraphViewModelTests = [
             GraphViewport(offsetX: 48, offsetY: -32, scale: 1.1),
             "差异失败不得重置画布视口"
         )
+    },
+    TestCase("选择提交后创建分组且移动与线型切换保持固定端口") { @MainActor in
+        let store = InMemoryCommitGraphSceneStore()
+        let viewModel = CommitGraphViewModel(
+            reader: PagedCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 42,
+            sceneStore: store,
+            pageSize: 2
+        )
+        await viewModel.load()
+        await viewModel.loadOlderCommits()
+
+        viewModel.toggleSelection(hash: "hash-a", modifiers: [.command])
+        viewModel.appendSelection(hash: "hash-b")
+        try expectEqual(
+            viewModel.selectedHashes,
+            Set(["hash-a", "hash-b"]),
+            "Command 切换和 Shift 追加必须形成多选"
+        )
+
+        let groupID = try viewModel.createManualGroup(title: "同步修复")
+        let groupBefore = viewModel.scene.groups.first { $0.id == groupID }
+        let anchorsBefore = viewModel.scene.boundaryPorts
+        let topologyBefore = viewModel.layout
+
+        viewModel.moveGroup(
+            id: groupID,
+            by: GraphPoint(x: 40, y: 20)
+        )
+        viewModel.setLineStyle(.orthogonal)
+
+        let groupAfter = viewModel.scene.groups.first { $0.id == groupID }
+        try expectEqual(
+            groupAfter?.origin,
+            groupBefore.map {
+                GraphPoint(x: $0.origin.x + 40, y: $0.origin.y + 20)
+            },
+            "移动 Group 只能平移唯一 origin"
+        )
+        try expectEqual(
+            groupAfter?.relativePositions,
+            groupBefore?.relativePositions,
+            "移动 Group 不得改写成员相对坐标"
+        )
+        try expectEqual(
+            viewModel.scene.boundaryPorts,
+            anchorsBefore,
+            "移动和切换线型不得改变固定端口"
+        )
+        try expectEqual(
+            viewModel.layout,
+            topologyBefore,
+            "场景交互不得重新计算 Git 拓扑"
+        )
+    },
+    TestCase("组内节点拖动只修改成员相对坐标") { @MainActor in
+        let viewModel = CommitGraphViewModel(
+            reader: PagedCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            pageSize: 2
+        )
+        await viewModel.load()
+        await viewModel.loadOlderCommits()
+        viewModel.appendSelection(hash: "hash-a")
+        viewModel.appendSelection(hash: "hash-b")
+        let groupID = try viewModel.createManualGroup(title: "本地整理")
+        let before = viewModel.scene.groups.first { $0.id == groupID }!
+        let anchorsBefore = viewModel.scene.boundaryPorts
+
+        viewModel.moveNode(
+            hash: "hash-a",
+            by: GraphPoint(x: 12, y: -8)
+        )
+
+        let after = viewModel.scene.groups.first { $0.id == groupID }!
+        try expectEqual(after.origin, before.origin, "拖动成员不得移动 Group origin")
+        try expectEqual(
+            after.relativePositions["hash-a"],
+            before.relativePositions["hash-a"].map {
+                GraphPoint(x: $0.x + 12, y: $0.y - 8)
+            },
+            "组内成员只保存相对坐标变化"
+        )
+        try expectEqual(
+            viewModel.scene.boundaryPorts,
+            anchorsBefore,
+            "拖动节点不得重新分配 Group 端口"
+        )
+    },
+    TestCase("自动分组建议确认前不创建分组") { @MainActor in
+        let viewModel = CommitGraphViewModel(
+            reader: PagedCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            pageSize: 2
+        )
+        await viewModel.load()
+
+        await viewModel.prepareGroupSuggestions()
+
+        try expectEqual(
+            viewModel.scene.groups,
+            [],
+            "读取自动分组建议不得直接创建 Group"
+        )
+        let suggestion = try required(
+            viewModel.groupSuggestions.first,
+            "完整历史应产生 main 分支建议"
+        )
+        _ = try viewModel.confirmGroupSuggestion(id: suggestion.id)
+        try expectEqual(
+            viewModel.scene.groups.count,
+            1,
+            "仅在用户确认候选后创建 Group"
+        )
+        try expect(
+            viewModel.scene.groups[0].memberHashes
+                .isSuperset(of: ["hash-a", "hash-b", "hash-c"]),
+            "确认建议应使用完整历史中的成员"
+        )
+    },
+    TestCase("提交图恢复本地场景且保存失败不阻断交互") { @MainActor in
+        let storedScene = CommitGraphSceneState(
+            nodePositions: [
+                "hash-a": GraphPoint(x: 720, y: 160),
+                "hash-b": GraphPoint(x: 720, y: 300)
+            ],
+            lineStyle: .orthogonal
+        )
+        let store = InMemoryCommitGraphSceneStore(
+            scenes: [88: storedScene],
+            shouldFailSave: true
+        )
+        let viewModel = CommitGraphViewModel(
+            reader: PagedCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 88,
+            sceneStore: store,
+            pageSize: 2
+        )
+
+        await viewModel.load()
+        try expectEqual(
+            viewModel.scene.nodePositions["hash-a"],
+            GraphPoint(x: 720, y: 160),
+            "加载提交历史后必须恢复仓库专属场景"
+        )
+        viewModel.moveNode(
+            hash: "hash-a",
+            by: GraphPoint(x: 20, y: 10)
+        )
+        await viewModel.persistSceneImmediately()
+
+        try expectEqual(
+            viewModel.scene.nodePositions["hash-a"],
+            GraphPoint(x: 740, y: 170),
+            "持久化失败不得回滚本地交互"
+        )
+        try expectEqual(
+            viewModel.sceneWarningMessage,
+            "画布布局暂时无法保存。",
+            "保存失败应显示非阻塞稳定提示"
+        )
     }
 ]
 
@@ -406,4 +569,43 @@ private func commitGraphDiff(hash: String) -> GitDiff {
         additions: 8,
         deletions: 2
     )
+}
+
+private actor InMemoryCommitGraphSceneStore: CommitGraphSceneStoring {
+    enum Failure: Error {
+        case save
+    }
+
+    private var scenes: [Int64: CommitGraphSceneState]
+    private let shouldFailSave: Bool
+
+    init(
+        scenes: [Int64: CommitGraphSceneState] = [:],
+        shouldFailSave: Bool = false
+    ) {
+        self.scenes = scenes
+        self.shouldFailSave = shouldFailSave
+    }
+
+    func load(repositoryID: Int64) async throws -> CommitGraphSceneState? {
+        scenes[repositoryID]
+    }
+
+    func save(
+        _ scene: CommitGraphSceneState,
+        repositoryID: Int64
+    ) async throws {
+        guard !shouldFailSave else { throw Failure.save }
+        scenes[repositoryID] = scene
+    }
+}
+
+private func required<T>(
+    _ value: T?,
+    _ message: String
+) throws -> T {
+    guard let value else {
+        throw TestFailure(description: message)
+    }
+    return value
 }

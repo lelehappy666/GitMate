@@ -6,6 +6,18 @@ import Observation
 public final class CommitGraphViewModel {
     public var viewport = GraphViewport()
     public private(set) var layout = CommitGraphLayoutResult()
+    public private(set) var scene = CommitGraphSceneState()
+    public private(set) var projection = CommitGraphSceneProjection(
+        nodes: [],
+        groups: [],
+        edges: []
+    )
+    public private(set) var selectedHashes: Set<String> = []
+    public private(set) var groupSuggestions:
+        [CommitGraphGroupSuggestion] = []
+    public private(set) var isPreparingGroupSuggestions = false
+    public private(set) var sceneWarningMessage: String?
+    public private(set) var pathRevision = 0
     public private(set) var selectedCommit: GitCommitDetail?
     public private(set) var selectedDiff: GitDiff?
     public private(set) var isSelectedDiffTruncated = false
@@ -20,6 +32,12 @@ public final class CommitGraphViewModel {
 
     @ObservationIgnored
     private let repositoryURL: URL
+
+    @ObservationIgnored
+    private let repositoryID: Int64?
+
+    @ObservationIgnored
+    private let sceneStore: (any CommitGraphSceneStoring)?
 
     @ObservationIgnored
     private let pageSize: Int
@@ -48,15 +66,25 @@ public final class CommitGraphViewModel {
     @ObservationIgnored
     private var selectionRequestID = UUID()
 
+    @ObservationIgnored
+    private var sceneSaveTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var didRestoreScene = false
+
     public init(
         reader: any LocalGitReading,
         repositoryURL: URL,
+        repositoryID: Int64? = nil,
+        sceneStore: (any CommitGraphSceneStoring)? = nil,
         pageSize: Int = 200,
         maximumPatchCharacters: Int = 200_000,
         layout: CommitGraphLayout = CommitGraphLayout()
     ) {
         self.reader = reader
         self.repositoryURL = repositoryURL
+        self.repositoryID = repositoryID
+        self.sceneStore = sceneStore
         self.pageSize = min(max(pageSize, 1), 200)
         self.maximumPatchCharacters = max(maximumPatchCharacters, 1)
         graphLayout = layout
@@ -92,6 +120,7 @@ public final class CommitGraphViewModel {
                     nextCursor: page.nextCursor
                 )
             )
+            await restoreOrReconcileScene()
             nextCursor = page.nextCursor
             isLoading = false
         } catch is CancellationError {
@@ -141,6 +170,7 @@ public final class CommitGraphViewModel {
                 ),
                 preserving: layout
             )
+            reconcileSceneWithLayout()
             nextCursor = page.nextCursor
             isLoadingMore = false
         } catch is CancellationError {
@@ -172,6 +202,31 @@ public final class CommitGraphViewModel {
             changes,
             to: viewport
         )
+    }
+
+    public func applyPointerChanges(
+        _ changes: [CommitGraphPointerChange]
+    ) {
+        guard !changes.isEmpty else { return }
+        for change in changes {
+            switch change {
+            case let .pan(translation):
+                pan(by: translation)
+            case let .moveNode(hash, translation):
+                moveNode(
+                    hash: hash,
+                    by: translation,
+                    schedulesPersistence: false
+                )
+            case let .moveGroup(id, translation):
+                moveGroup(
+                    id: id,
+                    by: translation,
+                    schedulesPersistence: false
+                )
+            }
+        }
+        scheduleSceneSave()
     }
 
     public func fitAll(
@@ -217,6 +272,9 @@ public final class CommitGraphViewModel {
                 nextCursor: nextCursor
             )
         )
+        scene = CommitGraphSceneState.defaultState(layout: layout)
+        refreshProjection(incrementingPathRevision: true)
+        scheduleSceneSave()
         viewport = GraphViewport()
     }
 
@@ -233,6 +291,132 @@ public final class CommitGraphViewModel {
         }
         viewport.offsetX = canvasWidth / 2 - node.x * viewport.scale
         viewport.offsetY = canvasHeight / 3 - node.y * viewport.scale
+    }
+
+    public func toggleSelection(
+        hash: String,
+        modifiers: CommitGraphSelectionModifiers = []
+    ) {
+        guard layout.node(hash: hash) != nil else { return }
+        if modifiers.contains(.command) {
+            if selectedHashes.contains(hash) {
+                selectedHashes.remove(hash)
+            } else {
+                selectedHashes.insert(hash)
+            }
+        } else if modifiers.contains(.shift) {
+            selectedHashes.insert(hash)
+        } else {
+            selectedHashes = [hash]
+        }
+    }
+
+    public func appendSelection(hash: String) {
+        toggleSelection(hash: hash, modifiers: [.shift])
+    }
+
+    public func clearCanvasSelection() {
+        selectedHashes.removeAll()
+    }
+
+    @discardableResult
+    public func createManualGroup(title: String) throws -> UUID {
+        let id = UUID()
+        scene = try CommitGraphGrouping.creatingGroup(
+            id: id,
+            title: normalizedGroupTitle(title),
+            memberHashes: selectedHashes,
+            source: .manual,
+            layout: layout,
+            scene: scene
+        )
+        selectedHashes.removeAll()
+        refreshProjection(incrementingPathRevision: true)
+        scheduleSceneSave()
+        return id
+    }
+
+    @discardableResult
+    public func confirmGroupSuggestion(id: String) throws -> UUID {
+        guard let suggestion = groupSuggestions.first(
+            where: { $0.id == id }
+        ) else {
+            throw CommitGraphGroupingError.unknownMembers([])
+        }
+        let groupID = UUID()
+        scene = try CommitGraphGrouping.creatingGroup(
+            id: groupID,
+            title: suggestion.branchName,
+            memberHashes: suggestion.memberHashes,
+            source: .branchSuggestion,
+            layout: layout,
+            scene: scene
+        )
+        groupSuggestions.removeAll { $0.id == id }
+        refreshProjection(incrementingPathRevision: true)
+        scheduleSceneSave()
+        return groupID
+    }
+
+    public func prepareGroupSuggestions() async {
+        guard !isPreparingGroupSuggestions else { return }
+        isPreparingGroupSuggestions = true
+        defer { isPreparingGroupSuggestions = false }
+
+        while nextCursor != nil {
+            let previousCursor = nextCursor
+            await loadOlderCommits()
+            if errorMessage != nil || nextCursor == previousCursor {
+                return
+            }
+        }
+        let occupied = Set(
+            scene.groups.flatMap(\.memberHashes)
+        )
+        groupSuggestions = CommitGraphGrouping.branchSuggestions(
+            layout: layout,
+            occupiedHashes: occupied
+        )
+    }
+
+    public func setGroupCollapsed(id: UUID, isCollapsed: Bool) {
+        guard let index = scene.groups.firstIndex(
+            where: { $0.id == id }
+        ) else {
+            return
+        }
+        scene.groups[index].isCollapsed = isCollapsed
+        refreshProjection(incrementingPathRevision: true)
+        scheduleSceneSave()
+    }
+
+    public func moveGroup(id: UUID, by translation: GraphPoint) {
+        moveGroup(
+            id: id,
+            by: translation,
+            schedulesPersistence: true
+        )
+    }
+
+    public func moveNode(hash: String, by translation: GraphPoint) {
+        moveNode(
+            hash: hash,
+            by: translation,
+            schedulesPersistence: true
+        )
+    }
+
+    public func setLineStyle(_ style: CommitGraphLineStyle) {
+        guard scene.lineStyle != style else { return }
+        scene.lineStyle = style
+        refreshProjection(incrementingPathRevision: true)
+        scheduleSceneSave()
+    }
+
+    public func persistSceneImmediately() async {
+        sceneSaveTask?.cancel()
+        sceneSaveTask = nil
+        await saveScene(scene)
     }
 
     public func select(hash: String) async {
@@ -310,6 +494,158 @@ public final class CommitGraphViewModel {
         selectedCommit = nil
         selectedDiff = nil
         isSelectedDiffTruncated = false
+    }
+
+    private func restoreOrReconcileScene() async {
+        guard !didRestoreScene else {
+            reconcileSceneWithLayout()
+            return
+        }
+        didRestoreScene = true
+
+        guard let repositoryID, let sceneStore else {
+            scene = CommitGraphSceneState.defaultState(layout: layout)
+            refreshProjection(incrementingPathRevision: false)
+            return
+        }
+        do {
+            scene = try await sceneStore.load(
+                repositoryID: repositoryID
+            ) ?? CommitGraphSceneState.defaultState(layout: layout)
+            sceneWarningMessage = nil
+        } catch {
+            scene = CommitGraphSceneState.defaultState(layout: layout)
+            sceneWarningMessage = "已使用默认画布布局。"
+        }
+        reconcileSceneWithLayout()
+    }
+
+    private func reconcileSceneWithLayout() {
+        let defaults = CommitGraphSceneState.defaultState(layout: layout)
+        let groupedHashes = Set(scene.groups.flatMap(\.memberHashes))
+        for (hash, position) in defaults.nodePositions
+            where !groupedHashes.contains(hash)
+                && scene.nodePositions[hash] == nil {
+            scene.nodePositions[hash] = position
+        }
+        for (edgeID, ports) in defaults.edgePorts
+            where scene.edgePorts[edgeID] == nil {
+            scene.edgePorts[edgeID] = ports
+        }
+
+        let previousBoundaryPorts = scene.boundaryPorts
+        let rebuilt = CommitGraphGrouping.rebuildingBoundaryPorts(
+            layout: layout,
+            scene: scene
+        )
+        scene.boundaryPorts = previousBoundaryPorts.merging(
+            rebuilt.boundaryPorts,
+            uniquingKeysWith: { old, _ in old }
+        )
+        selectedHashes.formIntersection(Set(layout.nodes.map(\.hash)))
+        refreshProjection(incrementingPathRevision: true)
+    }
+
+    private func moveGroup(
+        id: UUID,
+        by translation: GraphPoint,
+        schedulesPersistence: Bool
+    ) {
+        let updated = CommitGraphGrouping.movingGroup(
+            id: id,
+            translation: translation,
+            scene: scene
+        )
+        guard updated != scene else { return }
+        scene = updated
+        refreshProjection(incrementingPathRevision: true)
+        if schedulesPersistence {
+            scheduleSceneSave()
+        }
+    }
+
+    private func moveNode(
+        hash: String,
+        by translation: GraphPoint,
+        schedulesPersistence: Bool
+    ) {
+        guard translation.x.isFinite,
+              translation.y.isFinite,
+              layout.node(hash: hash) != nil
+        else {
+            return
+        }
+
+        if let groupIndex = scene.groups.firstIndex(
+            where: { $0.memberHashes.contains(hash) }
+        ), let position = scene.groups[groupIndex]
+            .relativePositions[hash] {
+            scene.groups[groupIndex].relativePositions[hash] = GraphPoint(
+                x: position.x + translation.x,
+                y: position.y + translation.y
+            )
+        } else {
+            let position = scene.nodePositions[hash]
+                ?? layout.node(hash: hash).map {
+                    GraphPoint(x: $0.x, y: $0.y)
+                }
+                ?? .zero
+            scene.nodePositions[hash] = GraphPoint(
+                x: position.x + translation.x,
+                y: position.y + translation.y
+            )
+        }
+        refreshProjection(incrementingPathRevision: true)
+        if schedulesPersistence {
+            scheduleSceneSave()
+        }
+    }
+
+    private func refreshProjection(incrementingPathRevision: Bool) {
+        projection = CommitGraphSceneProjector.project(
+            layout: layout,
+            scene: scene
+        )
+        if incrementingPathRevision {
+            pathRevision &+= 1
+        }
+    }
+
+    private func scheduleSceneSave() {
+        guard sceneStore != nil, repositoryID != nil else { return }
+        let snapshot = scene
+        sceneSaveTask?.cancel()
+        sceneSaveTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled else { return }
+                await self?.saveScene(snapshot)
+            } catch is CancellationError {
+                return
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func saveScene(_ snapshot: CommitGraphSceneState) async {
+        guard let repositoryID, let sceneStore else { return }
+        do {
+            try await sceneStore.save(
+                snapshot,
+                repositoryID: repositoryID
+            )
+            sceneWarningMessage = nil
+        } catch {
+            sceneWarningMessage = "画布布局暂时无法保存。"
+        }
+    }
+
+    private func normalizedGroupTitle(_ title: String) -> String {
+        let trimmed = title.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        return trimmed.isEmpty ? "提交分组" : String(trimmed.prefix(80))
     }
 
     private func uniqueCommits(_ values: [GitCommit]) -> [GitCommit] {

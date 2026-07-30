@@ -204,7 +204,9 @@ struct WorkspaceRootView: View {
             if let repository = repository(repositoryID) {
                 CommitGraphPageContainer(
                     reader: runtime.localGit,
-                    repositoryURL: runtime.catalog.localURL(for: repository)
+                    repositoryURL: runtime.catalog.localURL(for: repository),
+                    repositoryID: repository.id,
+                    sceneStore: runtime.commitGraphSceneStore
                 )
                 .id("commit-graph-\(repositoryID)")
             } else {
@@ -857,11 +859,18 @@ private struct FilesCommitsPageContainer: View {
 private struct CommitGraphPageContainer: View {
     @State private var viewModel: CommitGraphViewModel
 
-    init(reader: any LocalGitReading, repositoryURL: URL) {
+    init(
+        reader: any LocalGitReading,
+        repositoryURL: URL,
+        repositoryID: Int64,
+        sceneStore: any CommitGraphSceneStoring
+    ) {
         _viewModel = State(
             initialValue: CommitGraphViewModel(
                 reader: reader,
-                repositoryURL: repositoryURL
+                repositoryURL: repositoryURL,
+                repositoryID: repositoryID,
+                sceneStore: sceneStore
             )
         )
     }

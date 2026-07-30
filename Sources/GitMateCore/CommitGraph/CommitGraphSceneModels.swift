@@ -43,6 +43,27 @@ public enum CommitGraphLineStyle: String, Codable, CaseIterable, Sendable {
     case orthogonal
 }
 
+public struct CommitGraphSelectionModifiers:
+    OptionSet,
+    Equatable,
+    Sendable
+{
+    public let rawValue: Int
+
+    public init(rawValue: Int) {
+        self.rawValue = rawValue
+    }
+
+    public static let command = CommitGraphSelectionModifiers(rawValue: 1 << 0)
+    public static let shift = CommitGraphSelectionModifiers(rawValue: 1 << 1)
+}
+
+public enum CommitGraphPointerChange: Equatable, Sendable {
+    case pan(GraphPoint)
+    case moveNode(hash: String, translation: GraphPoint)
+    case moveGroup(id: UUID, translation: GraphPoint)
+}
+
 public struct CommitGraphEdgePorts: Codable, Equatable, Sendable {
     public let source: PortAnchor
     public let target: PortAnchor
