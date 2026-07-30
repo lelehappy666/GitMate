@@ -10,6 +10,11 @@ struct FileContentView: View {
             metadataBar
             Divider()
             content
+                .frame(
+                    maxWidth: .infinity,
+                    maxHeight: .infinity,
+                    alignment: .topLeading
+                )
         }
         .background(.white)
     }

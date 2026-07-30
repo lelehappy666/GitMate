@@ -6,50 +6,7 @@ struct SourceFilePreviewView: View {
     let document: FilePreviewDocument
 
     var body: some View {
-        GeometryReader { geometry in
-            ScrollView([.horizontal, .vertical]) {
-                HStack(alignment: .top, spacing: 15) {
-                    Text(lineNumbers)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(GitMateTheme.textTertiary)
-                        .multilineTextAlignment(.trailing)
-                        .textSelection(.disabled)
-                        .fixedSize(horizontal: true, vertical: true)
-
-                    Rectangle()
-                        .fill(GitMateTheme.border)
-                        .frame(width: 1)
-                        .frame(minHeight: 24)
-
-                    Text(highlightedText)
-                        .font(.system(size: 12.5, design: .monospaced))
-                        .foregroundStyle(GitMateTheme.textPrimary)
-                        .multilineTextAlignment(.leading)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: true, vertical: true)
-
-                    Spacer(minLength: 0)
-                }
-                .frame(
-                    minWidth: SourcePreviewLayoutPolicy
-                        .minimumContentWidth(
-                            viewportWidth: geometry.size.width,
-                            horizontalPadding: 36
-                        ),
-                    minHeight: SourcePreviewLayoutPolicy
-                        .minimumContentHeight(
-                            viewportHeight: geometry.size.height,
-                            verticalPadding: 36
-                        ),
-                    alignment: .topLeading
-                )
-                .padding(18)
-            }
-            .scrollIndicators(.visible)
-        }
-        .background(
-            Color(red: 0.985, green: 0.989, blue: 0.995)
-        )
+        SourceCodeTextView(attributedText: numberedText)
         .accessibilityLabel("文件内容，只读")
     }
 
@@ -57,15 +14,14 @@ struct SourceFilePreviewView: View {
         document.text ?? ""
     }
 
-    private var lineNumbers: String {
-        let count = max(source.components(separatedBy: "\n").count, 1)
-        return (1...count).map(String.init).joined(separator: "\n")
-    }
-
-    private var highlightedText: AttributedString {
+    private var highlightedText: NSAttributedString {
         let storage = NSMutableAttributedString(
             string: source,
             attributes: [
+                .font: NSFont.monospacedSystemFont(
+                    ofSize: 12.5,
+                    weight: .regular
+                ),
                 .foregroundColor: NSColor(
                     red: 0.075,
                     green: 0.105,
@@ -77,7 +33,7 @@ struct SourceFilePreviewView: View {
         guard case let .source(language) = document.kind,
               let language
         else {
-            return AttributedString(storage)
+            return storage
         }
 
         apply(
@@ -97,7 +53,57 @@ struct SourceFilePreviewView: View {
                 to: storage
             )
         }
-        return AttributedString(storage)
+        return storage
+    }
+
+    private var numberedText: NSAttributedString {
+        let highlightedText = highlightedText
+        let output = NSMutableAttributedString()
+        let lines = source.components(separatedBy: "\n")
+        let numberWidth = String(max(lines.count, 1)).count
+        var sourceOffset = 0
+
+        for (index, line) in lines.enumerated() {
+            let number = String(index + 1)
+            let prefix =
+                String(repeating: " ", count: max(numberWidth - number.count, 0))
+                + number
+                + "  │  "
+            output.append(
+                NSAttributedString(
+                    string: prefix,
+                    attributes: [
+                        .font: NSFont.monospacedSystemFont(
+                            ofSize: 12,
+                            weight: .regular
+                        ),
+                        .foregroundColor: NSColor(
+                            red: 0.42,
+                            green: 0.47,
+                            blue: 0.56,
+                            alpha: 1
+                        )
+                    ]
+                )
+            )
+
+            let lineLength = (line as NSString).length
+            if lineLength > 0 {
+                output.append(
+                    highlightedText.attributedSubstring(
+                        from: NSRange(
+                            location: sourceOffset,
+                            length: lineLength
+                        )
+                    )
+                )
+            }
+            if index < lines.count - 1 {
+                output.append(NSAttributedString(string: "\n"))
+            }
+            sourceOffset += lineLength + 1
+        }
+        return output
     }
 
     private func apply(
@@ -201,5 +207,117 @@ struct SourceFilePreviewView: View {
             return nil
         }
         return #"(?i)\b("# + keywords + #")\b"#
+    }
+}
+
+private struct SourceCodeTextView: NSViewRepresentable {
+    let attributedText: NSAttributedString
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = NSColor(
+            red: 0.985,
+            green: 0.989,
+            blue: 0.995,
+            alpha: 1
+        )
+        scrollView.hasHorizontalScroller = true
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+
+        let textView = NSTextView(frame: .zero)
+        textView.drawsBackground = false
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = true
+        textView.importsGraphics = false
+        textView.allowsUndo = false
+        textView.usesFindBar = true
+        textView.textContainerInset = NSSize(width: 18, height: 18)
+        textView.minSize = .zero
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.isHorizontallyResizable = true
+        textView.isVerticallyResizable = true
+        textView.textContainer?.containerSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.textContainer?.widthTracksTextView = false
+        textView.textContainer?.heightTracksTextView = false
+        scrollView.documentView = textView
+
+        context.coordinator.textView = textView
+        updateTextView(
+            textView,
+            in: scrollView,
+            context: context
+        )
+        return scrollView
+    }
+
+    func updateNSView(
+        _ scrollView: NSScrollView,
+        context: Context
+    ) {
+        guard let textView = context.coordinator.textView else {
+            return
+        }
+        updateTextView(
+            textView,
+            in: scrollView,
+            context: context
+        )
+    }
+
+    private func updateTextView(
+        _ textView: NSTextView,
+        in scrollView: NSScrollView,
+        context: Context
+    ) {
+        let contentChanged =
+            context.coordinator.lastText != attributedText.string
+        if contentChanged {
+            context.coordinator.lastText = attributedText.string
+            textView.textStorage?.setAttributedString(attributedText)
+            textView.setSelectedRange(NSRange(location: 0, length: 0))
+        }
+
+        if let textContainer = textView.textContainer,
+           let layoutManager = textView.layoutManager {
+            layoutManager.ensureLayout(for: textContainer)
+            let usedRect = layoutManager.usedRect(for: textContainer)
+            let viewportSize = scrollView.contentSize
+            textView.setFrameSize(
+                NSSize(
+                    width: max(
+                        viewportSize.width,
+                        ceil(usedRect.width + 36)
+                    ),
+                    height: max(
+                        viewportSize.height,
+                        ceil(usedRect.height + 36)
+                    )
+                )
+            )
+        }
+
+        if contentChanged {
+            scrollView.contentView.scroll(to: .zero)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+    }
+
+    final class Coordinator {
+        weak var textView: NSTextView?
+        var lastText: String?
     }
 }
