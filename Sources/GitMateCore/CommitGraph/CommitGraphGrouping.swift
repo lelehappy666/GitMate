@@ -1,6 +1,19 @@
 import Foundation
 
 public enum CommitGraphGrouping {
+    public static func validateGroupMembership(
+        _ memberHashes: Set<String>,
+        layout: CommitGraphLayoutResult,
+        scene: CommitGraphSceneState
+    ) throws {
+        try validateMembership(
+            memberHashes,
+            excludingGroupID: nil,
+            layout: layout,
+            scene: scene
+        )
+    }
+
     public static func validateConnectedSelection(
         hashes: [String],
         layout: CommitGraphLayoutResult

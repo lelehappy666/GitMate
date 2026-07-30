@@ -103,22 +103,15 @@ struct CommitGraphView: View {
     private var graphToolbar: some View {
         HStack(spacing: 8) {
             Button {
-                if viewModel.selectedHashes.count < 2 {
-                    groupNoticeMessage =
-                        "按住 Command 点击可切换选择，按住 Shift 点击可追加选择。请先选择至少 2 个相互连通的提交。"
-                } else {
-                    newGroupTitle = ""
-                    showsCreateGroup = true
-                }
+                groupNoticeMessage =
+                    "在画布空白处按住鼠标右键拖动即可框选提交；靠近画布边缘会自动滚动。"
             } label: {
                 Label(
-                    viewModel.selectedHashes.isEmpty
-                        ? "创建分组"
-                        : "创建分组 \(viewModel.selectedHashes.count)",
-                    systemImage: "square.stack.3d.up.badge.a"
+                    "右键框选创建",
+                    systemImage: "rectangle.dashed.badge.record"
                 )
             }
-            .help("按住 Command 点击切换选择，Shift 点击追加选择")
+            .help("在画布空白处按住右键拖动，框选连通提交")
 
             Button {
                 Task {
@@ -243,6 +236,17 @@ struct CommitGraphView: View {
                             }
                         }
                     },
+                    onMarqueeSelectionCompleted: { hashes in
+                        viewModel.replaceSelection(with: hashes)
+                        do {
+                            try viewModel.validateManualGroupSelection()
+                            newGroupTitle = ""
+                            showsCreateGroup = true
+                        } catch {
+                            groupNoticeMessage =
+                                groupMessage(for: error)
+                        }
+                    },
                     onGroupDoubleClick: { id, isCollapsed in
                         viewModel.setGroupCollapsed(
                             id: id,
@@ -259,7 +263,7 @@ struct CommitGraphView: View {
                     }
                 )
                 .accessibilityLabel("无限画布提交图")
-                .accessibilityHint("拖拽平移，滚轮或捏合缩放，双击空白适配全部提交")
+                .accessibilityHint("左键拖拽平移，右键拖拽框选分组，滚轮或捏合缩放")
                 .accessibilityIdentifier("workspace.commitGraph.canvas")
 
                 accessibilityNodes(screenSize: screenSize)
@@ -314,9 +318,9 @@ struct CommitGraphView: View {
     private var groupSelectionHint: some View {
         Label(
             groupSelectionHintText,
-            systemImage: viewModel.selectedHashes.count >= 2
-                ? "checkmark.circle.fill"
-                : "command"
+            systemImage: viewModel.selectedHashes.isEmpty
+                ? "rectangle.dashed"
+                : "checkmark.circle.fill"
         )
         .font(.system(size: 11.5, weight: .semibold))
         .foregroundStyle(
@@ -336,11 +340,11 @@ struct CommitGraphView: View {
     private var groupSelectionHintText: String {
         switch viewModel.selectedHashes.count {
         case 0:
-            "按 ⌘ 点击多个提交后创建分组"
+            "空白处按住右键框选，靠近边缘自动滚动"
         case 1:
-            "已选择 1 个，请再选择相邻提交"
+            "已框选 1 个，请扩大范围选择相邻提交"
         default:
-            "已选择 \(viewModel.selectedHashes.count) 个，可创建分组"
+            "已框选 \(viewModel.selectedHashes.count) 个提交"
         }
     }
 

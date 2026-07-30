@@ -362,6 +362,19 @@ public final class CommitGraphViewModel {
         selectedHashes.removeAll()
     }
 
+    public func replaceSelection(with hashes: Set<String>) {
+        let availableHashes = Set(layout.nodes.map(\.hash))
+        selectedHashes = hashes.intersection(availableHashes)
+    }
+
+    public func validateManualGroupSelection() throws {
+        try CommitGraphGrouping.validateGroupMembership(
+            selectedHashes,
+            layout: layout,
+            scene: scene
+        )
+    }
+
     @discardableResult
     public func createManualGroup(title: String) throws -> UUID {
         let id = UUID()
