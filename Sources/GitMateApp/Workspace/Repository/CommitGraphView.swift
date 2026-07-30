@@ -3,6 +3,9 @@ import SwiftUI
 
 struct CommitGraphView: View {
     @Bindable var viewModel: CommitGraphViewModel
+    @State private var showsCreateGroup = false
+    @State private var newGroupTitle = ""
+    @State private var showsGroupSuggestions = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -10,6 +13,9 @@ struct CommitGraphView: View {
             Divider()
             if let message = viewModel.errorMessage {
                 errorBanner(message)
+            }
+            if let message = viewModel.sceneWarningMessage {
+                sceneWarningBanner(message)
             }
             graphCanvas
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -28,6 +34,32 @@ struct CommitGraphView: View {
                     dismiss: viewModel.dismissDetail
                 )
             }
+        }
+        .sheet(isPresented: $showsGroupSuggestions) {
+            CommitGraphGroupSuggestionSheet(
+                suggestions: viewModel.groupSuggestions,
+                confirm: { suggestionIDs in
+                    for id in suggestionIDs {
+                        _ = try? viewModel.confirmGroupSuggestion(id: id)
+                    }
+                    showsGroupSuggestions = false
+                },
+                cancel: {
+                    showsGroupSuggestions = false
+                }
+            )
+        }
+        .alert("创建提交分组", isPresented: $showsCreateGroup) {
+            TextField("分组名称", text: $newGroupTitle)
+            Button("取消", role: .cancel) {}
+            Button("创建") {
+                _ = try? viewModel.createManualGroup(
+                    title: newGroupTitle
+                )
+                newGroupTitle = ""
+            }
+        } message: {
+            Text("将已选择的 \(viewModel.selectedHashes.count) 个连通提交组成一个分组。")
         }
     }
 
@@ -53,6 +85,52 @@ struct CommitGraphView: View {
 
     private var graphToolbar: some View {
         HStack(spacing: 8) {
+            Button {
+                newGroupTitle = ""
+                showsCreateGroup = true
+            } label: {
+                Label(
+                    "创建分组",
+                    systemImage: "square.stack.3d.up.badge.a"
+                )
+            }
+            .disabled(viewModel.selectedHashes.count < 2)
+
+            Button {
+                Task {
+                    await viewModel.prepareGroupSuggestions()
+                    showsGroupSuggestions = true
+                }
+            } label: {
+                Label(
+                    viewModel.isPreparingGroupSuggestions
+                        ? "分析中"
+                        : "自动分组",
+                    systemImage: "sparkles.rectangle.stack"
+                )
+            }
+            .disabled(viewModel.isPreparingGroupSuggestions)
+
+            Picker(
+                "连线",
+                selection: Binding(
+                    get: { viewModel.scene.lineStyle },
+                    set: { style in
+                        viewModel.setLineStyle(style)
+                    }
+                )
+            ) {
+                Label("曲线", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                    .tag(CommitGraphLineStyle.curve)
+                Label("直角", systemImage: "point.bottomleft.forward.to.point.topright.scurvepath")
+                    .tag(CommitGraphLineStyle.orthogonal)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 130)
+
+            Divider()
+                .frame(height: 22)
+
             Button {
                 viewModel.resetLayout()
             } label: {
@@ -108,25 +186,47 @@ struct CommitGraphView: View {
             )
             ZStack {
                 CommitGraphCanvas(
-                    layout: viewModel.layout,
+                    projection: viewModel.projection,
                     viewport: viewModel.viewport,
+                    lineStyle: viewModel.scene.lineStyle,
+                    selectedHashes: viewModel.selectedHashes,
                     selectedHash: viewModel.selectedHash
                 )
 
                 CommitGraphInteractionSurface(
-                    layout: viewModel.layout,
+                    projection: viewModel.projection,
                     viewport: viewModel.viewport,
                     onViewportChanges: { changes in
                         viewModel.applyViewportChanges(changes)
                         loadOlderIfNeeded()
                     },
-                    onClick: { hash in
-                        Task {
-                            await viewModel.select(hash: hash)
+                    onPointerChanges: { changes in
+                        viewModel.applyPointerChanges(changes)
+                    },
+                    onNodeClick: { hash, modifiers, opensDetail in
+                        viewModel.toggleSelection(
+                            hash: hash,
+                            modifiers: modifiers
+                        )
+                        if opensDetail {
+                            Task {
+                                await viewModel.select(hash: hash)
+                            }
                         }
                     },
-                    onDoubleClick: {
+                    onGroupDoubleClick: { id, isCollapsed in
+                        viewModel.setGroupCollapsed(
+                            id: id,
+                            isCollapsed: !isCollapsed
+                        )
+                    },
+                    onDoubleClickBlank: {
                         viewModel.fitAll(in: screenSize)
+                    },
+                    onInteractionEnded: {
+                        Task {
+                            await viewModel.persistSceneImmediately()
+                        }
                     }
                 )
                 .accessibilityLabel("无限画布提交图")
@@ -175,16 +275,18 @@ struct CommitGraphView: View {
     private func accessibilityNodes(
         screenSize: GraphSize
     ) -> some View {
-        let visibleNodes = CommitGraphViewportProjector.visibleNodes(
-            layout: viewModel.layout,
-            viewport: viewModel.viewport,
-            screenSize: screenSize,
-            padding: 180
-        )
+        let visibleNodes = viewModel.projection.nodes.filter {
+            isVisible(
+                position: $0.position,
+                screenSize: screenSize,
+                padding: 180
+            )
+        }
 
-        return ForEach(visibleNodes) { node in
+        return ForEach(visibleNodes) { visibleNode in
+            let node = visibleNode.node
             let point = CommitGraphViewportProjector.screenPoint(
-                canvasPoint: GraphPoint(x: node.x, y: node.y),
+                canvasPoint: visibleNode.position,
                 viewport: viewModel.viewport
             )
             Rectangle()
@@ -291,6 +393,15 @@ struct CommitGraphView: View {
             .background(GitMateTheme.warning.opacity(0.13))
     }
 
+    private func sceneWarningBanner(_ message: String) -> some View {
+        Label(message, systemImage: "externaldrive.badge.exclamationmark")
+            .font(.system(size: 11.5, weight: .semibold))
+            .foregroundStyle(GitMateTheme.textSecondary)
+            .padding(.horizontal, 18)
+            .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+            .background(GitMateTheme.panel)
+    }
+
     private var detailPresented: Binding<Bool> {
         Binding(
             get: { viewModel.selectedCommit != nil },
@@ -311,5 +422,24 @@ struct CommitGraphView: View {
         Task {
             await viewModel.loadOlderCommits()
         }
+    }
+
+    private func isVisible(
+        position: GraphPoint,
+        screenSize: GraphSize,
+        padding: Double
+    ) -> Bool {
+        let point = CommitGraphViewportProjector.screenPoint(
+            canvasPoint: position,
+            viewport: viewModel.viewport
+        )
+        let width = CommitGraphViewportProjector.nodeWidth
+            * viewModel.viewport.scale
+        let height = CommitGraphViewportProjector.nodeHeight
+            * viewModel.viewport.scale
+        return point.x + width / 2 >= -padding
+            && point.x - width / 2 <= screenSize.width + padding
+            && point.y + height / 2 >= -padding
+            && point.y - height / 2 <= screenSize.height + padding
     }
 }

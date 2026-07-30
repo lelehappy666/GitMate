@@ -208,24 +208,28 @@ public final class CommitGraphViewModel {
         _ changes: [CommitGraphPointerChange]
     ) {
         guard !changes.isEmpty else { return }
+        var updatedScene = scene
         for change in changes {
             switch change {
             case let .pan(translation):
                 pan(by: translation)
             case let .moveNode(hash, translation):
-                moveNode(
+                updatedScene = sceneByMovingNode(
                     hash: hash,
                     by: translation,
-                    schedulesPersistence: false
+                    scene: updatedScene
                 )
             case let .moveGroup(id, translation):
-                moveGroup(
+                updatedScene = CommitGraphGrouping.movingGroup(
                     id: id,
-                    by: translation,
-                    schedulesPersistence: false
+                    translation: translation,
+                    scene: updatedScene
                 )
             }
         }
+        guard updatedScene != scene else { return }
+        scene = updatedScene
+        refreshProjection(incrementingPathRevision: true)
         scheduleSceneSave()
     }
 
@@ -569,36 +573,52 @@ public final class CommitGraphViewModel {
         by translation: GraphPoint,
         schedulesPersistence: Bool
     ) {
-        guard translation.x.isFinite,
-              translation.y.isFinite,
-              layout.node(hash: hash) != nil
-        else {
-            return
-        }
-
-        if let groupIndex = scene.groups.firstIndex(
-            where: { $0.memberHashes.contains(hash) }
-        ), let position = scene.groups[groupIndex]
-            .relativePositions[hash] {
-            scene.groups[groupIndex].relativePositions[hash] = GraphPoint(
-                x: position.x + translation.x,
-                y: position.y + translation.y
-            )
-        } else {
-            let position = scene.nodePositions[hash]
-                ?? layout.node(hash: hash).map {
-                    GraphPoint(x: $0.x, y: $0.y)
-                }
-                ?? .zero
-            scene.nodePositions[hash] = GraphPoint(
-                x: position.x + translation.x,
-                y: position.y + translation.y
-            )
-        }
+        let updated = sceneByMovingNode(
+            hash: hash,
+            by: translation,
+            scene: scene
+        )
+        guard updated != scene else { return }
+        scene = updated
         refreshProjection(incrementingPathRevision: true)
         if schedulesPersistence {
             scheduleSceneSave()
         }
+    }
+
+    private func sceneByMovingNode(
+        hash: String,
+        by translation: GraphPoint,
+        scene currentScene: CommitGraphSceneState
+    ) -> CommitGraphSceneState {
+        guard translation.x.isFinite,
+              translation.y.isFinite,
+              layout.node(hash: hash) != nil
+        else {
+            return currentScene
+        }
+
+        var updated = currentScene
+        if let groupIndex = updated.groups.firstIndex(
+            where: { $0.memberHashes.contains(hash) }
+        ), let position = updated.groups[groupIndex]
+            .relativePositions[hash] {
+            updated.groups[groupIndex].relativePositions[hash] = GraphPoint(
+                x: position.x + translation.x,
+                y: position.y + translation.y
+            )
+        } else {
+            let position = updated.nodePositions[hash]
+                ?? layout.node(hash: hash).map {
+                    GraphPoint(x: $0.x, y: $0.y)
+                }
+                ?? .zero
+            updated.nodePositions[hash] = GraphPoint(
+                x: position.x + translation.x,
+                y: position.y + translation.y
+            )
+        }
+        return updated
     }
 
     private func refreshProjection(incrementingPathRevision: Bool) {

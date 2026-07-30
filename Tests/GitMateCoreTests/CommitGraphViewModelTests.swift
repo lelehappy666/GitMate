@@ -346,6 +346,51 @@ let commitGraphViewModelTests = [
             "画布布局暂时无法保存。",
             "保存失败应显示非阻塞稳定提示"
         )
+    },
+    TestCase("同一显示帧的多次拖动只刷新一次动态路径") { @MainActor in
+        let viewModel = CommitGraphViewModel(
+            reader: PagedCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            pageSize: 2
+        )
+        await viewModel.load()
+        let topologyBefore = viewModel.layout
+        let portsBefore = viewModel.scene.edgePorts
+        let revisionBefore = viewModel.pathRevision
+
+        viewModel.applyPointerChanges([
+            .moveNode(
+                hash: "hash-a",
+                translation: GraphPoint(x: 5, y: 3)
+            ),
+            .moveNode(
+                hash: "hash-a",
+                translation: GraphPoint(x: 7, y: -1)
+            )
+        ])
+
+        try expectEqual(
+            viewModel.scene.nodePositions["hash-a"],
+            viewModel.layout.node(hash: "hash-a").map {
+                GraphPoint(x: $0.x + 12, y: $0.y + 2)
+            },
+            "同一帧内的节点增量必须按顺序折叠"
+        )
+        try expectEqual(
+            viewModel.pathRevision,
+            revisionBefore + 1,
+            "同一显示帧只能发布一次路径刷新"
+        )
+        try expectEqual(
+            viewModel.scene.edgePorts,
+            portsBefore,
+            "拖动批次不得重新分配普通提交端口"
+        )
+        try expectEqual(
+            viewModel.layout,
+            topologyBefore,
+            "拖动批次不得重新计算 Git 拓扑"
+        )
     }
 ]
 

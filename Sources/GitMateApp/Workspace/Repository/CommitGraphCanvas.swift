@@ -1,3 +1,4 @@
+import AppKit
 import GitMateCore
 import SwiftUI
 
@@ -12,38 +13,38 @@ enum CommitGraphPalette {
     ]
 
     static func color(_ index: Int) -> Color {
-        colors[index % colors.count]
+        colors[abs(index) % colors.count]
+    }
+
+    static func color(groupID: UUID) -> Color {
+        let index = groupID.uuidString.utf8.reduce(0) {
+            ($0 + Int($1)) % colors.count
+        }
+        return color(index)
     }
 }
 
 struct CommitGraphCanvas: View {
-    let layout: CommitGraphLayoutResult
+    let projection: CommitGraphSceneProjection
     let viewport: GraphViewport
+    let lineStyle: CommitGraphLineStyle
+    let selectedHashes: Set<String>
     let selectedHash: String?
 
     var body: some View {
         Canvas { context, size in
-            drawGrid(context: &context, size: size, viewport: viewport)
-            drawVisibleEdges(
-                context: &context,
-                size: size,
-                layout: layout,
-                viewport: viewport
-            )
-            drawVisibleNodes(
-                context: &context,
-                size: size,
-                layout: layout,
-                viewport: viewport
-            )
+            drawGrid(context: &context, size: size)
+            drawExpandedGroups(context: &context, size: size)
+            drawVisibleEdges(context: &context, size: size)
+            drawVisibleNodes(context: &context, size: size)
+            drawCollapsedGroups(context: &context, size: size)
         }
         .background(.white)
     }
 
     private func drawGrid(
         context: inout GraphicsContext,
-        size: CGSize,
-        viewport: GraphViewport
+        size: CGSize
     ) {
         let step = max(CGFloat(32 * viewport.scale), 18)
         let startX = CGFloat(viewport.offsetX).truncatingRemainder(
@@ -72,186 +73,450 @@ struct CommitGraphCanvas: View {
         )
     }
 
-    private func drawVisibleEdges(
+    private func drawExpandedGroups(
         context: inout GraphicsContext,
-        size: CGSize,
-        layout: CommitGraphLayoutResult,
-        viewport: GraphViewport
+        size: CGSize
     ) {
-        let edges = CommitGraphViewportProjector.visibleEdges(
-            layout: layout,
-            viewport: viewport,
-            screenSize: GraphSize(
-                width: Double(size.width),
-                height: Double(size.height)
-            ),
-            padding: 180
-        )
-        for edge in edges {
-            guard let child = layout.node(hash: edge.childHash),
-                  let parent = layout.node(hash: edge.parentHash)
-            else {
-                continue
-            }
-            let start = screenPoint(for: child, viewport: viewport)
-            let end = screenPoint(for: parent, viewport: viewport)
-
-            let midpointY = (start.y + end.y) / 2
-            var path = Path()
-            path.move(to: start)
-            path.addCurve(
-                to: end,
-                control1: CGPoint(x: start.x, y: midpointY),
-                control2: CGPoint(x: end.x, y: midpointY)
+        for group in projection.groups where !group.isCollapsed {
+            let rect = screenRect(group.rect)
+            guard isVisible(rect, in: size) else { continue }
+            let color = CommitGraphPalette.color(groupID: group.id)
+            let shape = Path(
+                roundedRect: rect,
+                cornerRadius: max(12 * viewport.scale, 6)
             )
+            context.fill(shape, with: .color(color.opacity(0.055)))
             context.stroke(
-                path,
-                with: .color(
-                    CommitGraphPalette.color(edge.colorIndex).opacity(0.88)
-                ),
+                shape,
+                with: .color(color.opacity(0.58)),
                 style: StrokeStyle(
-                    lineWidth: edge.kind == .merge ? 2.3 : 2,
-                    lineCap: .round,
-                    dash: edge.kind == .merge ? [7, 4] : []
+                    lineWidth: max(1.2 * viewport.scale, 1),
+                    dash: [7 * viewport.scale, 5 * viewport.scale]
                 )
+            )
+
+            let headerHeight = 34 * viewport.scale
+            let headerRect = CGRect(
+                x: rect.minX,
+                y: rect.minY,
+                width: rect.width,
+                height: headerHeight
+            )
+            context.fill(
+                Path(
+                    roundedRect: headerRect,
+                    cornerRadius: max(12 * viewport.scale, 6)
+                ),
+                with: .color(color.opacity(0.095))
+            )
+            let titleRect = CGRect(
+                x: headerRect.minX + 13 * viewport.scale,
+                y: headerRect.minY,
+                width: max(
+                    headerRect.width - 120 * viewport.scale,
+                    20
+                ),
+                height: headerRect.height
+            )
+            drawFittedText(
+                group.title,
+                in: titleRect,
+                font: .systemFont(
+                    ofSize: max(11.5 * viewport.scale, 7),
+                    weight: .semibold
+                ),
+                color: NSColor.labelColor,
+                context: &context
+            )
+            context.draw(
+                Text("\(group.memberCount) 个提交 · 双击折叠")
+                    .font(
+                        .system(
+                            size: max(9.5 * viewport.scale, 6),
+                            weight: .medium
+                        )
+                    )
+                    .foregroundStyle(color),
+                at: CGPoint(
+                    x: headerRect.maxX - 12 * viewport.scale,
+                    y: headerRect.midY
+                ),
+                anchor: .trailing
             )
         }
     }
 
+    private func drawVisibleEdges(
+        context: inout GraphicsContext,
+        size: CGSize
+    ) {
+        for edge in projection.edges {
+            guard let sourceRect = endpointRect(edge.source),
+                  let targetRect = endpointRect(edge.target)
+            else {
+                continue
+            }
+            let extent = screenRect(
+                GraphRect(
+                    x: min(sourceRect.minimumX, targetRect.minimumX),
+                    y: min(sourceRect.minimumY, targetRect.minimumY),
+                    width: max(
+                        sourceRect.maximumX,
+                        targetRect.maximumX
+                    ) - min(sourceRect.minimumX, targetRect.minimumX),
+                    height: max(
+                        sourceRect.maximumY,
+                        targetRect.maximumY
+                    ) - min(sourceRect.minimumY, targetRect.minimumY)
+                )
+            )
+            guard isVisible(extent, in: size, padding: 260) else {
+                continue
+            }
+
+            let generated: CommitGraphGeneratedPath
+            switch lineStyle {
+            case .curve:
+                generated = CommitGraphPathGeometry.curve(
+                    startRect: sourceRect,
+                    startAnchor: edge.ports.source,
+                    endRect: targetRect,
+                    endAnchor: edge.ports.target
+                )
+            case .orthogonal:
+                generated = CommitGraphPathGeometry.orthogonal(
+                    startRect: sourceRect,
+                    startAnchor: edge.ports.source,
+                    endRect: targetRect,
+                    endAnchor: edge.ports.target,
+                    stubLength: 28
+                )
+            }
+            var path = Path()
+            switch generated {
+            case let .curve(start, control1, control2, end):
+                path.move(to: screenPoint(start))
+                path.addCurve(
+                    to: screenPoint(end),
+                    control1: screenPoint(control1),
+                    control2: screenPoint(control2)
+                )
+            case let .polyline(points):
+                guard let first = points.first else { continue }
+                path.move(to: screenPoint(first))
+                for point in points.dropFirst() {
+                    path.addLine(to: screenPoint(point))
+                }
+            }
+
+            let color = CommitGraphPalette.color(edge.colorIndex)
+            context.stroke(
+                path,
+                with: .color(color.opacity(0.88)),
+                style: StrokeStyle(
+                    lineWidth: max(
+                        (edge.kind == .merge ? 2.3 : 2)
+                            * viewport.scale,
+                        1
+                    ),
+                    lineCap: .round,
+                    lineJoin: .round,
+                    dash: edge.kind == .merge
+                        ? [7 * viewport.scale, 4 * viewport.scale]
+                        : []
+                )
+            )
+            if edge.aggregateCount > 1 {
+                drawAggregateCount(
+                    edge.aggregateCount,
+                    path: generated,
+                    color: color,
+                    context: &context
+                )
+            }
+        }
+    }
+
+    private func drawAggregateCount(
+        _ count: Int,
+        path: CommitGraphGeneratedPath,
+        color: Color,
+        context: inout GraphicsContext
+    ) {
+        let center = screenPoint(
+            CommitGraphPathGeometry.labelPoint(for: path)
+        )
+        let scale = CGFloat(viewport.scale)
+        let width = CGFloat(34) * scale
+        let height = CGFloat(20) * scale
+        let originX = center.x - width / 2
+        let originY = center.y - height / 2
+        let rect = CGRect(
+            x: originX,
+            y: originY,
+            width: width,
+            height: height
+        )
+        context.fill(
+            Path(roundedRect: rect, cornerRadius: rect.height / 2),
+            with: .color(.white)
+        )
+        context.stroke(
+            Path(roundedRect: rect, cornerRadius: rect.height / 2),
+            with: .color(color),
+            lineWidth: max(scale, 1)
+        )
+        context.draw(
+            Text("×\(count)")
+                .font(
+                    .system(
+                        size: max(9.5 * scale, 7),
+                        weight: .bold,
+                        design: .rounded
+                    )
+                )
+                .foregroundStyle(color),
+            at: center,
+            anchor: .center
+        )
+    }
+
     private func drawVisibleNodes(
         context: inout GraphicsContext,
-        size: CGSize,
-        layout: CommitGraphLayoutResult,
-        viewport: GraphViewport
+        size: CGSize
     ) {
-        let nodes = CommitGraphViewportProjector.visibleNodes(
-            layout: layout,
-            viewport: viewport,
-            screenSize: GraphSize(
-                width: Double(size.width),
-                height: Double(size.height)
-            ),
-            padding: 180
-        )
-        for node in nodes {
+        for visibleNode in projection.nodes {
+            let rect = screenRect(nodeRect(visibleNode.position))
+            guard isVisible(rect, in: size) else { continue }
             drawNode(
-                node,
-                isSelected: node.hash == selectedHash,
-                context: &context,
-                viewport: viewport
+                visibleNode.node,
+                rect: rect,
+                isSelected: selectedHashes.contains(visibleNode.node.hash)
+                    || visibleNode.node.hash == selectedHash,
+                context: &context
             )
         }
     }
 
     private func drawNode(
         _ node: CommitGraphNode,
+        rect: CGRect,
         isSelected: Bool,
-        context: inout GraphicsContext,
-        viewport: GraphViewport
+        context: inout GraphicsContext
     ) {
         let scale = CGFloat(viewport.scale)
-        let center = screenPoint(for: node, viewport: viewport)
-        let width = CGFloat(CommitGraphViewportProjector.nodeWidth) * scale
-        let height = CGFloat(CommitGraphViewportProjector.nodeHeight) * scale
-        let rect = CGRect(
-            x: center.x - width / 2,
-            y: center.y - height / 2,
-            width: width,
-            height: height
-        )
         let card = Path(
             roundedRect: rect,
-            cornerRadius: 11 * scale
+            cornerRadius: max(11 * scale, 5)
         )
         let branchColor = CommitGraphPalette.color(node.colorIndex)
-
         context.fill(card, with: .color(.white))
         context.stroke(
             card,
             with: .color(isSelected ? GitMateTheme.accent : branchColor),
-            lineWidth: (isSelected ? 2.5 : 1.35) * scale
+            lineWidth: max((isSelected ? 2.5 : 1.35) * scale, 1)
         )
 
+        var clipped = context
+        clipped.clip(to: card)
+
         let avatarSize = 32 * scale
-        let avatarCenter = CGPoint(
-            x: rect.minX + 11 * scale + avatarSize / 2,
-            y: rect.minY + 11 * scale + avatarSize / 2
-        )
         let avatarRect = CGRect(
-            x: avatarCenter.x - avatarSize / 2,
-            y: avatarCenter.y - avatarSize / 2,
+            x: rect.minX + 11 * scale,
+            y: rect.minY + 10 * scale,
             width: avatarSize,
             height: avatarSize
         )
-        context.fill(
+        clipped.fill(
             Path(ellipseIn: avatarRect),
             with: .color(branchColor.opacity(0.14))
         )
-        context.draw(
+        clipped.draw(
             Text(authorInitials(node.authorName))
-                .font(.system(size: 11 * scale, weight: .bold))
+                .font(.system(size: max(11 * scale, 7), weight: .bold))
                 .foregroundStyle(branchColor),
-            at: avatarCenter,
+            at: CGPoint(x: avatarRect.midX, y: avatarRect.midY),
             anchor: .center
         )
 
-        let textX = avatarRect.maxX + 10 * scale
-        let subjectY = rect.minY + 10 * scale
-        context.draw(
-            Text(truncated(node.subject, limit: 34))
-                .font(.system(size: 12.5 * scale, weight: .semibold))
-                .foregroundStyle(GitMateTheme.textPrimary),
-            at: CGPoint(x: textX, y: subjectY),
-            anchor: .topLeading
+        let subjectRect = CGRect(
+            x: avatarRect.maxX + 10 * scale,
+            y: rect.minY + 7 * scale,
+            width: max(
+                rect.maxX - avatarRect.maxX - 20 * scale,
+                1
+            ),
+            height: 25 * scale
+        )
+        drawFittedText(
+            node.subject,
+            in: subjectRect,
+            font: .systemFont(
+                ofSize: max(12.5 * scale, 7),
+                weight: .semibold
+            ),
+            color: NSColor.labelColor,
+            context: &clipped
         )
 
+        let decoration = node.decorations.first
+        let decorationWidth = decoration.map {
+            min(
+                max(
+                    measuredWidth(
+                        $0,
+                        font: .systemFont(
+                            ofSize: max(9.5 * scale, 6),
+                            weight: .medium
+                        )
+                    ) + 12 * scale,
+                    28 * scale
+                ),
+                88 * scale
+            )
+        } ?? 0
+        if let decoration {
+            drawDecoration(
+                decoration,
+                width: decorationWidth,
+                color: branchColor,
+                at: CGPoint(
+                    x: rect.maxX - 9 * scale,
+                    y: rect.maxY - 16 * scale
+                ),
+                context: &clipped,
+                scale: scale
+            )
+        }
+
         let metadataY = rect.maxY - 16 * scale
-        context.draw(
-            Text(truncated(node.authorName, limit: 14))
-                .font(.system(size: 10.5 * scale, weight: .medium))
-                .foregroundStyle(GitMateTheme.textSecondary),
-            at: CGPoint(x: textX, y: metadataY),
-            anchor: .leading
+        let hashWidth = measuredWidth(
+            node.shortHash,
+            font: .monospacedSystemFont(
+                ofSize: max(10.5 * scale, 6),
+                weight: .medium
+            )
         )
-        context.draw(
+        let hashX = rect.maxX
+            - 10 * scale
+            - decorationWidth
+            - (decorationWidth > 0 ? 8 * scale : 0)
+            - hashWidth
+        let authorRect = CGRect(
+            x: subjectRect.minX,
+            y: metadataY - 9 * scale,
+            width: max(hashX - subjectRect.minX - 10 * scale, 1),
+            height: 18 * scale
+        )
+        drawFittedText(
+            node.authorName,
+            in: authorRect,
+            font: .systemFont(
+                ofSize: max(10.5 * scale, 6),
+                weight: .medium
+            ),
+            color: NSColor.secondaryLabelColor,
+            context: &clipped
+        )
+        clipped.draw(
             Text(node.shortHash)
                 .font(
                     .system(
-                        size: 10.5 * scale,
+                        size: max(10.5 * scale, 6),
                         weight: .medium,
                         design: .monospaced
                     )
                 )
                 .foregroundStyle(GitMateTheme.textSecondary),
-            at: CGPoint(x: textX + 72 * scale, y: metadataY),
+            at: CGPoint(x: hashX, y: metadataY),
             anchor: .leading
         )
+    }
 
-        if let decoration = node.decorations.first {
-            drawDecoration(
-                truncated(decoration, limit: 16),
-                color: branchColor,
-                at: CGPoint(
-                    x: rect.maxX - 9 * scale,
-                    y: metadataY
+    private func drawCollapsedGroups(
+        context: inout GraphicsContext,
+        size: CGSize
+    ) {
+        for group in projection.groups where group.isCollapsed {
+            let rect = screenRect(group.rect)
+            guard isVisible(rect, in: size) else { continue }
+            let color = CommitGraphPalette.color(groupID: group.id)
+            let card = Path(
+                roundedRect: rect,
+                cornerRadius: max(13 * viewport.scale, 6)
+            )
+            context.fill(card, with: .color(.white))
+            context.stroke(
+                card,
+                with: .color(color),
+                lineWidth: max(1.8 * viewport.scale, 1)
+            )
+            var clipped = context
+            clipped.clip(to: card)
+            let scale = CGFloat(viewport.scale)
+            let iconRect = CGRect(
+                x: rect.minX + 13 * scale,
+                y: rect.minY + 14 * scale,
+                width: 36 * scale,
+                height: 36 * scale
+            )
+            clipped.fill(
+                Path(
+                    roundedRect: iconRect,
+                    cornerRadius: 10 * scale
                 ),
-                context: &context,
-                scale: scale
+                with: .color(color.opacity(0.14))
+            )
+            clipped.draw(
+                Image(systemName: "square.stack.3d.up.fill"),
+                at: CGPoint(x: iconRect.midX, y: iconRect.midY),
+                anchor: .center
+            )
+            let titleRect = CGRect(
+                x: iconRect.maxX + 10 * scale,
+                y: rect.minY + 11 * scale,
+                width: max(
+                    rect.maxX - iconRect.maxX - 22 * scale,
+                    1
+                ),
+                height: 23 * scale
+            )
+            drawFittedText(
+                group.title,
+                in: titleRect,
+                font: .systemFont(
+                    ofSize: max(12.5 * scale, 7),
+                    weight: .semibold
+                ),
+                color: NSColor.labelColor,
+                context: &clipped
+            )
+            clipped.draw(
+                Text("\(group.memberCount) 个提交 · 双击展开")
+                    .font(
+                        .system(
+                            size: max(10 * scale, 6),
+                            weight: .medium
+                        )
+                    )
+                    .foregroundStyle(color),
+                at: CGPoint(
+                    x: titleRect.minX,
+                    y: rect.maxY - 21 * scale
+                ),
+                anchor: .leading
             )
         }
     }
 
     private func drawDecoration(
         _ decoration: String,
+        width: CGFloat,
         color: Color,
         at trailingPoint: CGPoint,
         context: inout GraphicsContext,
         scale: CGFloat
     ) {
-        let width = min(
-            max(CGFloat(decoration.count) * 5.8 + 10, 28),
-            88
-        ) * scale
         let height = 17 * scale
         let rect = CGRect(
             x: trailingPoint.x - width,
@@ -263,36 +528,132 @@ struct CommitGraphCanvas: View {
             Path(roundedRect: rect, cornerRadius: height / 2),
             with: .color(color.opacity(0.11))
         )
+        let fitted = fittedText(
+            decoration,
+            font: .systemFont(
+                ofSize: max(9.5 * scale, 6),
+                weight: .medium
+            ),
+            maximumWidth: max(width - 10 * scale, 1)
+        )
         context.draw(
-            Text(decoration)
-                .font(.system(size: 9.5 * scale, weight: .medium))
+            Text(fitted)
+                .font(
+                    .system(
+                        size: max(9.5 * scale, 6),
+                        weight: .medium
+                    )
+                )
                 .foregroundStyle(color),
             at: CGPoint(x: rect.midX, y: rect.midY),
             anchor: .center
         )
     }
 
-    private func screenPoint(
-        for node: CommitGraphNode,
-        viewport: GraphViewport
-    ) -> CGPoint {
-        let point = CommitGraphViewportProjector.screenPoint(
-            canvasPoint: GraphPoint(x: node.x, y: node.y),
+    private func drawFittedText(
+        _ value: String,
+        in rect: CGRect,
+        font: NSFont,
+        color: NSColor,
+        context: inout GraphicsContext
+    ) {
+        let fitted = fittedText(
+            value,
+            font: font,
+            maximumWidth: max(rect.width, 1)
+        )
+        context.draw(
+            Text(fitted)
+                .font(.init(font))
+                .foregroundStyle(Color(nsColor: color)),
+            at: CGPoint(x: rect.minX, y: rect.midY),
+            anchor: .leading
+        )
+    }
+
+    private func fittedText(
+        _ value: String,
+        font: NSFont,
+        maximumWidth: CGFloat
+    ) -> String {
+        CommitGraphTextFitter.truncated(
+            value,
+            maximumWidth: Double(maximumWidth),
+            measure: { measuredWidth($0, font: font) }
+        )
+    }
+
+    private func measuredWidth(_ value: String, font: NSFont) -> Double {
+        Double(
+            ceil(
+                NSAttributedString(
+                    string: value,
+                    attributes: [.font: font]
+                ).size().width
+            )
+        )
+    }
+
+    private func endpointRect(
+        _ endpoint: CommitGraphEndpointID
+    ) -> GraphRect? {
+        switch endpoint {
+        case let .node(hash):
+            return projection.nodes.first {
+                $0.node.hash == hash
+            }.map { nodeRect($0.position) }
+        case let .group(id):
+            return projection.groups.first { $0.id == id }?.rect
+        }
+    }
+
+    private func nodeRect(_ center: GraphPoint) -> GraphRect {
+        GraphRect(
+            x: center.x - CommitGraphViewportProjector.nodeWidth / 2,
+            y: center.y - CommitGraphViewportProjector.nodeHeight / 2,
+            width: CommitGraphViewportProjector.nodeWidth,
+            height: CommitGraphViewportProjector.nodeHeight
+        )
+    }
+
+    private func screenPoint(_ point: GraphPoint) -> CGPoint {
+        let result = CommitGraphViewportProjector.screenPoint(
+            canvasPoint: point,
             viewport: viewport
         )
-        return CGPoint(x: CGFloat(point.x), y: CGFloat(point.y))
+        return CGPoint(x: result.x, y: result.y)
+    }
+
+    private func screenRect(_ rect: GraphRect) -> CGRect {
+        let origin = screenPoint(
+            GraphPoint(x: rect.x, y: rect.y)
+        )
+        return CGRect(
+            x: origin.x,
+            y: origin.y,
+            width: rect.width * viewport.scale,
+            height: rect.height * viewport.scale
+        )
+    }
+
+    private func isVisible(
+        _ rect: CGRect,
+        in size: CGSize,
+        padding: CGFloat = 180
+    ) -> Bool {
+        rect.intersects(
+            CGRect(origin: .zero, size: size).insetBy(
+                dx: -padding,
+                dy: -padding
+            )
+        )
     }
 
     private func authorInitials(_ author: String) -> String {
-        let parts = author.split(separator: " ")
-        let initials = parts.prefix(2).compactMap(\.first)
-        return initials.isEmpty
-            ? "?"
-            : String(initials).uppercased()
-    }
-
-    private func truncated(_ value: String, limit: Int) -> String {
-        guard value.count > limit else { return value }
-        return String(value.prefix(max(limit - 1, 1))) + "…"
+        let initials = author
+            .split(separator: " ")
+            .prefix(2)
+            .compactMap(\.first)
+        return initials.isEmpty ? "?" : String(initials).uppercased()
     }
 }
