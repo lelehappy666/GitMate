@@ -5,14 +5,14 @@ import WebKit
 
 struct READMEBlockView: View {
     let block: READMEBlock
-    let imageAccessToken: String?
+    let imageAuthorization: READMEImageAuthorization?
 
     init(
         block: READMEBlock,
-        imageAccessToken: String? = nil
+        imageAuthorization: READMEImageAuthorization? = nil
     ) {
         self.block = block
-        self.imageAccessToken = imageAccessToken
+        self.imageAuthorization = imageAuthorization
     }
 
     var body: some View {
@@ -150,7 +150,7 @@ struct READMEBlockView: View {
         READMEImageView(
             url: url,
             alt: alt,
-            accessToken: imageAccessToken
+            authorization: imageAuthorization
         )
         .frame(maxWidth: 760, alignment: .leading)
         .clipShape(
@@ -341,7 +341,7 @@ private struct READMEImageView: View {
 
     let url: URL
     let alt: String
-    let accessToken: String?
+    let authorization: READMEImageAuthorization?
 
     @State private var phase = Phase.loading
 
@@ -394,11 +394,10 @@ private struct READMEImageView: View {
                 "GitMate/1.0",
                 forHTTPHeaderField: "User-Agent"
             )
-            if shouldAuthorize,
-               let accessToken,
-               !accessToken.isEmpty {
+            if let authorizationHeader = authorization?
+                .authorizationHeader(for: url) {
                 request.setValue(
-                    "Bearer \(accessToken)",
+                    authorizationHeader,
                     forHTTPHeaderField: "Authorization"
                 )
             }
@@ -426,16 +425,6 @@ private struct READMEImageView: View {
         } catch {
             phase = .failed
         }
-    }
-
-    private var shouldAuthorize: Bool {
-        guard let host = url.host?.lowercased() else {
-            return false
-        }
-        return host == "github.com"
-            || host == "api.github.com"
-            || host == "raw.githubusercontent.com"
-            || host.hasSuffix(".githubusercontent.com")
     }
 
     private var isCompactBadge: Bool {

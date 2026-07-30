@@ -51,6 +51,74 @@ public extension RepositoryContentLoading {
 
 extension WorkspaceContentService: RepositoryContentLoading {}
 
+public struct AuthorizationObservingRepositoryLoader:
+    RepositoryContentLoading
+{
+    private let loader: any RepositoryContentLoading
+    private let onAuthorizationRequired:
+        @MainActor @Sendable () -> Void
+
+    public init(
+        loader: any RepositoryContentLoading,
+        onAuthorizationRequired:
+            @escaping @MainActor @Sendable () -> Void
+    ) {
+        self.loader = loader
+        self.onAuthorizationRequired = onAuthorizationRequired
+    }
+
+    public func repositoryContent(
+        repository: Repository,
+        account: GitHubAccount,
+        token: String
+    ) async throws -> RepositoryContent {
+        let content = try await loader.repositoryContent(
+            repository: repository,
+            account: account,
+            token: token
+        )
+        await observeAuthorization(in: content)
+        return content
+    }
+
+    public func repositoryContentUpdates(
+        repository: Repository,
+        account: GitHubAccount,
+        token: String
+    ) -> AsyncThrowingStream<RepositoryContentUpdate, Error> {
+        AsyncThrowingStream { continuation in
+            let producer = Task {
+                do {
+                    for try await update in loader.repositoryContentUpdates(
+                        repository: repository,
+                        account: account,
+                        token: token
+                    ) {
+                        try Task.checkCancellation()
+                        await observeAuthorization(in: update.content)
+                        continuation.yield(update)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in
+                producer.cancel()
+            }
+        }
+    }
+
+    private func observeAuthorization(
+        in content: RepositoryContent
+    ) async {
+        guard content.connectivity == .authorizationRequired else {
+            return
+        }
+        await onAuthorizationRequired()
+    }
+}
+
 public enum RepositoryOverviewLoadPhase: Equatable, Sendable {
     case idle
     case loading

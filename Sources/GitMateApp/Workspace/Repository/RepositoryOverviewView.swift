@@ -3,7 +3,7 @@ import SwiftUI
 
 struct RepositoryOverviewView: View {
     @Bindable var viewModel: RepositoryOverviewViewModel
-    let imageAccessToken: String
+    let imageAuthorization: READMEImageAuthorization
     let onRoute: (WorkspaceRoute) -> Void
     let onResync: () -> Void
 
@@ -375,7 +375,7 @@ struct RepositoryOverviewView: View {
                     ) { _, block in
                         READMEBlockView(
                             block: block,
-                            imageAccessToken: imageAccessToken
+                            imageAuthorization: imageAuthorization
                         )
                     }
 

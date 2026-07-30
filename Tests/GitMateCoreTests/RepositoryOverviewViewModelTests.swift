@@ -2,6 +2,208 @@ import Foundation
 import GitMateCore
 
 let repositoryOverviewViewModelTests = [
+    TestCase("授权观察加载器完整转发缓存与刷新增量并观察授权失效") { @MainActor in
+        let repository = overviewRepository()
+        let cachedContent = overviewContent(
+            repository: repository,
+            summary: overviewSummary(repositoryID: repository.id)
+        )
+        let authorizationRequiredContent = overviewContent(
+            repository: repository,
+            summary: overviewSummary(repositoryID: repository.id),
+            connectivity: .authorizationRequired
+        )
+        let source = IncrementalOverviewLoader(
+            updates: [
+                RepositoryContentUpdate(
+                    content: cachedContent,
+                    freshness: .cached,
+                    isFinal: false
+                ),
+                RepositoryContentUpdate(
+                    content: authorizationRequiredContent,
+                    freshness: .refreshed,
+                    isFinal: true
+                )
+            ]
+        )
+        let observation = AuthorizationObservation()
+        let loader = AuthorizationObservingRepositoryLoader(
+            loader: source,
+            onAuthorizationRequired: observation.observe
+        )
+
+        var receivedUpdates: [RepositoryContentUpdate] = []
+        for try await update in loader.repositoryContentUpdates(
+            repository: repository,
+            account: overviewAccount(),
+            token: "secret"
+        ) {
+            receivedUpdates.append(update)
+        }
+
+        try expectEqual(
+            receivedUpdates,
+            source.updates,
+            "包装器不得退化为协议默认的单个最终值"
+        )
+        try expectEqual(
+            observation.count,
+            1,
+            "增量更新出现授权失效时必须立即通知工作区"
+        )
+    },
+    TestCase("GitHub.com 图片令牌仅授权 HTTPS 公共资源白名单") {
+        let authorization = READMEImageAuthorization(
+            account: readmeImageAccount(
+                kind: .githubDotCom,
+                serverURL: URL(string: "https://github.com")!
+            ),
+            accessToken: "public-token"
+        )
+
+        try expectEqual(
+            authorization.authorizationHeader(
+                for: URL(
+                    string: "https://raw.githubusercontent.com/GitMate/app/main/private.png"
+                )!
+            ),
+            "Bearer public-token",
+            "GitHub.com 私有资源图片应携带当前账户令牌"
+        )
+        try expectEqual(
+            authorization.authorizationHeader(
+                for: URL(
+                    string: "https://private-user-images.githubusercontent.com/1/private.png"
+                )!
+            ),
+            "Bearer public-token",
+            "GitHub 用户内容白名单子域应支持认证"
+        )
+        try expectEqual(
+            authorization.authorizationHeader(
+                for: URL(string: "https://evilgithubusercontent.com/image.png")!
+            ),
+            nil,
+            "相似域名不得获得 GitHub.com 令牌"
+        )
+        try expectEqual(
+            authorization.authorizationHeader(
+                for: URL(
+                    string: "http://raw.githubusercontent.com/GitMate/app/main/image.png"
+                )!
+            ),
+            nil,
+            "不安全 HTTP 图片不得获得令牌"
+        )
+        try expectEqual(
+            authorization.authorizationHeader(
+                for: URL(string: "https://github.com:8443/image.png")!
+            ),
+            nil,
+            "GitHub 公共主机的非标准端口不得获得令牌"
+        )
+        try expectEqual(
+            authorization.authorizationHeader(
+                for: URL(string: "https://git.company.example/image.png")!
+            ),
+            nil,
+            "GitHub.com 令牌不得发送到企业主机"
+        )
+    },
+    TestCase("企业图片令牌只授权同主机同端口且拒绝公共 GitHub") {
+        let authorization = READMEImageAuthorization(
+            account: readmeImageAccount(
+                kind: .enterprise,
+                serverURL: URL(
+                    string: "https://git.company.example:8443/api/v3"
+                )!
+            ),
+            accessToken: "enterprise-token"
+        )
+
+        try expectEqual(
+            authorization.authorizationHeader(
+                for: URL(
+                    string: "https://git.company.example:8443/user-images/private.png"
+                )!
+            ),
+            "Bearer enterprise-token",
+            "企业私有图片应使用企业账户令牌"
+        )
+        try expectEqual(
+            authorization.authorizationHeader(
+                for: URL(
+                    string: "https://git.company.example/user-images/private.png"
+                )!
+            ),
+            nil,
+            "省略企业自定义端口时不得获得令牌"
+        )
+        try expectEqual(
+            authorization.authorizationHeader(
+                for: URL(
+                    string: "https://git.company.example:9443/user-images/private.png"
+                )!
+            ),
+            nil,
+            "企业图片端口变化时不得获得令牌"
+        )
+        try expectEqual(
+            authorization.authorizationHeader(
+                for: URL(
+                    string: "https://assets.git.company.example:8443/private.png"
+                )!
+            ),
+            nil,
+            "企业子域不得继承服务器令牌"
+        )
+        try expectEqual(
+            authorization.authorizationHeader(
+                for: URL(
+                    string: "https://raw.githubusercontent.com/GitMate/app/main/image.png"
+                )!
+            ),
+            nil,
+            "企业令牌绝不能发送到公共 GitHub 资源主机"
+        )
+    },
+    TestCase("企业默认 HTTPS 端口按同一端口语义匹配") {
+        let authorization = READMEImageAuthorization(
+            account: readmeImageAccount(
+                kind: .enterprise,
+                serverURL: URL(string: "https://git.company.example:443")!
+            ),
+            accessToken: "enterprise-token"
+        )
+
+        try expectEqual(
+            authorization.authorizationHeader(
+                for: URL(
+                    string: "https://git.company.example/user-images/private.png"
+                )!
+            ),
+            "Bearer enterprise-token",
+            "显式 443 与 HTTPS 默认端口应视为同一来源"
+        )
+    },
+    TestCase("误标为企业账户时也不得向公共 GitHub 发送令牌") {
+        let authorization = READMEImageAuthorization(
+            account: readmeImageAccount(
+                kind: .enterprise,
+                serverURL: URL(string: "https://github.com")!
+            ),
+            accessToken: "enterprise-token"
+        )
+
+        try expectEqual(
+            authorization.authorizationHeader(
+                for: URL(string: "https://github.com/private.png")!
+            ),
+            nil,
+            "账户类型异常时仍必须阻止企业令牌泄露到公共 GitHub"
+        )
+    },
     TestCase("本地仓库缺失时保留远程总览与安全 README") { @MainActor in
         let repository = overviewRepository(
             cloneURL: URL(
@@ -455,6 +657,43 @@ private actor PausableOverviewLoader: RepositoryContentLoading {
     }
 }
 
+private struct IncrementalOverviewLoader: RepositoryContentLoading {
+    let updates: [RepositoryContentUpdate]
+
+    func repositoryContent(
+        repository _: Repository,
+        account _: GitHubAccount,
+        token _: String
+    ) async throws -> RepositoryContent {
+        guard let content = updates.last?.content else {
+            throw CancellationError()
+        }
+        return content
+    }
+
+    func repositoryContentUpdates(
+        repository _: Repository,
+        account _: GitHubAccount,
+        token _: String
+    ) -> AsyncThrowingStream<RepositoryContentUpdate, Error> {
+        AsyncThrowingStream { continuation in
+            for update in updates {
+                continuation.yield(update)
+            }
+            continuation.finish()
+        }
+    }
+}
+
+@MainActor
+private final class AuthorizationObservation {
+    private(set) var count = 0
+
+    func observe() {
+        count += 1
+    }
+}
+
 private func overviewAccount() -> GitHubAccount {
     GitHubAccount(
         id: "overview-account",
@@ -514,7 +753,8 @@ private func overviewContent(
     ),
     summary: RepositoryOnlineSummary? = nil,
     recentCommits: [GitCommit] = [],
-    readme: GitHubREADME? = nil
+    readme: GitHubREADME? = nil,
+    connectivity: WorkspaceConnectivity = .online
 ) -> RepositoryContent {
     RepositoryContent(
         repository: repository,
@@ -529,7 +769,7 @@ private func overviewContent(
         onlineSummary: summary,
         recentCommits: recentCommits,
         readme: readme,
-        connectivity: .online,
+        connectivity: connectivity,
         panelErrors: availability == .available
             ? []
             : [
@@ -539,6 +779,21 @@ private func overviewContent(
                     message: "本地仓库不存在，请重新同步。"
                 )
             ]
+    )
+}
+
+private func readmeImageAccount(
+    kind: GitHubAccountKind,
+    serverURL: URL
+) -> GitHubAccount {
+    GitHubAccount(
+        id: "readme-image-account",
+        login: "lele",
+        name: "Lele",
+        avatarURL: nil,
+        serverURL: serverURL,
+        kind: kind,
+        scopes: ["repo"]
     )
 }
 

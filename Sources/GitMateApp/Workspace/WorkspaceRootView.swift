@@ -765,33 +765,9 @@ private struct RepositoryWallContainer: View {
     }
 }
 
-private struct AuthorizationObservingRepositoryLoader:
-    RepositoryContentLoading,
-    @unchecked Sendable
-{
-    let loader: any RepositoryContentLoading
-    let onAuthorizationRequired: @MainActor @Sendable () -> Void
-
-    func repositoryContent(
-        repository: Repository,
-        account: GitHubAccount,
-        token: String
-    ) async throws -> RepositoryContent {
-        let content = try await loader.repositoryContent(
-            repository: repository,
-            account: account,
-            token: token
-        )
-        if content.connectivity == .authorizationRequired {
-            await onAuthorizationRequired()
-        }
-        return content
-    }
-}
-
 private struct RepositoryOverviewPageContainer: View {
     @State private var viewModel: RepositoryOverviewViewModel
-    let imageAccessToken: String
+    let imageAuthorization: READMEImageAuthorization
     let onRoute: (WorkspaceRoute) -> Void
     let onResync: () -> Void
 
@@ -811,7 +787,10 @@ private struct RepositoryOverviewPageContainer: View {
                 loader: loader
             )
         )
-        imageAccessToken = token
+        imageAuthorization = READMEImageAuthorization(
+            account: account,
+            accessToken: token
+        )
         self.onRoute = onRoute
         self.onResync = onResync
     }
@@ -819,7 +798,7 @@ private struct RepositoryOverviewPageContainer: View {
     var body: some View {
         RepositoryOverviewView(
             viewModel: viewModel,
-            imageAccessToken: imageAccessToken,
+            imageAuthorization: imageAuthorization,
             onRoute: onRoute,
             onResync: onResync
         )
@@ -828,7 +807,7 @@ private struct RepositoryOverviewPageContainer: View {
 
 private struct READMEPageContainer: View {
     @State private var viewModel: READMEViewModel
-    let imageAccessToken: String
+    let imageAuthorization: READMEImageAuthorization
 
     init(
         repository: Repository,
@@ -844,13 +823,16 @@ private struct READMEPageContainer: View {
                 loader: loader
             )
         )
-        imageAccessToken = token
+        imageAuthorization = READMEImageAuthorization(
+            account: account,
+            accessToken: token
+        )
     }
 
     var body: some View {
         READMEView(
             viewModel: viewModel,
-            imageAccessToken: imageAccessToken
+            imageAuthorization: imageAuthorization
         )
     }
 }
