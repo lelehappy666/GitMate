@@ -9,6 +9,12 @@ struct READMEView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            if viewModel.state.loadPhase == .loaded,
+               let message = viewModel.state.nonBlockingErrorMessage
+            {
+                nonBlockingErrorBanner(message)
+                Divider()
+            }
             content
         }
         .background(GitMateTheme.canvas)
@@ -48,6 +54,21 @@ struct READMEView: View {
         .padding(.horizontal, 26)
         .frame(height: 82)
         .background(.white)
+    }
+
+    private func nonBlockingErrorBanner(_ message: String) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(GitMateTheme.warning)
+            Text(message)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(GitMateTheme.textSecondary)
+            Spacer(minLength: 12)
+        }
+        .padding(.horizontal, 26)
+        .frame(minHeight: 42)
+        .background(.white)
+        .accessibilityIdentifier("workspace.repository.readme.background-error")
     }
 
     @ViewBuilder

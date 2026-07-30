@@ -31,6 +31,16 @@ public struct RepositoryContentUpdate: Equatable, Sendable {
     }
 }
 
+enum RepositoryContentMemoryCachePolicy: Equatable, Sendable {
+    case store
+    case preserveExisting
+}
+
+struct RepositoryContentRefreshResult: Sendable {
+    let content: RepositoryContent
+    let cachePolicy: RepositoryContentMemoryCachePolicy
+}
+
 public actor RepositoryContentCoordinator {
     private static let cacheTimeToLive: TimeInterval = 300
     private let now: @Sendable () -> Date
@@ -41,7 +51,7 @@ public actor RepositoryContentCoordinator {
         )
     ] = [:]
     private var inFlight: [
-        RepositoryContentCacheKey: Task<RepositoryContent, Error>
+        RepositoryContentCacheKey: Task<RepositoryContentRefreshResult, Error>
     ] = [:]
     private var inFlightIDs: [RepositoryContentCacheKey: UUID] = [:]
     private var waiters: [
@@ -71,9 +81,10 @@ public actor RepositoryContentCoordinator {
         )
     }
 
-    public func refresh(
+    func refresh(
         for key: RepositoryContentCacheKey,
-        operation: @escaping @Sendable () async throws -> RepositoryContent
+        operation: @escaping @Sendable () async throws
+            -> RepositoryContentRefreshResult
     ) async throws -> RepositoryContent {
         try Task.checkCancellation()
         let waiterID = UUID()
@@ -97,7 +108,8 @@ public actor RepositoryContentCoordinator {
         _ continuation: CheckedContinuation<RepositoryContent, Error>,
         waiterID: UUID,
         key: RepositoryContentCacheKey,
-        operation: @escaping @Sendable () async throws -> RepositoryContent
+        operation: @escaping @Sendable () async throws
+            -> RepositoryContentRefreshResult
     ) {
         guard !Task.isCancelled else {
             continuation.resume(throwing: CancellationError())
@@ -123,7 +135,7 @@ public actor RepositoryContentCoordinator {
     }
 
     private func complete(
-        _ result: Result<RepositoryContent, Error>,
+        _ result: Result<RepositoryContentRefreshResult, Error>,
         for key: RepositoryContentCacheKey,
         refreshID: UUID
     ) {
@@ -138,9 +150,16 @@ public actor RepositoryContentCoordinator {
         } ?? []
 
         switch result {
-        case let .success(content):
-            entries[key] = (content: content, storedAt: now())
-            continuations.forEach { $0.resume(returning: content) }
+        case let .success(refresh):
+            if refresh.cachePolicy == .store {
+                entries[key] = (
+                    content: refresh.content,
+                    storedAt: now()
+                )
+            }
+            continuations.forEach {
+                $0.resume(returning: refresh.content)
+            }
         case let .failure(error):
             continuations.forEach { $0.resume(throwing: error) }
         }

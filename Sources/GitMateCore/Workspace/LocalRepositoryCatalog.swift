@@ -60,18 +60,13 @@ public final class LocalRepositoryCatalog: @unchecked Sendable {
 
     public func record(for repository: Repository) throws -> LocalRepositoryRecord {
         let localURL = localURL(for: repository)
-        let gitURL = localURL.appending(path: ".git", directoryHint: .isDirectory)
-        let availability: LocalRepositoryAvailability
+        let availability = availability(at: localURL)
         let localSizeInBytes: Int64
 
-        if itemExists(at: gitURL) {
-            availability = .available
+        switch availability {
+        case .available, .damaged:
             localSizeInBytes = try recursiveByteCount(at: localURL)
-        } else if itemExists(at: localURL) {
-            availability = .damaged
-            localSizeInBytes = try recursiveByteCount(at: localURL)
-        } else {
-            availability = .missing
+        case .missing:
             localSizeInBytes = 0
         }
 
@@ -82,6 +77,22 @@ public final class LocalRepositoryCatalog: @unchecked Sendable {
             localSizeInBytes: localSizeInBytes,
             lastInspectedAt: Date()
         )
+    }
+
+    public func availability(
+        at localURL: URL
+    ) -> LocalRepositoryAvailability {
+        let gitURL = localURL.appending(
+            path: ".git",
+            directoryHint: .isDirectory
+        )
+        if itemExists(at: gitURL) {
+            return .available
+        }
+        if itemExists(at: localURL) {
+            return .damaged
+        }
+        return .missing
     }
 
     public func localURL(for repository: Repository) -> URL {

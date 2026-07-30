@@ -4,15 +4,18 @@ private struct RepositoryContentModuleResult<Value: Sendable>: Sendable {
     let value: Value
     let connectivity: WorkspaceConnectivity
     let panelErrors: [WorkspacePanelError]
+    let allowsMemoryCaching: Bool
 
     init(
         value: Value,
         connectivity: WorkspaceConnectivity = .online,
-        panelErrors: [WorkspacePanelError] = []
+        panelErrors: [WorkspacePanelError] = [],
+        allowsMemoryCaching: Bool = true
     ) {
         self.value = value
         self.connectivity = connectivity
         self.panelErrors = panelErrors
+        self.allowsMemoryCaching = allowsMemoryCaching
     }
 }
 
@@ -129,7 +132,7 @@ public final class WorkspaceContentService: @unchecked Sendable {
         token: String,
         includeREADME: Bool,
         fallback: RepositoryContent? = nil
-    ) async throws -> RepositoryContent {
+    ) async throws -> RepositoryContentRefreshResult {
         let accountID = String(account.id)
         let currentDate = now()
         var panelErrors: [WorkspacePanelError] = []
@@ -161,11 +164,16 @@ public final class WorkspaceContentService: @unchecked Sendable {
         let localRecord: LocalRepositoryRecord
         var catalogReadFailed = false
         if let cachedRecord {
+            let availability = catalog.availability(
+                at: cachedRecord.localURL
+            )
             localRecord = LocalRepositoryRecord(
                 repository: repository,
                 localURL: cachedRecord.localURL,
-                availability: cachedRecord.availability,
-                localSizeInBytes: cachedRecord.localSizeInBytes,
+                availability: availability,
+                localSizeInBytes: availability == .missing
+                    ? 0
+                    : cachedRecord.localSizeInBytes,
                 lastInspectedAt: cachedRecord.lastInspectedAt
             )
         } else {
@@ -261,7 +269,7 @@ public final class WorkspaceContentService: @unchecked Sendable {
             resolvedREADME.connectivity
         )
 
-        return RepositoryContent(
+        let content = RepositoryContent(
             repository: repository,
             localRecord: localRecord,
             localStatus: resolvedLocalStatus.value,
@@ -270,6 +278,15 @@ public final class WorkspaceContentService: @unchecked Sendable {
             readme: resolvedREADME.value,
             connectivity: connectivity,
             panelErrors: panelErrors
+        )
+        let allowsMemoryCaching = !catalogReadFailed
+            && resolvedLocalStatus.allowsMemoryCaching
+            && resolvedRecentCommits.allowsMemoryCaching
+            && resolvedOnlineSummary.allowsMemoryCaching
+            && resolvedREADME.allowsMemoryCaching
+        return RepositoryContentRefreshResult(
+            content: content,
+            cachePolicy: allowsMemoryCaching ? .store : .preserveExisting
         )
     }
 
@@ -297,7 +314,8 @@ public final class WorkspaceContentService: @unchecked Sendable {
                         repositoryID: localRecord.repository.id,
                         message: "无法读取本地仓库状态。"
                     )
-                ]
+                ],
+                allowsMemoryCaching: false
             )
         }
     }
@@ -329,7 +347,8 @@ public final class WorkspaceContentService: @unchecked Sendable {
                         repositoryID: localRecord.repository.id,
                         message: "无法读取本地最近提交。"
                     )
-                ]
+                ],
+                allowsMemoryCaching: false
             )
         }
     }
@@ -389,7 +408,8 @@ public final class WorkspaceContentService: @unchecked Sendable {
                             panel: .onlineSummary
                         )
                     )
-                ]
+                ],
+                allowsMemoryCaching: false
             )
         }
     }
@@ -425,7 +445,8 @@ public final class WorkspaceContentService: @unchecked Sendable {
                         repositoryID: repository.id,
                         message: stableMessage(for: error, panel: .readme)
                     )
-                ]
+                ],
+                allowsMemoryCaching: false
             )
         }
     }
@@ -475,13 +496,13 @@ public final class WorkspaceContentService: @unchecked Sendable {
                         for index in 0..<initialTaskCount {
                             let repository = repositories[index]
                             group.addTask {
-                                let content = try await self.repositoryContent(
+                                let refresh = try await self.repositoryContent(
                                     repository: repository,
                                     account: account,
                                     token: token,
                                     includeREADME: false
                                 )
-                                return (index, content)
+                                return (index, refresh.content)
                             }
                         }
 
@@ -500,13 +521,13 @@ public final class WorkspaceContentService: @unchecked Sendable {
                                 let repository = repositories[index]
                                 nextIndex += 1
                                 group.addTask {
-                                    let content = try await self.repositoryContent(
+                                    let refresh = try await self.repositoryContent(
                                         repository: repository,
                                         account: account,
                                         token: token,
                                         includeREADME: false
                                     )
-                                    return (index, content)
+                                    return (index, refresh.content)
                                 }
                             }
                         }

@@ -234,6 +234,18 @@ let repositoryOverviewViewModelTests = [
             },
             "刷新失败应追加不泄露底层错误的非阻塞提示"
         )
+
+        let retry = Task { @MainActor in
+            await viewModel.load()
+        }
+        await loader.waitUntilConnectionCount(2)
+        try expectEqual(
+            viewModel.state.loadPhase,
+            .loaded,
+            "已有缓存内容时重试不得闪回全屏加载"
+        )
+        loader.finish(throwing: OverviewLoaderError.failed)
+        await retry.value
     },
     TestCase("仓库总览加载取消不污染状态且允许重新加载") { @MainActor in
         let repository = overviewRepository()
@@ -336,6 +348,7 @@ private final class ControlledOverviewUpdatesLoader:
     private let lock = NSLock()
     private var continuation:
         AsyncThrowingStream<RepositoryContentUpdate, Error>.Continuation?
+    private var connectionCount = 0
 
     func repositoryContent(
         repository _: Repository,
@@ -353,6 +366,7 @@ private final class ControlledOverviewUpdatesLoader:
         AsyncThrowingStream { continuation in
             lock.withLock {
                 self.continuation = continuation
+                self.connectionCount += 1
             }
             continuation.onTermination = { [weak self] _ in
                 self?.lock.withLock {
@@ -364,6 +378,12 @@ private final class ControlledOverviewUpdatesLoader:
 
     func waitUntilConnected() async {
         while lock.withLock({ continuation == nil }) {
+            await Task.yield()
+        }
+    }
+
+    func waitUntilConnectionCount(_ expectedCount: Int) async {
+        while lock.withLock({ connectionCount < expectedCount }) {
             await Task.yield()
         }
     }

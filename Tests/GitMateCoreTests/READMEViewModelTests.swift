@@ -294,6 +294,19 @@ let readmeViewModelTests = [
             "后台刷新失败，已保留缓存内容。",
             "后台错误应以非阻塞方式展示"
         )
+
+        let retry = Task { @MainActor in
+            await viewModel.load()
+        }
+        await loader.waitUntilConnectionCount(2)
+        try expectEqual(
+            viewModel.state.loadPhase,
+            .loaded,
+            "已有文档时重试不得闪回全屏加载"
+        )
+        try expectEqual(viewModel.state.outline.map(\.title), ["缓存文档"], "重试期间应保留文档")
+        loader.finish(throwing: READMEFixtureError.failed)
+        await retry.value
     },
     TestCase("README 仓库加载取消不污染状态且随后可以重新加载") { @MainActor in
         let repository = readmeRepository()
@@ -400,6 +413,7 @@ private final class ControlledREADMEUpdatesLoader:
     private let lock = NSLock()
     private var continuation:
         AsyncThrowingStream<RepositoryContentUpdate, Error>.Continuation?
+    private var connectionCount = 0
 
     func repositoryContent(
         repository _: Repository,
@@ -417,6 +431,7 @@ private final class ControlledREADMEUpdatesLoader:
         AsyncThrowingStream { continuation in
             lock.withLock {
                 self.continuation = continuation
+                self.connectionCount += 1
             }
             continuation.onTermination = { [weak self] _ in
                 self?.lock.withLock {
@@ -428,6 +443,12 @@ private final class ControlledREADMEUpdatesLoader:
 
     func waitUntilConnected() async {
         while lock.withLock({ continuation == nil }) {
+            await Task.yield()
+        }
+    }
+
+    func waitUntilConnectionCount(_ expectedCount: Int) async {
+        while lock.withLock({ connectionCount < expectedCount }) {
             await Task.yield()
         }
     }

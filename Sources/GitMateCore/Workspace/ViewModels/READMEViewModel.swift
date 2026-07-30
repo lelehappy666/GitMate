@@ -124,10 +124,14 @@ public final class READMEViewModel {
         }
 
         let stateBeforeLoad = state
+        let hasVisibleDocument = state.loadPhase == .loaded
+            && state.document != nil
         isLoading = true
-        state.loadPhase = .loading
+        if !hasVisibleDocument {
+            state.loadPhase = .loading
+        }
         defer { isLoading = false }
-        var hasAppliedContent = false
+        var hasAppliedContent = hasVisibleDocument
 
         do {
             try Task.checkCancellation()

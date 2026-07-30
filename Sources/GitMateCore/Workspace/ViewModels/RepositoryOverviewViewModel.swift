@@ -182,10 +182,13 @@ public final class RepositoryOverviewViewModel {
         }
 
         let stateBeforeLoad = state
+        let hasVisibleContent = state.loadPhase == .loaded
         isLoading = true
-        state.loadPhase = .loading
+        if !hasVisibleContent {
+            state.loadPhase = .loading
+        }
         defer { isLoading = false }
-        var hasAppliedContent = false
+        var hasAppliedContent = hasVisibleContent
 
         do {
             try Task.checkCancellation()

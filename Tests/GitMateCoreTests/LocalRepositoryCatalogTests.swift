@@ -79,6 +79,35 @@ let localRepositoryCatalogTests = [
         try expectEqual(record.availability, .missing, "目录不存在应标记缺失")
         try expectEqual(record.localSizeInBytes, 0, "缺失目录大小应为零")
     },
+    TestCase("轻量可用性检查区分可用损坏与缺失") {
+        let catalog = LocalRepositoryCatalog(
+            rootDirectory: URL(fileURLWithPath: "/sync"),
+            fileSystem: FakeRepositoryFileSystem(
+                directories: [
+                    "/sync/available",
+                    "/sync/available/.git",
+                    "/sync/damaged"
+                ],
+                byteCounts: [:]
+            )
+        )
+
+        try expectEqual(
+            catalog.availability(at: URL(fileURLWithPath: "/sync/available")),
+            .available,
+            "存在 Git 元数据时应轻量判定可用"
+        )
+        try expectEqual(
+            catalog.availability(at: URL(fileURLWithPath: "/sync/damaged")),
+            .damaged,
+            "仅存在目录时应轻量判定损坏"
+        )
+        try expectEqual(
+            catalog.availability(at: URL(fileURLWithPath: "/sync/missing")),
+            .missing,
+            "目录不存在时应轻量判定缺失"
+        )
+    },
     TestCase("目录名沿用首次同步的安全规则") {
         let unsafeRepository = Repository(
             id: 43,
