@@ -7,6 +7,46 @@ public protocol RepositoryContentLoading: Sendable {
         account: GitHubAccount,
         token: String
     ) async throws -> RepositoryContent
+
+    func repositoryContentUpdates(
+        repository: Repository,
+        account: GitHubAccount,
+        token: String
+    ) -> AsyncThrowingStream<RepositoryContentUpdate, Error>
+}
+
+public extension RepositoryContentLoading {
+    func repositoryContentUpdates(
+        repository: Repository,
+        account: GitHubAccount,
+        token: String
+    ) -> AsyncThrowingStream<RepositoryContentUpdate, Error> {
+        AsyncThrowingStream { continuation in
+            let producer = Task {
+                do {
+                    let content = try await repositoryContent(
+                        repository: repository,
+                        account: account,
+                        token: token
+                    )
+                    try Task.checkCancellation()
+                    continuation.yield(
+                        RepositoryContentUpdate(
+                            content: content,
+                            freshness: .refreshed,
+                            isFinal: true
+                        )
+                    )
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in
+                producer.cancel()
+            }
+        }
+    }
 }
 
 extension WorkspaceContentService: RepositoryContentLoading {}
@@ -145,25 +185,43 @@ public final class RepositoryOverviewViewModel {
         isLoading = true
         state.loadPhase = .loading
         defer { isLoading = false }
+        var hasAppliedContent = false
 
         do {
             try Task.checkCancellation()
-            let content = try await loader.repositoryContent(
+            for try await update in loader.repositoryContentUpdates(
                 repository: repository,
                 account: account,
                 token: token
-            )
-            try Task.checkCancellation()
-            state = try makeState(from: content)
-            hasLoadedSuccessfully = true
+            ) {
+                try Task.checkCancellation()
+                state = try makeState(from: update.content)
+                hasAppliedContent = true
+                if update.isFinal {
+                    hasLoadedSuccessfully = true
+                }
+            }
         } catch is CancellationError {
-            state = stateBeforeLoad
+            if !hasAppliedContent {
+                state = stateBeforeLoad
+            }
         } catch {
-            var failedState = stateBeforeLoad
-            failedState.loadPhase = .failed(
-                message: "暂时无法加载仓库总览，请稍后重试。"
-            )
-            state = failedState
+            if hasAppliedContent {
+                let backgroundError = WorkspacePanelError(
+                    panel: .onlineSummary,
+                    repositoryID: repository.id,
+                    message: "后台刷新失败，已保留缓存内容。"
+                )
+                if !state.panelErrors.contains(backgroundError) {
+                    state.panelErrors.append(backgroundError)
+                }
+            } else {
+                var failedState = stateBeforeLoad
+                failedState.loadPhase = .failed(
+                    message: "暂时无法加载仓库总览，请稍后重试。"
+                )
+                state = failedState
+            }
         }
     }
 

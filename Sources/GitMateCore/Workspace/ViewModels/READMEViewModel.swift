@@ -37,12 +37,14 @@ public struct READMEViewState: Equatable, Sendable {
     public var document: READMEDocument?
     public var outline: READMEOutline
     public var repositoryID: Int64?
+    public var nonBlockingErrorMessage: String?
 
     public init(repositoryID: Int64? = nil) {
         loadPhase = .idle
         document = nil
         outline = []
         self.repositoryID = repositoryID
+        nonBlockingErrorMessage = nil
     }
 
     public var retryAction: WorkspaceRetryAction? {
@@ -125,39 +127,69 @@ public final class READMEViewModel {
         isLoading = true
         state.loadPhase = .loading
         defer { isLoading = false }
+        var hasAppliedContent = false
 
         do {
             try Task.checkCancellation()
-            let content = try await source.loader.repositoryContent(
+            for try await update in source.loader.repositoryContentUpdates(
                 repository: source.repository,
                 account: source.account,
                 token: source.token
-            )
-            try Task.checkCancellation()
-
-            guard let readme = content.readme else {
-                state = READMEViewState(repositoryID: source.repository.id)
-                state.loadPhase = .empty
-                hasLoadedSuccessfully = true
-                return
+            ) {
+                try Task.checkCancellation()
+                let readmeRefreshFailed = update.content.panelErrors.contains {
+                    $0.panel == .readme
+                }
+                if let readme = update.content.readme {
+                    let document = try parser.parse(
+                        readme.markdown,
+                        baseURL: RepositoryPresentationSanitizer.remoteURL(
+                            readme.downloadURL
+                        )
+                    )
+                    try Task.checkCancellation()
+                    apply(document: document)
+                    hasAppliedContent = true
+                    if readmeRefreshFailed {
+                        state.nonBlockingErrorMessage =
+                            "后台刷新失败，已保留缓存内容。"
+                    }
+                } else if readmeRefreshFailed {
+                    if state.document != nil {
+                        state.nonBlockingErrorMessage =
+                            "后台刷新失败，已保留缓存内容。"
+                        hasAppliedContent = true
+                    } else {
+                        state = failedState(
+                            repositoryID: source.repository.id,
+                            message: "暂时无法加载 README，请稍后重试。"
+                        )
+                    }
+                } else if update.isFinal {
+                    state = READMEViewState(
+                        repositoryID: source.repository.id
+                    )
+                    state.loadPhase = .empty
+                    hasAppliedContent = true
+                }
+                if update.isFinal && !readmeRefreshFailed {
+                    hasLoadedSuccessfully = true
+                }
             }
-
-            let document = try parser.parse(
-                readme.markdown,
-                baseURL: RepositoryPresentationSanitizer.remoteURL(
-                    readme.downloadURL
-                )
-            )
-            try Task.checkCancellation()
-            apply(document: document)
-            hasLoadedSuccessfully = true
         } catch is CancellationError {
-            state = stateBeforeLoad
+            if !hasAppliedContent {
+                state = stateBeforeLoad
+            }
         } catch {
-            state = failedState(
-                repositoryID: source.repository.id,
-                message: "暂时无法加载 README，请稍后重试。"
-            )
+            if hasAppliedContent {
+                state.nonBlockingErrorMessage =
+                    "后台刷新失败，已保留缓存内容。"
+            } else {
+                state = failedState(
+                    repositoryID: source.repository.id,
+                    message: "暂时无法加载 README，请稍后重试。"
+                )
+            }
         }
     }
 

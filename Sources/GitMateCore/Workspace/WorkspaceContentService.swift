@@ -1,5 +1,21 @@
 import Foundation
 
+private struct RepositoryContentModuleResult<Value: Sendable>: Sendable {
+    let value: Value
+    let connectivity: WorkspaceConnectivity
+    let panelErrors: [WorkspacePanelError]
+
+    init(
+        value: Value,
+        connectivity: WorkspaceConnectivity = .online,
+        panelErrors: [WorkspacePanelError] = []
+    ) {
+        self.value = value
+        self.connectivity = connectivity
+        self.panelErrors = panelErrors
+    }
+}
+
 public final class WorkspaceContentService: @unchecked Sendable {
     private static let cacheTimeToLive: TimeInterval = 900
     private static let recentCommitLimit = 8
@@ -11,6 +27,7 @@ public final class WorkspaceContentService: @unchecked Sendable {
     private let now: @Sendable () -> Date
     private let maximumConcurrentRepositoryRefreshes: Int
     private let rateLimitGate: WorkspaceRateLimitGate
+    private let repositoryContentCoordinator: RepositoryContentCoordinator
 
     public init(
         catalog: LocalRepositoryCatalog,
@@ -31,6 +48,7 @@ public final class WorkspaceContentService: @unchecked Sendable {
             8
         )
         self.rateLimitGate = rateLimitGate
+        repositoryContentCoordinator = RepositoryContentCoordinator(now: now)
     }
 
     public func repositoryContent(
@@ -38,49 +56,83 @@ public final class WorkspaceContentService: @unchecked Sendable {
         account: GitHubAccount,
         token: String
     ) async throws -> RepositoryContent {
-        try await repositoryContent(
+        var latest: RepositoryContent?
+        for try await update in repositoryContentUpdates(
             repository: repository,
             account: account,
-            token: token,
-            includeREADME: true
-        )
+            token: token
+        ) {
+            latest = update.content
+        }
+        guard let latest else {
+            throw CancellationError()
+        }
+        return latest
+    }
+
+    public func repositoryContentUpdates(
+        repository: Repository,
+        account: GitHubAccount,
+        token: String
+    ) -> AsyncThrowingStream<RepositoryContentUpdate, Error> {
+        AsyncThrowingStream { continuation in
+            let producer = Task {
+                do {
+                    let key = RepositoryContentCacheKey(
+                        accountID: String(account.id),
+                        repositoryID: repository.id
+                    )
+                    let cached = await repositoryContentCoordinator
+                        .cachedUpdate(for: key)
+                    if let cached {
+                        try Task.checkCancellation()
+                        continuation.yield(cached)
+                        if cached.isFinal {
+                            continuation.finish()
+                            return
+                        }
+                    }
+
+                    let fallback = cached?.content
+                    let refreshed = try await repositoryContentCoordinator
+                        .refresh(for: key) {
+                            try await self.repositoryContent(
+                                repository: repository,
+                                account: account,
+                                token: token,
+                                includeREADME: true,
+                                fallback: fallback
+                            )
+                        }
+                    try Task.checkCancellation()
+                    continuation.yield(
+                        RepositoryContentUpdate(
+                            content: refreshed,
+                            freshness: .refreshed,
+                            isFinal: true
+                        )
+                    )
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in
+                producer.cancel()
+            }
+        }
     }
 
     private func repositoryContent(
         repository: Repository,
         account: GitHubAccount,
         token: String,
-        includeREADME: Bool
+        includeREADME: Bool,
+        fallback: RepositoryContent? = nil
     ) async throws -> RepositoryContent {
         let accountID = String(account.id)
         let currentDate = now()
         var panelErrors: [WorkspacePanelError] = []
-        let localRecord: LocalRepositoryRecord
-        var catalogReadFailed = false
-        do {
-            localRecord = try catalog.record(for: repository)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            catalogReadFailed = true
-            localRecord = LocalRepositoryRecord(
-                repository: repository,
-                localURL: catalog.localURL(for: repository),
-                availability: .damaged,
-                localSizeInBytes: 0,
-                lastInspectedAt: currentDate
-            )
-            panelErrors.append(
-                panelError(
-                    panel: .localRepository,
-                    repositoryID: repository.id,
-                    message: "无法读取本地仓库。"
-                )
-            )
-        }
-        var connectivity = WorkspaceConnectivity.online
-        var localStatus: LocalRepositoryStatus?
-        var recentCommits: [GitCommit] = []
 
         let loadedSnapshot: WorkspaceCacheSnapshot?
         do {
@@ -103,44 +155,46 @@ public final class WorkspaceContentService: @unchecked Sendable {
             now: currentDate
         )
 
+        let cachedRecord = validSnapshot?.repositoryRecords.first {
+            $0.repository.id == repository.id
+        }
+        let localRecord: LocalRepositoryRecord
+        var catalogReadFailed = false
+        if let cachedRecord {
+            localRecord = LocalRepositoryRecord(
+                repository: repository,
+                localURL: cachedRecord.localURL,
+                availability: cachedRecord.availability,
+                localSizeInBytes: cachedRecord.localSizeInBytes,
+                lastInspectedAt: cachedRecord.lastInspectedAt
+            )
+        } else {
+            do {
+                localRecord = try catalog.record(for: repository)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                catalogReadFailed = true
+                localRecord = fallback?.localRecord ?? LocalRepositoryRecord(
+                    repository: repository,
+                    localURL: catalog.localURL(for: repository),
+                    availability: .damaged,
+                    localSizeInBytes: 0,
+                    lastInspectedAt: currentDate
+                )
+                panelErrors.append(
+                    panelError(
+                        panel: .localRepository,
+                        repositoryID: repository.id,
+                        message: "无法读取本地仓库。"
+                    )
+                )
+            }
+        }
+
         switch localRecord.availability {
         case .available:
-            do {
-                localStatus = try await localGit.status(
-                    repositoryURL: localRecord.localURL
-                )
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                panelErrors.append(
-                    panelError(
-                        panel: .localStatus,
-                        repositoryID: repository.id,
-                        message: "无法读取本地仓库状态。"
-                    )
-                )
-            }
-
-            do {
-                let page = try await localGit.commits(
-                    repositoryURL: localRecord.localURL,
-                    cursor: nil,
-                    limit: Self.recentCommitLimit
-                )
-                recentCommits = Array(
-                    page.commits.prefix(Self.recentCommitLimit)
-                )
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                panelErrors.append(
-                    panelError(
-                        panel: .recentCommits,
-                        repositoryID: repository.id,
-                        message: "无法读取本地最近提交。"
-                    )
-                )
-            }
+            break
         case .missing:
             panelErrors.append(
                 panelError(
@@ -161,84 +215,219 @@ public final class WorkspaceContentService: @unchecked Sendable {
             }
         }
 
-        var onlineSummary = validSnapshot?.onlineSummaries[repository.id]
+        async let localStatusResult = loadLocalStatus(
+            localRecord: localRecord,
+            fallback: fallback?.localStatus
+        )
+        async let recentCommitsResult = loadRecentCommits(
+            localRecord: localRecord,
+            fallback: fallback?.recentCommits ?? []
+        )
+        async let onlineSummaryResult = loadOnlineSummary(
+            repository: repository,
+            token: token,
+            accountID: accountID,
+            localRecord: localRecord,
+            currentDate: currentDate,
+            cachedSummary: validSnapshot?.onlineSummaries[repository.id],
+            fallback: fallback?.onlineSummary
+        )
+        async let readmeResult = loadREADME(
+            repository: repository,
+            token: token,
+            currentDate: currentDate,
+            includeREADME: includeREADME,
+            fallback: fallback?.readme
+        )
+
+        let (
+            resolvedLocalStatus,
+            resolvedRecentCommits,
+            resolvedOnlineSummary,
+            resolvedREADME
+        ) = try await (
+            localStatusResult,
+            recentCommitsResult,
+            onlineSummaryResult,
+            readmeResult
+        )
+
+        panelErrors.append(contentsOf: resolvedLocalStatus.panelErrors)
+        panelErrors.append(contentsOf: resolvedRecentCommits.panelErrors)
+        panelErrors.append(contentsOf: resolvedOnlineSummary.panelErrors)
+        panelErrors.append(contentsOf: resolvedREADME.panelErrors)
+        let connectivity = mergedConnectivity(
+            resolvedOnlineSummary.connectivity,
+            resolvedREADME.connectivity
+        )
+
+        return RepositoryContent(
+            repository: repository,
+            localRecord: localRecord,
+            localStatus: resolvedLocalStatus.value,
+            onlineSummary: resolvedOnlineSummary.value,
+            recentCommits: resolvedRecentCommits.value,
+            readme: resolvedREADME.value,
+            connectivity: connectivity,
+            panelErrors: panelErrors
+        )
+    }
+
+    private func loadLocalStatus(
+        localRecord: LocalRepositoryRecord,
+        fallback: LocalRepositoryStatus?
+    ) async throws -> RepositoryContentModuleResult<LocalRepositoryStatus?> {
+        guard localRecord.availability == .available else {
+            return RepositoryContentModuleResult(value: nil)
+        }
+        do {
+            return RepositoryContentModuleResult(
+                value: try await localGit.status(
+                    repositoryURL: localRecord.localURL
+                )
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return RepositoryContentModuleResult(
+                value: fallback,
+                panelErrors: [
+                    panelError(
+                        panel: .localStatus,
+                        repositoryID: localRecord.repository.id,
+                        message: "无法读取本地仓库状态。"
+                    )
+                ]
+            )
+        }
+    }
+
+    private func loadRecentCommits(
+        localRecord: LocalRepositoryRecord,
+        fallback: [GitCommit]
+    ) async throws -> RepositoryContentModuleResult<[GitCommit]> {
+        guard localRecord.availability == .available else {
+            return RepositoryContentModuleResult(value: [])
+        }
+        do {
+            let page = try await localGit.commits(
+                repositoryURL: localRecord.localURL,
+                cursor: nil,
+                limit: Self.recentCommitLimit
+            )
+            return RepositoryContentModuleResult(
+                value: Array(page.commits.prefix(Self.recentCommitLimit))
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return RepositoryContentModuleResult(
+                value: fallback,
+                panelErrors: [
+                    panelError(
+                        panel: .recentCommits,
+                        repositoryID: localRecord.repository.id,
+                        message: "无法读取本地最近提交。"
+                    )
+                ]
+            )
+        }
+    }
+
+    private func loadOnlineSummary(
+        repository: Repository,
+        token: String,
+        accountID: String,
+        localRecord: LocalRepositoryRecord,
+        currentDate: Date,
+        cachedSummary: RepositoryOnlineSummary?,
+        fallback: RepositoryOnlineSummary?
+    ) async throws -> RepositoryContentModuleResult<RepositoryOnlineSummary?> {
+        if let cachedSummary {
+            return RepositoryContentModuleResult(value: cachedSummary)
+        }
         do {
             try rateLimitGate.check(now: currentDate)
-            let freshSummary = try await github.repositorySummary(
+            let summary = try await github.repositorySummary(
                 repository: repository,
                 token: token
             )
-            onlineSummary = freshSummary
             do {
                 try saveOnlineSummary(
-                    freshSummary,
+                    summary,
                     localRecord: localRecord,
                     accountID: accountID
                 )
+                return RepositoryContentModuleResult(value: summary)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                panelErrors.append(
-                    panelError(
-                        panel: .onlineSummary,
-                        repositoryID: repository.id,
-                        message: "无法保存工作区缓存。"
-                    )
+                return RepositoryContentModuleResult(
+                    value: summary,
+                    panelErrors: [
+                        panelError(
+                            panel: .onlineSummary,
+                            repositoryID: repository.id,
+                            message: "无法保存工作区缓存。"
+                        )
+                    ]
                 )
             }
         } catch is CancellationError {
             throw CancellationError()
         } catch {
             recordRateLimit(error)
-            connectivity = mergedConnectivity(
-                connectivity,
-                connectivityState(for: error)
-            )
-            panelErrors.append(
-                panelError(
-                    panel: .onlineSummary,
-                    repositoryID: repository.id,
-                    message: stableMessage(for: error, panel: .onlineSummary)
-                )
+            return RepositoryContentModuleResult(
+                value: fallback,
+                connectivity: connectivityState(for: error),
+                panelErrors: [
+                    panelError(
+                        panel: .onlineSummary,
+                        repositoryID: repository.id,
+                        message: stableMessage(
+                            for: error,
+                            panel: .onlineSummary
+                        )
+                    )
+                ]
             )
         }
+    }
 
-        var readme: GitHubREADME?
-        if includeREADME {
-            do {
-                try rateLimitGate.check(now: currentDate)
-                readme = try await github.readme(
+    private func loadREADME(
+        repository: Repository,
+        token: String,
+        currentDate: Date,
+        includeREADME: Bool,
+        fallback: GitHubREADME?
+    ) async throws -> RepositoryContentModuleResult<GitHubREADME?> {
+        guard includeREADME else {
+            return RepositoryContentModuleResult(value: nil)
+        }
+        do {
+            try rateLimitGate.check(now: currentDate)
+            return RepositoryContentModuleResult(
+                value: try await github.readme(
                     repository: repository,
                     token: token
                 )
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                recordRateLimit(error)
-                connectivity = mergedConnectivity(
-                    connectivity,
-                    connectivityState(for: error)
-                )
-                panelErrors.append(
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            recordRateLimit(error)
+            return RepositoryContentModuleResult(
+                value: fallback,
+                connectivity: connectivityState(for: error),
+                panelErrors: [
                     panelError(
                         panel: .readme,
                         repositoryID: repository.id,
                         message: stableMessage(for: error, panel: .readme)
                     )
-                )
-            }
+                ]
+            )
         }
-
-        return RepositoryContent(
-            repository: repository,
-            localRecord: localRecord,
-            localStatus: localStatus,
-            onlineSummary: onlineSummary,
-            recentCommits: recentCommits,
-            readme: readme,
-            connectivity: connectivity,
-            panelErrors: panelErrors
-        )
     }
 
     public func dashboard(

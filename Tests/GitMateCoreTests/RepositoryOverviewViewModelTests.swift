@@ -128,6 +128,113 @@ let repositoryOverviewViewModelTests = [
             "快捷入口只能连接页面十三至十五"
         )
     },
+    TestCase("仓库总览先展示缓存并由刷新结果原位替换") { @MainActor in
+        let repository = overviewRepository()
+        let cachedSummary = RepositoryOnlineSummary(
+            repositoryID: repository.id,
+            primaryLanguage: "Swift",
+            openIssueCount: 1,
+            openPullRequestCount: 0,
+            failedWorkflowCount: 0,
+            remoteUpdatedAt: nil
+        )
+        let refreshedSummary = RepositoryOnlineSummary(
+            repositoryID: repository.id,
+            primaryLanguage: "Swift",
+            openIssueCount: 9,
+            openPullRequestCount: 2,
+            failedWorkflowCount: 1,
+            remoteUpdatedAt: Date(timeIntervalSince1970: 4_000)
+        )
+        let loader = ControlledOverviewUpdatesLoader()
+        let viewModel = RepositoryOverviewViewModel(
+            repository: repository,
+            account: overviewAccount(),
+            token: "secret",
+            loader: loader
+        )
+
+        let load = Task { @MainActor in
+            await viewModel.load()
+        }
+        await loader.waitUntilConnected()
+        loader.yield(
+            RepositoryContentUpdate(
+                content: overviewContent(
+                    repository: repository,
+                    summary: cachedSummary
+                ),
+                freshness: .cached,
+                isFinal: false
+            )
+        )
+        while viewModel.state.loadPhase != .loaded {
+            await Task.yield()
+        }
+
+        try expectEqual(viewModel.state.onlineSummary, cachedSummary, "缓存首帧应立即进入已加载状态")
+
+        loader.yield(
+            RepositoryContentUpdate(
+                content: overviewContent(
+                    repository: repository,
+                    summary: refreshedSummary
+                ),
+                freshness: .refreshed,
+                isFinal: true
+            )
+        )
+        loader.finish()
+        await load.value
+
+        try expectEqual(
+            viewModel.state.onlineSummary,
+            refreshedSummary,
+            "刷新结果必须原位替换缓存内容"
+        )
+        try expectEqual(viewModel.state.loadPhase, .loaded, "后台刷新不得切回全屏加载")
+    },
+    TestCase("仓库总览后台刷新失败保留缓存并追加非阻塞错误") { @MainActor in
+        let repository = overviewRepository()
+        let cachedSummary = overviewSummary(repositoryID: repository.id)
+        let loader = ControlledOverviewUpdatesLoader()
+        let viewModel = RepositoryOverviewViewModel(
+            repository: repository,
+            account: overviewAccount(),
+            token: "secret",
+            loader: loader
+        )
+
+        let load = Task { @MainActor in
+            await viewModel.load()
+        }
+        await loader.waitUntilConnected()
+        loader.yield(
+            RepositoryContentUpdate(
+                content: overviewContent(
+                    repository: repository,
+                    summary: cachedSummary
+                ),
+                freshness: .cached,
+                isFinal: false
+            )
+        )
+        while viewModel.state.loadPhase != .loaded {
+            await Task.yield()
+        }
+        loader.finish(throwing: OverviewLoaderError.failed)
+        await load.value
+
+        try expectEqual(viewModel.state.loadPhase, .loaded, "刷新失败不得覆盖缓存加载状态")
+        try expectEqual(viewModel.state.onlineSummary, cachedSummary, "刷新失败必须保留旧摘要")
+        try expect(
+            viewModel.state.panelErrors.contains {
+                $0.panel == .onlineSummary
+                    && $0.message == "后台刷新失败，已保留缓存内容。"
+            },
+            "刷新失败应追加不泄露底层错误的非阻塞提示"
+        )
+    },
     TestCase("仓库总览加载取消不污染状态且允许重新加载") { @MainActor in
         let repository = overviewRepository()
         let loader = PausableOverviewLoader()
@@ -220,6 +327,54 @@ let repositoryOverviewViewModelTests = [
 
 private enum OverviewLoaderError: Error, Sendable {
     case failed
+}
+
+private final class ControlledOverviewUpdatesLoader:
+    RepositoryContentLoading,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var continuation:
+        AsyncThrowingStream<RepositoryContentUpdate, Error>.Continuation?
+
+    func repositoryContent(
+        repository _: Repository,
+        account _: GitHubAccount,
+        token _: String
+    ) async throws -> RepositoryContent {
+        throw OverviewLoaderError.failed
+    }
+
+    func repositoryContentUpdates(
+        repository _: Repository,
+        account _: GitHubAccount,
+        token _: String
+    ) -> AsyncThrowingStream<RepositoryContentUpdate, Error> {
+        AsyncThrowingStream { continuation in
+            lock.withLock {
+                self.continuation = continuation
+            }
+            continuation.onTermination = { [weak self] _ in
+                self?.lock.withLock {
+                    self?.continuation = nil
+                }
+            }
+        }
+    }
+
+    func waitUntilConnected() async {
+        while lock.withLock({ continuation == nil }) {
+            await Task.yield()
+        }
+    }
+
+    func yield(_ update: RepositoryContentUpdate) {
+        lock.withLock { continuation }?.yield(update)
+    }
+
+    func finish(throwing error: Error? = nil) {
+        lock.withLock { continuation }?.finish(throwing: error)
+    }
 }
 
 private actor OverviewLoaderStub: RepositoryContentLoading {

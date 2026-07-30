@@ -225,6 +225,62 @@ private final class FixtureGitHubWorkspaceAPI: GitHubWorkspaceAPI, @unchecked Se
     }
 }
 
+private final class AdjustableContentClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Date
+
+    init(_ value: Date) {
+        self.value = value
+    }
+
+    var now: Date {
+        lock.withLock { value }
+    }
+
+    func advance(by interval: TimeInterval) {
+        lock.withLock {
+            value = value.addingTimeInterval(interval)
+        }
+    }
+}
+
+private actor RepositoryContentRequestGate {
+    private var isOpen = false
+    private var requestCount = 0
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func waitUntilOpened() async {
+        requestCount += 1
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func waitUntilRequestCount(_ expectedCount: Int) async {
+        while requestCount < expectedCount {
+            await Task.yield()
+        }
+    }
+
+    func open() {
+        isOpen = true
+        let waiting = continuations
+        continuations.removeAll()
+        waiting.forEach { $0.resume() }
+    }
+}
+
+private func collectRepositoryContentUpdates(
+    _ updates: AsyncThrowingStream<RepositoryContentUpdate, Error>
+) async throws -> [RepositoryContentUpdate] {
+    var collected: [RepositoryContentUpdate] = []
+    for try await update in updates {
+        collected.append(update)
+    }
+    return collected
+}
+
 private final class MemoryWorkspaceCache: WorkspaceCaching, @unchecked Sendable {
     private let lock = NSLock()
     private var storedSnapshot: WorkspaceCacheSnapshot?
@@ -474,10 +530,11 @@ let workspaceContentServiceTests = [
         let cache = MemoryWorkspaceCache(
             snapshot: cachedSnapshot(savedAt: now.addingTimeInterval(-900))
         )
+        let github = offlineGitHubFixture()
         let service = WorkspaceContentService(
             catalog: makeContentCatalog(availability: ["desktop": .available]),
             localGit: localGit,
-            github: offlineGitHubFixture(),
+            github: github,
             cache: cache,
             now: { now }
         )
@@ -495,9 +552,10 @@ let workspaceContentServiceTests = [
         try expectEqual(localGit.recordedCommitLimits, [8], "最近提交请求固定为 8 条")
         try expectEqual(
             content.panelErrors.map(\.panel),
-            [.onlineSummary, .readme],
-            "在线模块失败应分别记录面板错误"
+            [.readme],
+            "有效磁盘摘要不刷新，README 离线失败应单独记录"
         )
+        try expectEqual(github.summaryRequestCount, 0, "有效磁盘摘要不得立即刷新")
         try expectEqual(cache.accountIDs, [contentAccountFixture.id], "缓存必须按账户编号读取")
     },
     TestCase("过期和未来缓存都不能作为离线摘要") {
@@ -539,14 +597,6 @@ let workspaceContentServiceTests = [
             snapshot: cachedSnapshot(
                 savedAt: now.addingTimeInterval(-30),
                 summaries: [
-                    201: RepositoryOnlineSummary(
-                        repositoryID: 201,
-                        primaryLanguage: nil,
-                        openIssueCount: 0,
-                        openPullRequestCount: 0,
-                        failedWorkflowCount: 0,
-                        remoteUpdatedAt: nil
-                    ),
                     202: otherSummary
                 ]
             )
@@ -648,17 +698,18 @@ let workspaceContentServiceTests = [
             "坏缓存应被新的有效快照覆盖"
         )
     },
-    TestCase("README 不进入缓存并且每次都重新请求") {
+    TestCase("README 不写入磁盘但五分钟内复用完整内存缓存") {
         let now = Date(timeIntervalSince1970: 2_000_000_000)
         let github = FixtureGitHubWorkspaceAPI(
             summary: { _, _ in contentSummaryFixture },
             readme: { _, _ in contentREADMEFixture }
         )
+        let serviceCache = MemoryWorkspaceCache()
         let service = WorkspaceContentService(
             catalog: makeContentCatalog(availability: ["desktop": .missing]),
             localGit: FixtureLocalGitReader(),
             github: github,
-            cache: MemoryWorkspaceCache(),
+            cache: serviceCache,
             now: { now }
         )
 
@@ -673,7 +724,170 @@ let workspaceContentServiceTests = [
             token: "secret"
         )
 
-        try expectEqual(github.readmeRequestCount, 2, "README 不得使用工作区缓存")
+        try expectEqual(github.readmeRequestCount, 1, "五分钟内 README 应复用进程内完整缓存")
+        try expectEqual(
+            serviceCache.snapshot?.onlineSummaries[contentRepositoryFixture.id],
+            contentSummaryFixture,
+            "磁盘缓存仍只保存公开摘要"
+        )
+    },
+    TestCase("总览与README并发访问合并同仓库完整内容刷新") {
+        let gate = RepositoryContentRequestGate()
+        let github = FixtureGitHubWorkspaceAPI(
+            summary: { _, _ in
+                await gate.waitUntilOpened()
+                return contentSummaryFixture
+            },
+            readme: { _, _ in
+                await gate.waitUntilOpened()
+                return contentREADMEFixture
+            }
+        )
+        let service = WorkspaceContentService(
+            catalog: makeContentCatalog(availability: ["desktop": .available]),
+            localGit: FixtureLocalGitReader(),
+            github: github,
+            cache: MemoryWorkspaceCache()
+        )
+
+        async let overviewUpdates = collectRepositoryContentUpdates(
+            service.repositoryContentUpdates(
+                repository: contentRepositoryFixture,
+                account: contentAccountFixture,
+                token: "secret"
+            )
+        )
+        async let readmeUpdates = collectRepositoryContentUpdates(
+            service.repositoryContentUpdates(
+                repository: contentRepositoryFixture,
+                account: contentAccountFixture,
+                token: "secret"
+            )
+        )
+
+        await gate.waitUntilRequestCount(2)
+        try expectEqual(github.summaryRequestCount, 1, "并发页面不得重复请求摘要")
+        try expectEqual(github.readmeRequestCount, 1, "并发页面不得重复请求 README")
+        await gate.open()
+
+        let (overview, readme) = try await (overviewUpdates, readmeUpdates)
+        try expectEqual(overview.map(\.freshness), [.refreshed], "首个页面应收到刷新结果")
+        try expectEqual(readme.map(\.freshness), [.refreshed], "共享页面应收到同一刷新结果")
+    },
+    TestCase("完整内容缓存五分钟内命中并在过期后先陈旧后刷新") {
+        let clock = AdjustableContentClock(
+            Date(timeIntervalSince1970: 2_000_000_000)
+        )
+        let github = FixtureGitHubWorkspaceAPI(
+            summary: { _, _ in contentSummaryFixture },
+            readme: { _, _ in contentREADMEFixture }
+        )
+        let cache = MemoryWorkspaceCache()
+        let service = WorkspaceContentService(
+            catalog: makeContentCatalog(availability: ["desktop": .available]),
+            localGit: FixtureLocalGitReader(),
+            github: github,
+            cache: cache,
+            now: { clock.now }
+        )
+
+        _ = try await collectRepositoryContentUpdates(
+            service.repositoryContentUpdates(
+                repository: contentRepositoryFixture,
+                account: contentAccountFixture,
+                token: "secret"
+            )
+        )
+        clock.advance(by: 299)
+        let freshCacheUpdates = try await collectRepositoryContentUpdates(
+            service.repositoryContentUpdates(
+                repository: contentRepositoryFixture,
+                account: contentAccountFixture,
+                token: "secret"
+            )
+        )
+
+        try expectEqual(
+            freshCacheUpdates.map(\.freshness),
+            [.cached],
+            "299 秒时必须直接命中完整内容缓存"
+        )
+        try expectEqual(github.summaryRequestCount, 1, "新鲜缓存不得刷新摘要")
+        try expectEqual(github.readmeRequestCount, 1, "新鲜缓存不得刷新 README")
+
+        try cache.clear(accountID: contentAccountFixture.id)
+        clock.advance(by: 2)
+        let staleUpdates = try await collectRepositoryContentUpdates(
+            service.repositoryContentUpdates(
+                repository: contentRepositoryFixture,
+                account: contentAccountFixture,
+                token: "secret"
+            )
+        )
+
+        try expectEqual(
+            staleUpdates.map(\.freshness),
+            [.cached, .refreshed],
+            "过期缓存必须先显示再刷新"
+        )
+        try expectEqual(github.summaryRequestCount, 2, "301 秒时只启动一次摘要刷新")
+        try expectEqual(github.readmeRequestCount, 2, "301 秒时只启动一次 README 刷新")
+    },
+    TestCase("冷启动有效磁盘摘要立即复用且不请求摘要接口") {
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        let github = FixtureGitHubWorkspaceAPI(
+            summary: { _, _ in contentSummaryFixture },
+            readme: { _, _ in contentREADMEFixture }
+        )
+        let service = WorkspaceContentService(
+            catalog: makeContentCatalog(availability: ["desktop": .available]),
+            localGit: FixtureLocalGitReader(),
+            github: github,
+            cache: MemoryWorkspaceCache(
+                snapshot: WorkspaceCacheSnapshot(
+                    accountID: contentAccountFixture.id,
+                    repositoryRecords: [
+                        LocalRepositoryRecord(
+                            repository: contentRepositoryFixture,
+                            localURL: URL(filePath: "/workspace/desktop"),
+                            availability: .available,
+                            localSizeInBytes: 123,
+                            lastInspectedAt: now.addingTimeInterval(-60)
+                        )
+                    ],
+                    onlineSummaries: [
+                        contentRepositoryFixture.id: contentSummaryFixture
+                    ],
+                    savedAt: now.addingTimeInterval(-899)
+                )
+            ),
+            now: { now }
+        )
+
+        let updates = try await collectRepositoryContentUpdates(
+            service.repositoryContentUpdates(
+                repository: contentRepositoryFixture,
+                account: contentAccountFixture,
+                token: "secret"
+            )
+        )
+
+        try expectEqual(
+            updates.last?.content.onlineSummary,
+            contentSummaryFixture,
+            "冷启动必须立即复用有效磁盘摘要"
+        )
+        try expectEqual(
+            updates.last?.content.localRecord.localSizeInBytes,
+            123,
+            "仓库大小必须优先复用有效磁盘记录"
+        )
+        try expectEqual(
+            github.summaryRequestCount,
+            0,
+            "有效磁盘摘要不得立即刷新"
+        )
+        try expectEqual(github.readmeRequestCount, 1, "README 仍只保存在进程内")
     },
     TestCase("工作台刷新不请求 README") {
         let github = FixtureGitHubWorkspaceAPI(
@@ -959,7 +1173,7 @@ let workspaceContentServiceTests = [
             )
         }
     },
-    TestCase("首个限流错误阻止后续在线模块") {
+    TestCase("并发在线模块合并限流恢复时间") {
         let earlier = Date(timeIntervalSince1970: 2_000_000_100)
         let later = Date(timeIntervalSince1970: 2_000_000_200)
         let service = WorkspaceContentService(
@@ -984,8 +1198,8 @@ let workspaceContentServiceTests = [
 
         try expectEqual(
             content.connectivity,
-            .rateLimited(resetAt: earlier),
-            "首个限流响应应立即停止后续 README 请求"
+            .rateLimited(resetAt: later),
+            "并发在线模块应保留较晚的限流恢复时间"
         )
     },
     TestCase("工作台单模块失败不丢弃其他仓库内容") {
@@ -1228,11 +1442,15 @@ let workspaceContentServiceTests = [
             "并发完成不得改变仓库稳定顺序"
         )
         try expect(
-            snapshots.last?.repositories.allSatisfy {
-                $0.onlineSummary?.openIssueCount == Int($0.repository.id)
-                    && $0.readme == nil
+            snapshots.last?.repositories.enumerated().allSatisfy {
+                index, content in
+                let expectedIssueCount = index == 0
+                    ? 999
+                    : Int(content.repository.id)
+                return content.onlineSummary?.openIssueCount == expectedIssueCount
+                    && content.readme == nil
             } == true,
-            "最终快照应包含在线摘要且不批量读取 README"
+            "最终快照应复用有效摘要、刷新缺失摘要且不批量读取 README"
         )
     },
     TestCase("仓库目录统计异常仍返回在线仓库内容") {

@@ -160,6 +160,141 @@ let readmeViewModelTests = [
         try expectEqual(viewModel.state.loadPhase, .loaded, "解析失败后应允许重试")
         try expectEqual(viewModel.state.outline.map(\.title), ["恢复"], "重试结果应写入状态")
     },
+    TestCase("README 缓存尚无文档时保持加载直至刷新确认") { @MainActor in
+        let repository = readmeRepository()
+        let loader = ControlledREADMEUpdatesLoader()
+        let viewModel = READMEViewModel(
+            repository: repository,
+            account: readmeAccount(),
+            token: "secret",
+            loader: loader,
+            parser: READMEBlockParser()
+        )
+
+        let load = Task { @MainActor in
+            await viewModel.load()
+        }
+        await loader.waitUntilConnected()
+        loader.yield(
+            RepositoryContentUpdate(
+                content: readmeRepositoryContent(
+                    repository: repository,
+                    markdown: nil
+                ),
+                freshness: .cached,
+                isFinal: false
+            )
+        )
+        await Task.yield()
+
+        try expectEqual(
+            viewModel.state.loadPhase,
+            .loading,
+            "非最终缓存没有 README 时不得提前显示空状态"
+        )
+
+        loader.yield(
+            RepositoryContentUpdate(
+                content: readmeRepositoryContent(
+                    repository: repository,
+                    markdown: "# 最新文档"
+                ),
+                freshness: .refreshed,
+                isFinal: true
+            )
+        )
+        loader.finish()
+        await load.value
+
+        try expectEqual(viewModel.state.loadPhase, .loaded, "刷新返回 README 后应显示文档")
+        try expectEqual(viewModel.state.outline.map(\.title), ["最新文档"], "应使用最终 README")
+    },
+    TestCase("README 只有最终更新为空时进入空状态") { @MainActor in
+        let repository = readmeRepository()
+        let loader = ControlledREADMEUpdatesLoader()
+        let viewModel = READMEViewModel(
+            repository: repository,
+            account: readmeAccount(),
+            token: "secret",
+            loader: loader,
+            parser: READMEBlockParser()
+        )
+
+        let load = Task { @MainActor in
+            await viewModel.load()
+        }
+        await loader.waitUntilConnected()
+        loader.yield(
+            RepositoryContentUpdate(
+                content: readmeRepositoryContent(
+                    repository: repository,
+                    markdown: nil
+                ),
+                freshness: .refreshed,
+                isFinal: true
+            )
+        )
+        loader.finish()
+        await load.value
+
+        try expectEqual(viewModel.state.loadPhase, .empty, "最终确认无 README 时才显示空状态")
+    },
+    TestCase("README 后台刷新失败保留缓存文档") { @MainActor in
+        let repository = readmeRepository()
+        let loader = ControlledREADMEUpdatesLoader()
+        let viewModel = READMEViewModel(
+            repository: repository,
+            account: readmeAccount(),
+            token: "secret",
+            loader: loader,
+            parser: READMEBlockParser()
+        )
+
+        let load = Task { @MainActor in
+            await viewModel.load()
+        }
+        await loader.waitUntilConnected()
+        loader.yield(
+            RepositoryContentUpdate(
+                content: readmeRepositoryContent(
+                    repository: repository,
+                    markdown: "# 缓存文档"
+                ),
+                freshness: .cached,
+                isFinal: false
+            )
+        )
+        while viewModel.state.loadPhase != .loaded {
+            await Task.yield()
+        }
+        loader.yield(
+            RepositoryContentUpdate(
+                content: readmeRepositoryContent(
+                    repository: repository,
+                    markdown: "# 缓存文档",
+                    panelErrors: [
+                        WorkspacePanelError(
+                            panel: .readme,
+                            repositoryID: repository.id,
+                            message: "无法在线读取 README，已保留其他仓库内容。"
+                        )
+                    ]
+                ),
+                freshness: .refreshed,
+                isFinal: true
+            )
+        )
+        loader.finish()
+        await load.value
+
+        try expectEqual(viewModel.state.loadPhase, .loaded, "刷新失败不得覆盖缓存文档")
+        try expectEqual(viewModel.state.outline.map(\.title), ["缓存文档"], "旧文档必须保留")
+        try expectEqual(
+            viewModel.state.nonBlockingErrorMessage,
+            "后台刷新失败，已保留缓存内容。",
+            "后台错误应以非阻塞方式展示"
+        )
+    },
     TestCase("README 仓库加载取消不污染状态且随后可以重新加载") { @MainActor in
         let repository = readmeRepository()
         let loader = PausableREADMEContentLoader()
@@ -256,6 +391,54 @@ let readmeViewModelTests = [
 
 private enum READMEFixtureError: Error, Sendable {
     case failed
+}
+
+private final class ControlledREADMEUpdatesLoader:
+    RepositoryContentLoading,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var continuation:
+        AsyncThrowingStream<RepositoryContentUpdate, Error>.Continuation?
+
+    func repositoryContent(
+        repository _: Repository,
+        account _: GitHubAccount,
+        token _: String
+    ) async throws -> RepositoryContent {
+        throw READMEFixtureError.failed
+    }
+
+    func repositoryContentUpdates(
+        repository _: Repository,
+        account _: GitHubAccount,
+        token _: String
+    ) -> AsyncThrowingStream<RepositoryContentUpdate, Error> {
+        AsyncThrowingStream { continuation in
+            lock.withLock {
+                self.continuation = continuation
+            }
+            continuation.onTermination = { [weak self] _ in
+                self?.lock.withLock {
+                    self?.continuation = nil
+                }
+            }
+        }
+    }
+
+    func waitUntilConnected() async {
+        while lock.withLock({ continuation == nil }) {
+            await Task.yield()
+        }
+    }
+
+    func yield(_ update: RepositoryContentUpdate) {
+        lock.withLock { continuation }?.yield(update)
+    }
+
+    func finish(throwing error: Error? = nil) {
+        lock.withLock { continuation }?.finish(throwing: error)
+    }
 }
 
 private final class SequencedREADMEParser: READMEParsing, @unchecked Sendable {
@@ -376,7 +559,8 @@ private func readmeAccount() -> GitHubAccount {
 
 private func readmeRepositoryContent(
     repository: Repository,
-    markdown: String
+    markdown: String?,
+    panelErrors: [WorkspacePanelError] = []
 ) -> RepositoryContent {
     RepositoryContent(
         repository: repository,
@@ -390,15 +574,17 @@ private func readmeRepositoryContent(
         localStatus: nil,
         onlineSummary: nil,
         recentCommits: [],
-        readme: GitHubREADME(
-            repositoryID: repository.id,
-            path: "README.md",
-            markdown: markdown,
-            downloadURL: URL(
-                string: "https://raw.example/GitMate/mac-client/main/README.md"
+        readme: markdown.map {
+            GitHubREADME(
+                repositoryID: repository.id,
+                path: "README.md",
+                markdown: $0,
+                downloadURL: URL(
+                    string: "https://raw.example/GitMate/mac-client/main/README.md"
+                )
             )
-        ),
+        },
         connectivity: .online,
-        panelErrors: []
+        panelErrors: panelErrors
     )
 }
