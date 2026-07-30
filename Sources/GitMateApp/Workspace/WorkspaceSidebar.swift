@@ -183,11 +183,11 @@ struct WorkspaceSidebar: View {
     }
 
     private func apply(_ state: RepositorySwitchState) {
-        if currentRepositoryID != state.selectedRepositoryID {
-            currentRepositoryID = state.selectedRepositoryID
-        }
         if selection.route != state.route {
             selection.route = state.route
+        }
+        if currentRepositoryID != state.selectedRepositoryID {
+            currentRepositoryID = state.selectedRepositoryID
         }
     }
 
