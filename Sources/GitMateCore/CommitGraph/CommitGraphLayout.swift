@@ -22,24 +22,43 @@ public struct CommitGraphLayout: Sendable {
                 ($0.hash, $0.column)
             }
         )
-        var expectedColumns: [String: Int] = [:]
+        let childrenByParent = Dictionary(
+            grouping: commits.flatMap { commit in
+                commit.parentHashes.map {
+                    (parentHash: $0, childHash: commit.fullHash)
+                }
+            },
+            by: \.parentHash
+        )
+        var assignedColumns = frozenColumns
         var nodes: [CommitGraphNode] = []
         var edges: [CommitGraphEdge] = []
 
         for (row, commit) in commits.enumerated() {
             let occupiedColumns = Set(
-                expectedColumns
+                assignedColumns
                     .filter { $0.key != commit.fullHash }
                     .map(\.value)
             )
-            let column = frozenColumns[commit.fullHash]
-                ?? expectedColumns[commit.fullHash]
-                ?? nearestFreeColumn(
-                    to: 0,
-                    occupied: occupiedColumns,
-                    seed: stableHash(commit.fullHash)
-                )
-            expectedColumns[commit.fullHash] = nil
+            let column: Int
+            if let frozenColumn = frozenColumns[commit.fullHash] {
+                column = frozenColumn
+            } else if let firstParent = commit.parentHashes.first,
+                      let parentColumn = assignedColumns[firstParent] {
+                let isMerge = commit.parentHashes.count > 1
+                let isFirstChild = childrenByParent[firstParent]?.first?.childHash
+                    == commit.fullHash
+                column = isMerge || isFirstChild
+                    ? parentColumn
+                    : nearestFreeColumn(
+                        to: parentColumn,
+                        occupied: occupiedColumns,
+                        seed: stableHash(commit.fullHash)
+                    )
+            } else {
+                column = nextFreeColumn(occupied: occupiedColumns)
+            }
+            assignedColumns[commit.fullHash] = column
 
             let branchKey = commit.decorations.first ?? commit.fullHash
             nodes.append(
@@ -63,19 +82,6 @@ public struct CommitGraphLayout: Sendable {
                 let kind: CommitGraphEdgeKind = parentIndex == 0
                     ? .parent
                     : .merge
-                if frozenColumns[parentHash] == nil,
-                   expectedColumns[parentHash] == nil {
-                    if parentIndex == 0 {
-                        expectedColumns[parentHash] = column
-                    } else {
-                        expectedColumns[parentHash] = nearestFreeColumn(
-                            to: column,
-                            occupied: Set(expectedColumns.values)
-                                .union(frozenColumns.values),
-                            seed: stableHash(parentHash)
-                        )
-                    }
-                }
                 let colorKey = parentIndex == 0
                     ? branchKey
                     : parentHash
@@ -130,6 +136,13 @@ public struct CommitGraphLayout: Sendable {
             }
         }
         return (occupied.max() ?? preferred) + 1
+    }
+
+    private func nextFreeColumn(occupied: Set<Int>) -> Int {
+        for column in 0...(occupied.count + 1) where !occupied.contains(column) {
+            return column
+        }
+        return (occupied.max() ?? -1) + 1
     }
 
     private func stableHash(_ value: String) -> Int {

@@ -66,6 +66,43 @@ let commitGraphLayoutTests = [
         let featureColumn = result.nodes.first { $0.hash == "feature" }?.column
 
         try expect(mainColumn != featureColumn, "并行分支节点不得落在同一列")
+    },
+    TestCase("父提交优先页面将分支稳定布局在不同泳道") {
+        let page = CommitGraphPage(
+            commits: [
+                graphCommit(hash: "root"),
+                graphCommit(hash: "feature", parents: ["root"]),
+                graphCommit(hash: "main", parents: ["root"]),
+                graphCommit(hash: "merge", parents: ["feature", "main"])
+            ],
+            nextCursor: nil
+        )
+
+        let result = CommitGraphLayout().layout(page: page)
+        guard let rootNode = result.nodes.first(where: { $0.hash == "root" }),
+              let featureNode = result.nodes.first(where: { $0.hash == "feature" }),
+              let mainNode = result.nodes.first(where: { $0.hash == "main" }),
+              let mergeNode = result.nodes.first(where: { $0.hash == "merge" })
+        else {
+            throw TestFailure(description: "父提交优先页面必须包含所有提交节点")
+        }
+
+        try expect(
+            rootNode.y < featureNode.y
+                && rootNode.y < mainNode.y
+                && featureNode.y < mergeNode.y
+                && mainNode.y < mergeNode.y,
+            "父提交必须位于所有子提交上方"
+        )
+        try expect(
+            featureNode.column != mainNode.column,
+            "同一父提交的不同分支必须进入不同泳道"
+        )
+        try expectEqual(
+            mergeNode.column,
+            featureNode.column,
+            "合并提交必须继承第一父提交泳道"
+        )
     }
 ]
 

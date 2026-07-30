@@ -1,6 +1,14 @@
 import Foundation
 
 public enum GitOutputParser {
+    public static func parseCommitCount(_ output: String) throws -> Int {
+        let value = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let count = Int(value), count >= 0 else {
+            throw GitOutputParsingError.malformedCommit(output)
+        }
+        return count
+    }
+
     public static func parseCommits(_ output: String) throws -> [GitCommit] {
         if output.contains("\u{0}") {
             return try parseNullTerminatedCommits(output)

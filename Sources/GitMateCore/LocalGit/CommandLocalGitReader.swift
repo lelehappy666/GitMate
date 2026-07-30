@@ -1,7 +1,7 @@
 import Foundation
 
 public final class CommandLocalGitReader: LocalGitReading, @unchecked Sendable {
-    private static let logFormat =
+    public static let commitLogFormat =
         "--format=%h%x00%H%x00%s%x00%an%x00%ae%x00%aI%x00%P%x00%D%x00"
     private static let detailFormat =
         "--format=%h%x00%H%x00%s%x00%an%x00%ae%x00%aI%x00%P%x00%D%x00%G?%x00%GS%x00%B%x00"
@@ -150,19 +150,50 @@ public final class CommandLocalGitReader: LocalGitReading, @unchecked Sendable {
             throw LocalGitReaderError.invalidLimit(limit)
         }
         let offset = try validatedOffset(cursor)
-        var arguments = [
-            "-C", repositoryPath, "log", Self.logFormat, "-n", String(limit)
-        ]
-        if offset > 0 {
-            arguments.append(contentsOf: ["--skip", String(offset)])
-        }
-        let commits = try GitOutputParser.parseCommits(
-            decode(await execute(arguments), context: "提交列表")
+        let total = try GitOutputParser.parseCommitCount(
+            decode(
+                await execute([
+                    "-C", repositoryPath, "rev-list",
+                    "--branches", "--remotes", "--count"
+                ]),
+                context: "提交总数"
+            )
         )
-        let nextCursor = commits.count == limit
-            ? String(offset + commits.count)
+        let window = oldestFirstWindow(
+            total: total,
+            offset: offset,
+            limit: limit
+        )
+        let parsedCommits = try GitOutputParser.parseCommits(
+            decode(
+                await execute([
+                    "-C", repositoryPath, "log",
+                    "--branches", "--remotes", "--topo-order",
+                    "--decorate=short", "--skip", String(window.skip),
+                    "-n", String(window.count), Self.commitLogFormat
+                ]),
+                context: "提交列表"
+            )
+        )
+        var seen: Set<String> = []
+        let commits = parsedCommits.reversed().filter {
+            seen.insert($0.fullHash).inserted
+        }
+        let nextOffset = offset + window.count
+        let nextCursor = nextOffset < total
+            ? String(nextOffset)
             : nil
         return (commits, nextCursor)
+    }
+
+    private func oldestFirstWindow(
+        total: Int,
+        offset: Int,
+        limit: Int
+    ) -> (skip: Int, count: Int) {
+        let remaining = max(total - offset, 0)
+        let count = min(limit, remaining)
+        return (max(total - offset - count, 0), count)
     }
 
     private func execute(_ arguments: [String]) async throws -> Data {

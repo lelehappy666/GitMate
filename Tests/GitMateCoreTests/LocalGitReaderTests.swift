@@ -5,6 +5,13 @@ private let commitRecord = """
 a81c32f\u{1f}a81c32ffull\u{1f}修复同步索引\u{1f}lele\u{1f}lele@example.com\u{1f}2026-07-29T10:00:00Z\u{1f}8e1d04a 742fd81\u{1f}HEAD -> main, tag: v1.0\u{1e}
 """
 
+private let newestToOldestTwoCommitFixture =
+    "child02\u{0}child02full\u{0}子提交\u{0}lele\u{0}lele@example.com\u{0}2026-07-29T11:00:00Z\u{0}root001full\u{0}\u{0}"
+    + "root001\u{0}root001full\u{0}根提交\u{0}lele\u{0}lele@example.com\u{0}2026-07-29T10:00:00Z\u{0}\u{0}\u{0}"
+
+private let commitLogRecord =
+    "a81c32f\u{0}a81c32ffull\u{0}修复同步索引\u{0}lele\u{0}lele@example.com\u{0}2026-07-29T10:00:00Z\u{0}8e1d04a 742fd81\u{0}HEAD -> main, tag: v1.0\u{0}"
+
 private let showOutput = """
 a81c32f\u{1f}a81c32ffull\u{1f}修复同步索引\u{1f}lele\u{1f}lele@example.com\u{1f}2026-07-29T10:00:00Z\u{1f}8e1d04a\u{1f}HEAD -> main\u{1f}完整提交消息
 第二行\u{1f}G\u{1f}Lele Zhang\u{1e}
@@ -527,12 +534,18 @@ let localGitReaderTests = [
     },
     TestCase("提交列表分页命令和游标完全由验证后数值构造") {
         let executor = FakeCommandExecutor(results: [
-            .success([.standardOutput(commitRecord)])
+            .success([.standardOutput("40\n")]),
+            .success([.standardOutput(commitLogRecord)])
         ], expectedInvocations: [
             expectedInvocation([
+                "-C", "/tmp/gitmate-repository", "rev-list",
+                "--branches", "--remotes", "--count"
+            ]),
+            expectedInvocation([
                 "-C", "/tmp/gitmate-repository", "log",
-                "--format=%h%x1f%H%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%P%x1f%D%x1e",
-                "-n", "1", "--skip", "20"
+                "--branches", "--remotes", "--topo-order",
+                "--decorate=short", "--skip", "19", "-n", "1",
+                CommandLocalGitReader.commitLogFormat
             ])
         ])
         let reader = CommandLocalGitReader(executor: executor)
@@ -546,14 +559,58 @@ let localGitReaderTests = [
         try expectEqual(
             executor.commands,
             [[
+                "-C", "/tmp/gitmate-repository", "rev-list",
+                "--branches", "--remotes", "--count"
+            ], [
                 "-C", "/tmp/gitmate-repository", "log",
-                "--format=%h%x1f%H%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%P%x1f%D%x1e",
-                "-n", "1", "--skip", "20"
+                "--branches", "--remotes", "--topo-order",
+                "--decorate=short", "--skip", "19", "-n", "1",
+                CommandLocalGitReader.commitLogFormat
             ]],
             "分页提交命令必须精确匹配白名单"
         )
         try expectEqual(page.commits.map(\.fullHash), ["a81c32ffull"], "应解析提交页")
         try expectEqual(page.nextCursor, "21", "满页时游标应等于 skip 加返回数")
+        try executor.verifyComplete()
+    },
+    TestCase("提交分页覆盖全部本地远程分支并从最早提交开始") {
+        let executor = FakeCommandExecutor(
+            results: [
+                .success([.standardOutput("4\n")]),
+                .success([.standardOutput(newestToOldestTwoCommitFixture)])
+            ],
+            expectedInvocations: [
+                expectedInvocation([
+                    "-C", "/repo", "rev-list",
+                    "--branches", "--remotes", "--count"
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "log",
+                    "--branches", "--remotes", "--topo-order",
+                    "--decorate=short", "--skip", "2", "-n", "2",
+                    CommandLocalGitReader.commitLogFormat
+                ])
+            ]
+        )
+        let reader = CommandLocalGitReader(executor: executor)
+
+        let page = try await reader.commits(
+            repositoryURL: URL(fileURLWithPath: "/repo"),
+            cursor: nil,
+            limit: 2
+        )
+
+        try expectEqual(
+            page.commits.map(\.shortHash),
+            ["root001", "child02"],
+            "首屏必须从最早提交开始"
+        )
+        try expectEqual(page.nextCursor, "2", "游标应记录已读取的最早端数量")
+        try expectEqual(
+            Set(page.commits.map(\.fullHash)).count,
+            page.commits.count,
+            "多个分支指向的相同提交只能出现一次"
+        )
         try executor.verifyComplete()
     },
     TestCase("提交详情和差异只执行 show 白名单命令") {
@@ -607,12 +664,18 @@ let localGitReaderTests = [
     },
     TestCase("提交图复用只读日志并返回独立图分页模型") {
         let executor = FakeCommandExecutor(results: [
-            .success([.standardOutput(commitRecord)])
+            .success([.standardOutput("1\n")]),
+            .success([.standardOutput(commitLogRecord)])
         ], expectedInvocations: [
             expectedInvocation([
+                "-C", "/tmp/gitmate-repository", "rev-list",
+                "--branches", "--remotes", "--count"
+            ]),
+            expectedInvocation([
                 "-C", "/tmp/gitmate-repository", "log",
-                "--format=%h%x1f%H%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%P%x1f%D%x1e",
-                "-n", "10"
+                "--branches", "--remotes", "--topo-order",
+                "--decorate=short", "--skip", "0", "-n", "1",
+                CommandLocalGitReader.commitLogFormat
             ])
         ])
         let reader = CommandLocalGitReader(executor: executor)
@@ -628,11 +691,20 @@ let localGitReaderTests = [
         try expectEqual(
             executor.commands[0],
             [
-                "-C", "/tmp/gitmate-repository", "log",
-                "--format=%h%x1f%H%x1f%s%x1f%an%x1f%ae%x1f%aI%x1f%P%x1f%D%x1e",
-                "-n", "10"
+                "-C", "/tmp/gitmate-repository", "rev-list",
+                "--branches", "--remotes", "--count"
             ],
-            "首个提交图页面不得附带 skip"
+            "提交图必须先统计全部本地远程分支提交"
+        )
+        try expectEqual(
+            executor.commands[1],
+            [
+                "-C", "/tmp/gitmate-repository", "log",
+                "--branches", "--remotes", "--topo-order",
+                "--decorate=short", "--skip", "0", "-n", "1",
+                CommandLocalGitReader.commitLogFormat
+            ],
+            "首个提交图页面必须从最早端窗口读取"
         )
         try executor.verifyComplete()
     },
