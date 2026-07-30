@@ -14,6 +14,37 @@ let commitGraphViewModelTests = [
         viewModel.zoom(by: 0.01, anchor: .zero)
         try expectEqual(viewModel.viewport.scale, 0.35, "最小缩放必须限制为 0.35")
     },
+    TestCase("双击空白区域可适配全部提交内容") { @MainActor in
+        let viewModel = CommitGraphViewModel(
+            reader: PagedCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            pageSize: 2
+        )
+        await viewModel.load()
+        let screenSize = GraphSize(width: 600, height: 400)
+
+        viewModel.fitAll(in: screenSize, padding: 40)
+
+        let expectedScale = min(
+            (screenSize.width - 80) / viewModel.layout.contentWidth,
+            (screenSize.height - 80) / viewModel.layout.contentHeight
+        )
+        try expectEqual(
+            viewModel.viewport,
+            GraphViewport(
+                offsetX: (
+                    screenSize.width
+                        - viewModel.layout.contentWidth * expectedScale
+                ) / 2,
+                offsetY: (
+                    screenSize.height
+                        - viewModel.layout.contentHeight * expectedScale
+                ) / 2,
+                scale: expectedScale
+            ),
+            "适配全部内容必须居中并保留指定边距"
+        )
+    },
     TestCase("切换节点时旧详情不得覆盖最新提交") { @MainActor in
         let reader = ControlledCommitGraphReader()
         let viewModel = CommitGraphViewModel(

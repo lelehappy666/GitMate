@@ -4,10 +4,6 @@ import SwiftUI
 struct CommitGraphView: View {
     @Bindable var viewModel: CommitGraphViewModel
 
-    @State private var previousDrag = CGSize.zero
-    @State private var previousMagnification: CGFloat = 1
-    @State private var pointerAnchor = GraphPoint.zero
-
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -106,30 +102,41 @@ struct CommitGraphView: View {
 
     private var graphCanvas: some View {
         GeometryReader { geometry in
+            let screenSize = GraphSize(
+                width: geometry.size.width,
+                height: geometry.size.height
+            )
             ZStack {
-                Canvas { context, size in
-                    drawGrid(context: &context, size: size)
-                    drawEdges(context: &context)
-                }
-                .background(.white)
+                CommitGraphCanvas(
+                    layout: viewModel.layout,
+                    viewport: viewModel.viewport,
+                    selectedHash: viewModel.selectedHash
+                )
 
-                ForEach(viewModel.layout.nodes) { node in
-                    CommitGraphNodeView(
-                        node: node,
-                        isSelected: viewModel.selectedHash == node.hash
-                    ) {
+                CommitGraphInteractionSurface(
+                    layout: viewModel.layout,
+                    viewport: viewModel.viewport,
+                    onPan: { translation in
+                        viewModel.pan(by: translation)
+                        loadOlderIfNeeded()
+                    },
+                    onZoom: { multiplier, anchor in
+                        viewModel.zoom(by: multiplier, anchor: anchor)
+                    },
+                    onClick: { hash in
                         Task {
-                            await viewModel.select(hash: node.hash)
+                            await viewModel.select(hash: hash)
                         }
+                    },
+                    onDoubleClick: {
+                        viewModel.fitAll(in: screenSize)
                     }
-                    .scaleEffect(viewModel.viewport.scale)
-                    .position(
-                        x: node.x * viewModel.viewport.scale
-                            + viewModel.viewport.offsetX,
-                        y: node.y * viewModel.viewport.scale
-                            + viewModel.viewport.offsetY
-                    )
-                }
+                )
+                .accessibilityLabel("无限画布提交图")
+                .accessibilityHint("拖拽平移，滚轮或捏合缩放，双击空白适配全部提交")
+                .accessibilityIdentifier("workspace.commitGraph.canvas")
+
+                accessibilityNodes(screenSize: screenSize)
 
                 if viewModel.isLoading && viewModel.layout.nodes.isEmpty {
                     loadingState
@@ -160,143 +167,58 @@ struct CommitGraphView: View {
                                 }
                         }
                         Spacer()
-                        minimap
                     }
                 }
                 .padding(14)
                 .allowsHitTesting(false)
             }
-            .contentShape(Rectangle())
-            .gesture(dragGesture)
-            .simultaneousGesture(magnificationGesture)
-            .onContinuousHover { phase in
-                if case let .active(location) = phase {
-                    pointerAnchor = GraphPoint(
-                        x: location.x,
-                        y: location.y
-                    )
-                }
-            }
-            .onChange(of: geometry.size) { _, size in
-                if pointerAnchor == .zero {
-                    pointerAnchor = GraphPoint(
-                        x: size.width / 2,
-                        y: size.height / 2
-                    )
-                }
-            }
-            .accessibilityLabel("无限画布提交图")
-            .accessibilityHint("拖拽平移，悬停后捏合或滚动缩放")
-            .accessibilityIdentifier("workspace.commitGraph.canvas")
         }
     }
 
-    private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 2)
-            .onChanged { value in
-                let delta = CGSize(
-                    width: value.translation.width - previousDrag.width,
-                    height: value.translation.height - previousDrag.height
-                )
-                previousDrag = value.translation
-                viewModel.pan(
-                    by: GraphPoint(x: delta.width, y: delta.height)
-                )
-            }
-            .onEnded { _ in
-                previousDrag = .zero
-                loadOlderIfNeeded()
-            }
-    }
-
-    private var magnificationGesture: some Gesture {
-        MagnifyGesture()
-            .onChanged { value in
-                let multiplier = value.magnification
-                    / previousMagnification
-                previousMagnification = value.magnification
-                viewModel.zoom(
-                    by: multiplier,
-                    anchor: pointerAnchor
-                )
-            }
-            .onEnded { _ in
-                previousMagnification = 1
-            }
-    }
-
-    private func drawGrid(
-        context: inout GraphicsContext,
-        size: CGSize
-    ) {
-        let step = max(32 * viewModel.viewport.scale, 18)
-        let startX = viewModel.viewport.offsetX
-            .truncatingRemainder(dividingBy: step)
-        let startY = viewModel.viewport.offsetY
-            .truncatingRemainder(dividingBy: step)
-        var path = Path()
-        var x = startX
-        while x < size.width {
-            path.move(to: CGPoint(x: x, y: 0))
-            path.addLine(to: CGPoint(x: x, y: size.height))
-            x += step
-        }
-        var y = startY
-        while y < size.height {
-            path.move(to: CGPoint(x: 0, y: y))
-            path.addLine(to: CGPoint(x: size.width, y: y))
-            y += step
-        }
-        context.stroke(
-            path,
-            with: .color(GitMateTheme.border.opacity(0.44)),
-            lineWidth: 0.7
+    private func accessibilityNodes(
+        screenSize: GraphSize
+    ) -> some View {
+        let visibleNodes = CommitGraphViewportProjector.visibleNodes(
+            layout: viewModel.layout,
+            viewport: viewModel.viewport,
+            screenSize: screenSize,
+            padding: 180
         )
-    }
 
-    private func drawEdges(context: inout GraphicsContext) {
-        let nodesByHash = Dictionary(
-            uniqueKeysWithValues: viewModel.layout.nodes.map {
-                ($0.hash, $0)
-            }
-        )
-        for edge in viewModel.layout.edges {
-            guard let child = nodesByHash[edge.childHash],
-                  let parent = nodesByHash[edge.parentHash]
-            else {
-                continue
-            }
-            let start = screenPoint(child)
-            let end = screenPoint(parent)
-            let midpointY = (start.y + end.y) / 2
-            var path = Path()
-            path.move(to: start)
-            path.addCurve(
-                to: end,
-                control1: CGPoint(x: start.x, y: midpointY),
-                control2: CGPoint(x: end.x, y: midpointY)
+        return ForEach(visibleNodes) { node in
+            let point = CommitGraphViewportProjector.screenPoint(
+                canvasPoint: GraphPoint(x: node.x, y: node.y),
+                viewport: viewModel.viewport
             )
-            context.stroke(
-                path,
-                with: .color(
-                    CommitGraphPalette.color(edge.colorIndex).opacity(0.88)
-                ),
-                style: StrokeStyle(
-                    lineWidth: edge.kind == .merge ? 2.3 : 2,
-                    lineCap: .round,
-                    dash: edge.kind == .merge ? [7, 4] : []
+            Rectangle()
+                .fill(.clear)
+                .frame(
+                    width: CommitGraphViewportProjector.nodeWidth
+                        * viewModel.viewport.scale,
+                    height: CommitGraphViewportProjector.nodeHeight
+                        * viewModel.viewport.scale
                 )
-            )
+                .position(x: point.x, y: point.y)
+                .allowsHitTesting(false)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(
+                    "\(node.subject)，作者 \(node.authorName)，提交 \(node.shortHash)"
+                )
+                .accessibilityHint("打开提交详情")
+                .accessibilityAddTraits(
+                    viewModel.selectedHash == node.hash
+                        ? [.isButton, .isSelected]
+                        : .isButton
+                )
+                .accessibilityAction {
+                    Task {
+                        await viewModel.select(hash: node.hash)
+                    }
+                }
+                .accessibilityIdentifier(
+                    "workspace.commitGraph.node.\(node.hash)"
+                )
         }
-    }
-
-    private func screenPoint(_ node: CommitGraphNode) -> CGPoint {
-        CGPoint(
-            x: node.x * viewModel.viewport.scale
-                + viewModel.viewport.offsetX,
-            y: node.y * viewModel.viewport.scale
-                + viewModel.viewport.offsetY
-        )
     }
 
     private var branchLegend: some View {
@@ -329,43 +251,6 @@ struct CommitGraphView: View {
                 .frame(width: 7, height: 7)
             Text(title)
         }
-    }
-
-    private var minimap: some View {
-        Canvas { context, size in
-            let scaleX = size.width / max(viewModel.layout.contentWidth, 1)
-            let scaleY = size.height / max(viewModel.layout.contentHeight, 1)
-            for node in viewModel.layout.nodes {
-                let rect = CGRect(
-                    x: node.x * scaleX - 3,
-                    y: node.y * scaleY - 2,
-                    width: 6,
-                    height: 4
-                )
-                context.fill(
-                    Path(roundedRect: rect, cornerRadius: 1),
-                    with: .color(
-                        CommitGraphPalette.color(node.colorIndex)
-                    )
-                )
-            }
-        }
-        .frame(width: 128, height: 82)
-        .background(GitMateTheme.panel.opacity(0.96))
-        .clipShape(
-            RoundedRectangle(
-                cornerRadius: 9,
-                style: .continuous
-            )
-        )
-        .overlay {
-            RoundedRectangle(
-                cornerRadius: 9,
-                style: .continuous
-            )
-            .stroke(GitMateTheme.border, lineWidth: 1)
-        }
-        .accessibilityLabel("提交图缩略图")
     }
 
     private var loadingState: some View {

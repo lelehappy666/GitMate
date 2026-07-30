@@ -160,16 +160,47 @@ public final class CommitGraphViewModel {
     }
 
     public func zoom(by multiplier: Double, anchor: GraphPoint) {
-        guard multiplier.isFinite, multiplier > 0 else { return }
-        let oldScale = viewport.scale
-        let newScale = min(max(oldScale * multiplier, 0.35), 2)
-        guard newScale != oldScale else { return }
-        let ratio = newScale / oldScale
-        viewport.offsetX = anchor.x
-            - (anchor.x - viewport.offsetX) * ratio
-        viewport.offsetY = anchor.y
-            - (anchor.y - viewport.offsetY) * ratio
-        viewport.scale = newScale
+        viewport = CommitGraphViewportProjector.zoomed(
+            viewport,
+            by: multiplier,
+            anchor: anchor
+        )
+    }
+
+    public func fitAll(
+        in screenSize: GraphSize,
+        padding: Double = 48
+    ) {
+        guard !layout.nodes.isEmpty,
+              screenSize.width.isFinite,
+              screenSize.height.isFinite,
+              screenSize.width > 0,
+              screenSize.height > 0
+        else {
+            return
+        }
+
+        let safePadding = max(padding, 0)
+        let availableWidth = max(screenSize.width - safePadding * 2, 1)
+        let availableHeight = max(screenSize.height - safePadding * 2, 1)
+        let contentWidth = max(layout.contentWidth, 1)
+        let contentHeight = max(layout.contentHeight, 1)
+        let scale = min(
+            max(
+                min(
+                    availableWidth / contentWidth,
+                    availableHeight / contentHeight
+                ),
+                CommitGraphViewportProjector.minimumScale
+            ),
+            CommitGraphViewportProjector.maximumScale
+        )
+
+        viewport = GraphViewport(
+            offsetX: (screenSize.width - contentWidth * scale) / 2,
+            offsetY: (screenSize.height - contentHeight * scale) / 2,
+            scale: scale
+        )
     }
 
     public func resetLayout() {

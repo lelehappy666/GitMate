@@ -34,6 +34,7 @@ struct GitMateCoreTestsMain {
             + readmeBlockParserTests
             + repositoryCoverExtractorTests
             + commitGraphLayoutTests
+            + commitGraphViewportProjectorTests
             + commitGraphViewModelTests
         var failedCount = 0
 
