@@ -92,40 +92,11 @@ struct FileTreeView: View {
     }
 
     private var visibleEntries: [GitFileEntry] {
-        viewModel.state.filteredTree
-            .filter { entry in
-                if !viewModel.state.pathQuery.isEmpty {
-                    return true
-                }
-                let components = entry.path.split(separator: "/")
-                guard components.count > 1 else {
-                    return true
-                }
-                var ancestors: [String] = []
-                for index in 1..<components.count {
-                    ancestors.append(
-                        components.prefix(index).joined(separator: "/")
-                    )
-                }
-                return ancestors.allSatisfy {
-                    expandedDirectories.contains($0)
-                }
-            }
-            .sorted {
-                if $0.path.split(separator: "/").count
-                    != $1.path.split(separator: "/").count {
-                    return $0.path.split(separator: "/").count
-                        < $1.path.split(separator: "/").count
-                }
-                if $0.kind == .directory && $1.kind != .directory {
-                    return true
-                }
-                if $0.kind != .directory && $1.kind == .directory {
-                    return false
-                }
-                return $0.path.localizedStandardCompare($1.path)
-                    == .orderedAscending
-            }
+        FileTreePresentation.visibleEntries(
+            entries: viewModel.state.tree,
+            expandedDirectories: expandedDirectories,
+            query: viewModel.state.pathQuery
+        )
     }
 
     private func entryRow(_ entry: GitFileEntry) -> some View {
