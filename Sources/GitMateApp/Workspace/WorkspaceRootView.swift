@@ -174,6 +174,7 @@ struct WorkspaceRootView: View {
                         onResync()
                     }
                 )
+                .id("repository-overview-\(repositoryID)")
             } else {
                 missingRepositoryView
             }
@@ -185,6 +186,7 @@ struct WorkspaceRootView: View {
                     token: token,
                     loader: authorizationObservingLoader
                 )
+                .id("readme-\(repositoryID)")
             } else {
                 missingRepositoryView
             }
@@ -194,6 +196,7 @@ struct WorkspaceRootView: View {
                     reader: runtime.localGit,
                     repositoryURL: runtime.catalog.localURL(for: repository)
                 )
+                .id("files-and-commits-\(repositoryID)")
             } else {
                 missingRepositoryView
             }
@@ -203,6 +206,7 @@ struct WorkspaceRootView: View {
                     reader: runtime.localGit,
                     repositoryURL: runtime.catalog.localURL(for: repository)
                 )
+                .id("commit-graph-\(repositoryID)")
             } else {
                 missingRepositoryView
             }
