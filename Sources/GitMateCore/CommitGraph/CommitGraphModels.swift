@@ -136,7 +136,7 @@ struct CommitGraphSpatialIndex: Equatable, Sendable {
 
     let nodeIndexByHash: [String: Int]
     private let nodeIndicesByBucket: [Int: [Int]]
-    private let edgeIndicesByBucket: [Int: [Int]]
+    private let edgeIntervalIndex: CommitGraphEdgeIntervalIndex
 
     init(nodes: [CommitGraphNode], edges: [CommitGraphEdge]) {
         let indicesByHash = Dictionary(
@@ -150,7 +150,7 @@ struct CommitGraphSpatialIndex: Equatable, Sendable {
             nodeBuckets[Self.bucket(for: node.y), default: []].append(index)
         }
 
-        var edgeBuckets: [Int: [Int]] = [:]
+        var edgeIntervals: [CommitGraphEdgeInterval] = []
         for (index, edge) in edges.enumerated() {
             guard let childIndex = indicesByHash[edge.childHash],
                   let parentIndex = indicesByHash[edge.parentHash]
@@ -159,42 +159,23 @@ struct CommitGraphSpatialIndex: Equatable, Sendable {
             }
             let childY = nodes[childIndex].y
             let parentY = nodes[parentIndex].y
-            let firstBucket = Self.bucket(for: min(childY, parentY))
-            let lastBucket = Self.bucket(for: max(childY, parentY))
-            for bucket in firstBucket...lastBucket {
-                edgeBuckets[bucket, default: []].append(index)
-            }
+            edgeIntervals.append(
+                CommitGraphEdgeInterval(
+                    index: index,
+                    minimumY: min(childY, parentY),
+                    maximumY: max(childY, parentY)
+                )
+            )
         }
 
         nodeIndexByHash = indicesByHash
         nodeIndicesByBucket = nodeBuckets
-        edgeIndicesByBucket = edgeBuckets
+        edgeIntervalIndex = CommitGraphEdgeIntervalIndex(
+            intervals: edgeIntervals
+        )
     }
 
     func nodeIndices(minimumY: Double, maximumY: Double) -> [Int] {
-        indices(
-            in: nodeIndicesByBucket,
-            minimumY: minimumY,
-            maximumY: maximumY,
-            deduplicating: false
-        )
-    }
-
-    func edgeIndices(minimumY: Double, maximumY: Double) -> [Int] {
-        indices(
-            in: edgeIndicesByBucket,
-            minimumY: minimumY,
-            maximumY: maximumY,
-            deduplicating: true
-        )
-    }
-
-    private func indices(
-        in buckets: [Int: [Int]],
-        minimumY: Double,
-        maximumY: Double,
-        deduplicating: Bool
-    ) -> [Int] {
         guard minimumY.isFinite,
               maximumY.isFinite,
               minimumY <= maximumY
@@ -203,19 +184,166 @@ struct CommitGraphSpatialIndex: Equatable, Sendable {
         }
         let firstBucket = Self.bucket(for: minimumY)
         let lastBucket = Self.bucket(for: maximumY)
-        if deduplicating {
-            var indices: Set<Int> = []
-            for bucket in firstBucket...lastBucket {
-                indices.formUnion(buckets[bucket] ?? [])
-            }
-            return indices.sorted()
-        }
         return (firstBucket...lastBucket)
-            .flatMap { buckets[$0] ?? [] }
+            .flatMap { nodeIndicesByBucket[$0] ?? [] }
             .sorted()
+    }
+
+    func edgeIndices(minimumY: Double, maximumY: Double) -> [Int] {
+        edgeIntervalIndex.indices(
+            minimumY: minimumY,
+            maximumY: maximumY
+        )
     }
 
     private static func bucket(for y: Double) -> Int {
         Int(floor(y / bucketHeight))
+    }
+}
+
+private struct CommitGraphEdgeInterval: Equatable, Sendable {
+    let index: Int
+    let minimumY: Double
+    let maximumY: Double
+
+    var midpoint: Double {
+        minimumY + (maximumY - minimumY) / 2
+    }
+}
+
+private struct CommitGraphEdgeIntervalIndex: Equatable, Sendable {
+    private struct Node: Equatable, Sendable {
+        let center: Double
+        let crossingByMinimumY: [CommitGraphEdgeInterval]
+        let crossingByMaximumY: [CommitGraphEdgeInterval]
+        let left: Int?
+        let right: Int?
+    }
+
+    private let nodes: [Node]
+    private let root: Int?
+
+    init(intervals: [CommitGraphEdgeInterval]) {
+        var builtNodes: [Node] = []
+
+        func build(_ intervals: [CommitGraphEdgeInterval]) -> Int? {
+            guard !intervals.isEmpty else { return nil }
+            let midpoints = intervals.map(\.midpoint).sorted()
+            let center = midpoints[midpoints.count / 2]
+            var leftIntervals: [CommitGraphEdgeInterval] = []
+            var rightIntervals: [CommitGraphEdgeInterval] = []
+            var crossingIntervals: [CommitGraphEdgeInterval] = []
+
+            for interval in intervals {
+                if interval.maximumY < center {
+                    leftIntervals.append(interval)
+                } else if interval.minimumY > center {
+                    rightIntervals.append(interval)
+                } else {
+                    crossingIntervals.append(interval)
+                }
+            }
+
+            let left = build(leftIntervals)
+            let right = build(rightIntervals)
+            let index = builtNodes.count
+            builtNodes.append(
+                Node(
+                    center: center,
+                    crossingByMinimumY: crossingIntervals.sorted {
+                        if $0.minimumY != $1.minimumY {
+                            return $0.minimumY < $1.minimumY
+                        }
+                        return $0.index < $1.index
+                    },
+                    crossingByMaximumY: crossingIntervals.sorted {
+                        if $0.maximumY != $1.maximumY {
+                            return $0.maximumY > $1.maximumY
+                        }
+                        return $0.index < $1.index
+                    },
+                    left: left,
+                    right: right
+                )
+            )
+            return index
+        }
+
+        root = build(intervals)
+        nodes = builtNodes
+    }
+
+    func indices(minimumY: Double, maximumY: Double) -> [Int] {
+        guard minimumY.isFinite,
+              maximumY.isFinite,
+              minimumY <= maximumY,
+              let root
+        else {
+            return []
+        }
+        var matches: [Int] = []
+        query(
+            nodeIndex: root,
+            minimumY: minimumY,
+            maximumY: maximumY,
+            matches: &matches
+        )
+        return matches.sorted()
+    }
+
+    private func query(
+        nodeIndex: Int,
+        minimumY: Double,
+        maximumY: Double,
+        matches: inout [Int]
+    ) {
+        let node = nodes[nodeIndex]
+        if maximumY < node.center {
+            for interval in node.crossingByMinimumY {
+                guard interval.minimumY <= maximumY else { break }
+                matches.append(interval.index)
+            }
+            if let left = node.left {
+                query(
+                    nodeIndex: left,
+                    minimumY: minimumY,
+                    maximumY: maximumY,
+                    matches: &matches
+                )
+            }
+        } else if minimumY > node.center {
+            for interval in node.crossingByMaximumY {
+                guard interval.maximumY >= minimumY else { break }
+                matches.append(interval.index)
+            }
+            if let right = node.right {
+                query(
+                    nodeIndex: right,
+                    minimumY: minimumY,
+                    maximumY: maximumY,
+                    matches: &matches
+                )
+            }
+        } else {
+            matches.append(
+                contentsOf: node.crossingByMinimumY.map(\.index)
+            )
+            if let left = node.left {
+                query(
+                    nodeIndex: left,
+                    minimumY: minimumY,
+                    maximumY: maximumY,
+                    matches: &matches
+                )
+            }
+            if let right = node.right {
+                query(
+                    nodeIndex: right,
+                    minimumY: minimumY,
+                    maximumY: maximumY,
+                    matches: &matches
+                )
+            }
+        }
     }
 }

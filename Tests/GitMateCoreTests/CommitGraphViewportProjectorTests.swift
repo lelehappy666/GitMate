@@ -106,6 +106,34 @@ let commitGraphViewportProjectorTests = [
             "只保留视口相交连线，离屏连线不得进入绘制集合"
         )
     },
+    TestCase("提交连线区间索引可定位远离根中心的窄视口") {
+        let layout = CommitGraphLayoutResult(
+            nodes: [
+                viewportNode(hash: "a0", x: 200, y: 0),
+                viewportNode(hash: "a1", x: 200, y: 100),
+                viewportNode(hash: "b0", x: 200, y: 500),
+                viewportNode(hash: "b1", x: 200, y: 600),
+                viewportNode(hash: "c0", x: 200, y: 1_000),
+                viewportNode(hash: "c1", x: 200, y: 1_100)
+            ],
+            edges: [
+                viewportEdge(id: "above", child: "a0", parent: "a1"),
+                viewportEdge(id: "target", child: "b0", parent: "b1"),
+                viewportEdge(id: "below", child: "c0", parent: "c1")
+            ]
+        )
+
+        try expectEqual(
+            CommitGraphViewportProjector.visibleEdges(
+                layout: layout,
+                viewport: GraphViewport(offsetY: -500),
+                screenSize: GraphSize(width: 800, height: 100),
+                padding: 0
+            ).map(\.id),
+            ["target"],
+            "区间树左右分支必须只返回窄视口相交连线"
+        )
+    },
     TestCase("缩放限制在百分之三十五到百分之二百") {
         let enlarged = CommitGraphViewportProjector.zoomed(
             GraphViewport(),
@@ -189,5 +217,19 @@ private func viewportNode(
         colorIndex: 0,
         x: x,
         y: y
+    )
+}
+
+private func viewportEdge(
+    id: String,
+    child: String,
+    parent: String
+) -> CommitGraphEdge {
+    CommitGraphEdge(
+        id: id,
+        childHash: child,
+        parentHash: parent,
+        kind: .parent,
+        colorIndex: 0
     )
 }
