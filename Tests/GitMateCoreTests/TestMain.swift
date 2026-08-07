@@ -53,6 +53,7 @@ struct GitMateCoreTestsMain {
             + commitGraphSnapshotStoreTests
             + commitGraphRefreshCoordinatorTests
             + commitGraphSceneReconcilerTests
+            + commitGraphPerformanceTests
         var failedCount = 0
 
         for test in tests {

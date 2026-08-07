@@ -647,6 +647,42 @@ let commitGraphRenderIndexTests = [
             "展开分组内容区不得误命中拖动标题"
         )
     },
+    TestCase("展开分组命中高度与画布标题一致") {
+        let groupID = UUID(
+            uuidString: "ABABABAB-ABAB-ABAB-ABAB-ABABABABABAB"
+        )!
+        let index = CommitGraphRenderIndex(
+            projection: CommitGraphSceneProjection(
+                nodes: [],
+                groups: [
+                    CommitGraphVisibleGroup(
+                        id: groupID,
+                        title: "标题命中高度",
+                        rect: GraphRect(
+                            x: 100,
+                            y: 100,
+                            width: 320,
+                            height: 240
+                        ),
+                        memberCount: 2,
+                        isCollapsed: false
+                    )
+                ],
+                edges: []
+            )
+        )
+
+        try expectEqual(
+            index.hitTest(canvasPoint: GraphPoint(x: 120, y: 133.5)),
+            .group(id: groupID, isCollapsed: false),
+            "34 像素标题区内应命中展开分组"
+        )
+        try expectEqual(
+            index.hitTest(canvasPoint: GraphPoint(x: 120, y: 135)),
+            nil,
+            "超出画布 34 像素标题的内容区不得误命中"
+        )
+    },
     TestCase("空间命中层级与画布绘制顺序一致") {
         let collapsedBackID = UUID(
             uuidString: "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD"

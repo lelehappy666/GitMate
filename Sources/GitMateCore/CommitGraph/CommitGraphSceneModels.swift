@@ -498,7 +498,7 @@ enum CommitGraphSceneGeometry {
     static let collapsedGroupWidth = 224.0
     static let collapsedGroupHeight = 92.0
     static let groupPadding = 30.0
-    static let groupHeaderHeight = 38.0
+    static let groupHeaderHeight = 34.0
 
     static func nodeRect(center: GraphPoint) -> GraphRect {
         GraphRect(

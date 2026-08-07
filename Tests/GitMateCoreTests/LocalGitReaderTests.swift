@@ -1,5 +1,9 @@
 import Foundation
+#if GITMATE_TESTING_INTERNALS
 @testable import GitMateCore
+#else
+import GitMateCore
+#endif
 
 private let commitRecord = """
 a81c32f\u{1f}a81c32ffull\u{1f}修复同步索引\u{1f}lele\u{1f}lele@example.com\u{1f}2026-07-29T10:00:00Z\u{1f}8e1d04a 742fd81\u{1f}HEAD -> main, tag: v1.0\u{1e}
@@ -1320,7 +1324,11 @@ let localGitReaderTests = [
         } catch {
             // 预期路径
         }
-    },
+    }
+] + processPipeReaderTests
+
+#if GITMATE_TESTING_INTERNALS
+private let processPipeReaderTests = [
     TestCase("进程管道 drain 等待在途读取并保持字节顺序") {
         let pipe = Pipe()
         let reader = ProcessPipeReader()
@@ -1368,3 +1376,6 @@ let localGitReaderTests = [
         try expectEqual(state.data, Data("AB".utf8), "管道字节顺序必须保持 A 后 B")
     }
 ]
+#else
+private let processPipeReaderTests: [TestCase] = []
+#endif
