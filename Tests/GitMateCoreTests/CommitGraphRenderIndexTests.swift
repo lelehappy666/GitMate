@@ -501,6 +501,71 @@ let commitGraphRenderIndexTests = [
                 result.diagnostics.nodeCandidates
             )
         )
+    },
+    TestCase("五万条边切换线型不生成全边几何") {
+        let nodes = (0..<50_000).map { index in
+            renderVisibleNode(
+                hash: "edge-node-\(index)",
+                x: Double(index % 5) * 10_000,
+                y: Double(index) * 10_000
+            )
+        }
+        let edges = (0..<50_000).map { index in
+            renderIndexEdge(
+                id: "edge-\(index)",
+                source: "edge-node-\(index)",
+                target: "edge-node-\(index)",
+                ports: CommitGraphEdgePorts(
+                    source: PortAnchor(side: .right, offset: 0.31),
+                    target: PortAnchor(side: .bottom, offset: 0.69)
+                )
+            )
+        }
+        var index = CommitGraphRenderIndex(
+            projection: CommitGraphSceneProjection(
+                nodes: nodes,
+                groups: [],
+                edges: edges,
+                lineStyle: .curve
+            )
+        )
+        let targetY = Double(25_000) * 10_000
+        let viewport = GraphViewport(offsetY: -targetY)
+        let screen = GraphSize(width: 800, height: 600)
+        let before = index.queryWithDiagnostics(
+            viewport: viewport,
+            screenSize: screen,
+            padding: 180
+        )
+
+        let switched = index.setLineStyle(.orthogonal)
+        let after = index.queryWithDiagnostics(
+            viewport: viewport,
+            screenSize: screen,
+            padding: 180
+        )
+
+        try expectEqual(
+            switched.processedEdgeCount,
+            0,
+            "切换线型本身不得遍历或生成五万条边的几何"
+        )
+        try expect(
+            after.diagnostics.generatedEdgeGeometries < 20,
+            "切换后的首次查询只能生成局部候选边几何"
+        )
+        try expect(
+            after.diagnostics.edgeCandidates < 20,
+            "切换后的边候选必须保持局部规模"
+        )
+        try expectEqual(
+            after.scene.edges.first?.ports,
+            before.scene.edges.first?.ports,
+            "切换线型前后端口 side 和 offset 必须完全不变"
+        )
+        print(
+            "  性能证据：50000 边切线型处理 \(switched.processedEdgeCount) 边，局部查询生成 \(after.diagnostics.generatedEdgeGeometries) 条几何"
+        )
     }
 ]
 

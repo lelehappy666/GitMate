@@ -43,17 +43,30 @@ public struct CommitGraphRenderQueryDiagnostics: Equatable, Sendable {
     public let nodeCandidates: Int
     public let groupCandidates: Int
     public let edgeCandidates: Int
+    public let generatedEdgeGeometries: Int
 
     public init(
         visitedBuckets: Int,
         nodeCandidates: Int,
         groupCandidates: Int,
-        edgeCandidates: Int
+        edgeCandidates: Int,
+        generatedEdgeGeometries: Int = 0
     ) {
         self.visitedBuckets = visitedBuckets
         self.nodeCandidates = nodeCandidates
         self.groupCandidates = groupCandidates
         self.edgeCandidates = edgeCandidates
+        self.generatedEdgeGeometries = generatedEdgeGeometries
+    }
+}
+
+public struct CommitGraphLineStyleUpdate: Equatable, Sendable {
+    public let didChange: Bool
+    public let processedEdgeCount: Int
+
+    public init(didChange: Bool, processedEdgeCount: Int) {
+        self.didChange = didChange
+        self.processedEdgeCount = processedEdgeCount
     }
 }
 
@@ -74,13 +87,13 @@ public struct CommitGraphRenderIndex: Sendable {
     private var nodes: [CommitGraphVisibleNode]
     private var groups: [CommitGraphVisibleGroup]
     private let edges: [CommitGraphVisibleEdge]
-    private let lineStyle: CommitGraphLineStyle
+    private var lineStyle: CommitGraphLineStyle
     private let nodeIndexByHash: [String: Int]
     private let groupIndexByID: [UUID: Int]
     private let groupIndexByMemberHash: [String: Int]
     private let incidentEdgeIndices: [CommitGraphEndpointID: [Int]]
     private var endpointRects: [CommitGraphEndpointID: GraphRect]
-    private var edgeGeometry: [Int: RenderEdgeGeometry]
+    private var edgeCandidates: [Int: RenderEdgeCandidate]
     private var nodeGrid: RenderSpatialGrid
     private var groupGrid: RenderSpatialGrid
     private var edgeGrid: RenderSpatialGrid
@@ -109,28 +122,27 @@ public struct CommitGraphRenderIndex: Sendable {
         )
 
         var adjacency: [CommitGraphEndpointID: [Int]] = [:]
-        var geometries: [Int: RenderEdgeGeometry] = [:]
+        var candidates: [Int: RenderEdgeCandidate] = [:]
         var builtEdgeGrid = RenderSpatialGrid()
         for (index, edge) in projection.edges.enumerated() {
             adjacency[edge.source, default: []].append(index)
             adjacency[edge.target, default: []].append(index)
-            guard let geometry = Self.geometry(
+            guard let candidate = Self.candidate(
                 for: edge,
-                endpointRects: endpointRects,
-                lineStyle: projection.lineStyle
+                endpointRects: endpointRects
             ) else {
                 continue
             }
-            geometries[index] = geometry
+            candidates[index] = candidate
             builtEdgeGrid.replace(
                 item: index,
-                cells: geometry.indexCells
+                cells: candidate.indexCells
             )
         }
         incidentEdgeIndices = adjacency.mapValues {
             Array(Set($0)).sorted()
         }
-        edgeGeometry = geometries
+        edgeCandidates = candidates
         edgeGrid = builtEdgeGrid
 
         var builtNodeGrid = RenderSpatialGrid()
@@ -186,9 +198,20 @@ public struct CommitGraphRenderIndex: Sendable {
         let groupIndices = groupQuery.items
             .filter { groups[$0].rect.intersects(bounds) }
             .sorted()
-        let edgeIndices = edgeQuery.items
-            .filter { edgeGeometry[$0]?.intersects(bounds) == true }
-            .sorted()
+        var generatedEdgeGeometries = 0
+        let edgeIndices = edgeQuery.items.sorted().filter { index in
+            guard edgeCandidates[index] != nil,
+                  let geometry = Self.geometry(
+                    for: edges[index],
+                    endpointRects: endpointRects,
+                    lineStyle: lineStyle
+                  )
+            else {
+                return false
+            }
+            generatedEdgeGeometries += 1
+            return geometry.intersects(bounds)
+        }
 
         return CommitGraphRenderQueryResult(
             scene: CommitGraphVisibleScene(
@@ -202,8 +225,20 @@ public struct CommitGraphRenderIndex: Sendable {
                     + edgeQuery.visitedBuckets,
                 nodeCandidates: nodeQuery.items.count,
                 groupCandidates: groupQuery.items.count,
-                edgeCandidates: edgeQuery.items.count
+                edgeCandidates: edgeQuery.items.count,
+                generatedEdgeGeometries: generatedEdgeGeometries
             )
+        )
+    }
+
+    public mutating func setLineStyle(
+        _ newStyle: CommitGraphLineStyle
+    ) -> CommitGraphLineStyleUpdate {
+        let changed = lineStyle != newStyle
+        lineStyle = newStyle
+        return CommitGraphLineStyleUpdate(
+            didChange: changed,
+            processedEdgeCount: 0
         )
     }
 
@@ -252,7 +287,7 @@ public struct CommitGraphRenderIndex: Sendable {
             )
         }
         let updatedEdges = affectedEdgeIndices.sorted()
-        updateEdges(updatedEdges)
+        updateEdgeCandidates(updatedEdges)
 
         return CommitGraphRenderUpdate(
             updatedNodeHashes: [hash],
@@ -305,7 +340,7 @@ public struct CommitGraphRenderIndex: Sendable {
             updatedNodeHashes.append(hash)
         }
         let updatedEdges = affectedEdgeIndices.sorted()
-        updateEdges(updatedEdges)
+        updateEdgeCandidates(updatedEdges)
         return CommitGraphRenderUpdate(
             updatedNodeHashes: updatedNodeHashes,
             updatedGroupIDs: [id],
@@ -313,20 +348,35 @@ public struct CommitGraphRenderIndex: Sendable {
         )
     }
 
-    private mutating func updateEdges(_ indices: [Int]) {
+    private mutating func updateEdgeCandidates(_ indices: [Int]) {
         for edgeIndex in indices {
-            guard let geometry = Self.geometry(
+            guard let candidate = Self.candidate(
                 for: edges[edgeIndex],
-                endpointRects: endpointRects,
-                lineStyle: lineStyle
+                endpointRects: endpointRects
             ) else {
-                edgeGeometry.removeValue(forKey: edgeIndex)
+                edgeCandidates.removeValue(forKey: edgeIndex)
                 edgeGrid.remove(item: edgeIndex)
                 continue
             }
-            edgeGeometry[edgeIndex] = geometry
-            edgeGrid.replace(item: edgeIndex, cells: geometry.indexCells)
+            edgeCandidates[edgeIndex] = candidate
+            edgeGrid.replace(item: edgeIndex, cells: candidate.indexCells)
         }
+    }
+
+    private static func candidate(
+        for edge: CommitGraphVisibleEdge,
+        endpointRects: [CommitGraphEndpointID: GraphRect]
+    ) -> RenderEdgeCandidate? {
+        guard let sourceRect = endpointRects[edge.source],
+              let targetRect = endpointRects[edge.target]
+        else {
+            return nil
+        }
+        return RenderEdgeCandidate(
+            sourceRect: sourceRect,
+            targetRect: targetRect,
+            ports: edge.ports
+        )
     }
 
     private static func geometry(
@@ -422,6 +472,70 @@ public struct CommitGraphRenderIndex: Sendable {
             width: abs(bottomRight.x - topLeft.x),
             height: abs(bottomRight.y - topLeft.y)
         )
+    }
+}
+
+private struct RenderEdgeCandidate: Sendable {
+    let bounds: GraphRect
+    let indexCells: Set<RenderGridCell>?
+
+    init(
+        sourceRect: GraphRect,
+        targetRect: GraphRect,
+        ports: CommitGraphEdgePorts
+    ) {
+        let curve = CommitGraphPathGeometry.curve(
+            startRect: sourceRect,
+            startAnchor: ports.source,
+            endRect: targetRect,
+            endAnchor: ports.target
+        )
+        let orthogonal = CommitGraphPathGeometry.orthogonal(
+            startRect: sourceRect,
+            startAnchor: ports.source,
+            endRect: targetRect,
+            endAnchor: ports.target
+        )
+        var points = [
+            GraphPoint(x: sourceRect.minimumX, y: sourceRect.minimumY),
+            GraphPoint(x: sourceRect.maximumX, y: sourceRect.maximumY),
+            GraphPoint(x: targetRect.minimumX, y: targetRect.minimumY),
+            GraphPoint(x: targetRect.maximumX, y: targetRect.maximumY)
+        ]
+        switch curve {
+        case let .curve(start, control1, control2, end):
+            points.append(contentsOf: [start, control1, control2, end])
+        case let .polyline(curvePoints):
+            points.append(contentsOf: curvePoints)
+        }
+        switch orthogonal {
+        case let .polyline(orthogonalPoints):
+            points.append(contentsOf: orthogonalPoints)
+        case let .curve(start, control1, control2, end):
+            points.append(contentsOf: [start, control1, control2, end])
+        }
+        let xs = points.map(\.x)
+        let ys = points.map(\.y)
+        let minimumX = xs.min() ?? 0
+        let maximumX = xs.max() ?? minimumX
+        let minimumY = ys.min() ?? 0
+        let maximumY = ys.max() ?? minimumY
+        bounds = GraphRect(
+            x: minimumX,
+            y: minimumY,
+            width: maximumX - minimumX,
+            height: maximumY - minimumY
+        )
+        for level in 0..<64 {
+            if let cells = RenderSpatialGrid.cells(
+                for: bounds,
+                level: level
+            ) {
+                indexCells = cells
+                return
+            }
+        }
+        indexCells = nil
     }
 }
 
