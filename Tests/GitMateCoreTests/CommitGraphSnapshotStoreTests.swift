@@ -157,6 +157,66 @@ let commitGraphSnapshotStoreTests = [
             nil,
             "仅有临时文件时不得恢复不完整快照"
         )
+    },
+    TestCase("快照安装身份不遍历提交正文") {
+        let first = CommitGraphSnapshot(
+            repositoryPath: "/repo",
+            fingerprint: CommitGraphReferenceFingerprint(
+                references: [],
+                headName: "main",
+                headHash: "head",
+                isShallow: false
+            ),
+            commitsNewestFirst: [
+                commitGraphSnapshotIdentityCommit(
+                    hash: "head",
+                    subject: "第一份正文"
+                ),
+                commitGraphSnapshotIdentityCommit(
+                    hash: "root",
+                    subject: "旧根提交"
+                )
+            ],
+            expectedCommitCount: 2,
+            shallowBoundaryParentHashes: [],
+            generatedAt: Date(timeIntervalSince1970: 42)
+        )
+        let changedInterior = CommitGraphSnapshot(
+            repositoryPath: first.repositoryPath,
+            fingerprint: first.fingerprint,
+            commitsNewestFirst: [
+                commitGraphSnapshotIdentityCommit(
+                    hash: "head",
+                    subject: "完全不同但不参与身份比较的正文"
+                ),
+                commitGraphSnapshotIdentityCommit(
+                    hash: "root",
+                    subject: "另一份根提交正文"
+                )
+            ],
+            expectedCommitCount: first.expectedCommitCount,
+            shallowBoundaryParentHashes: [],
+            generatedAt: first.generatedAt
+        )
+        let newerGeneration = CommitGraphSnapshot(
+            repositoryPath: first.repositoryPath,
+            fingerprint: first.fingerprint,
+            commitsNewestFirst: first.commitsNewestFirst,
+            expectedCommitCount: first.expectedCommitCount,
+            shallowBoundaryParentHashes: [],
+            generatedAt: Date(timeIntervalSince1970: 43)
+        )
+
+        try expectEqual(
+            CommitGraphSnapshotIdentity(first),
+            CommitGraphSnapshotIdentity(changedInterior),
+            "轻量身份不得通过 GitCommit Equatable 扫描提交正文"
+        )
+        try expect(
+            CommitGraphSnapshotIdentity(first)
+                != CommitGraphSnapshotIdentity(newerGeneration),
+            "新生成的快照必须拥有不同安装身份"
+        )
     }
 ]
 
@@ -209,4 +269,20 @@ private func commitGraphSnapshotStoreTemporaryDirectory() -> URL {
 
 private enum CommitGraphSnapshotStoreReadTestError: Error, Equatable, Sendable {
     case unavailable
+}
+
+private func commitGraphSnapshotIdentityCommit(
+    hash: String,
+    subject: String
+) -> GitCommit {
+    GitCommit(
+        shortHash: hash,
+        fullHash: hash,
+        subject: subject,
+        authorName: "测试用户",
+        authorEmail: "test@example.com",
+        authoredAt: Date(timeIntervalSince1970: 1),
+        parentHashes: [],
+        decorations: []
+    )
 }

@@ -58,8 +58,8 @@ public actor CommitGraphRefreshCoordinator {
 
     public func cachedSnapshot(
         repositoryID: Int64
-    ) async -> CommitGraphSnapshot? {
-        try? await store.load(repositoryID: repositoryID)
+    ) async throws -> CommitGraphSnapshot? {
+        try await store.load(repositoryID: repositoryID)
     }
 
     public func refresh(

@@ -66,6 +66,33 @@ public struct CommitGraphSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+/// ViewModel 用于判断某一代快照是否已经安装的轻量身份。
+///
+/// `generatedAt` 在一次完整快照生成后会随快照持久化，因此既能区分
+/// 不同生成代次，也不会像 `CommitGraphSnapshot.==` 一样遍历全部提交。
+/// 内容完整性仍由 `CommitGraphIntegrityValidator` 独立负责。
+public struct CommitGraphSnapshotIdentity: Equatable, Sendable {
+    public let schemaVersion: Int
+    public let repositoryPath: String
+    public let generatedAt: Date
+    public let expectedCommitCount: Int
+    public let actualCommitCount: Int
+    public let headHash: String?
+    public let newestCommitHash: String?
+    public let oldestCommitHash: String?
+
+    public init(_ snapshot: CommitGraphSnapshot) {
+        schemaVersion = snapshot.schemaVersion
+        repositoryPath = snapshot.repositoryPath
+        generatedAt = snapshot.generatedAt
+        expectedCommitCount = snapshot.expectedCommitCount
+        actualCommitCount = snapshot.commitsNewestFirst.count
+        headHash = snapshot.fingerprint.headHash
+        newestCommitHash = snapshot.commitsNewestFirst.first?.fullHash
+        oldestCommitHash = snapshot.commitsNewestFirst.last?.fullHash
+    }
+}
+
 public enum CommitGraphIntegrityStatus: String, Codable, Sendable {
     case valid
     case warning

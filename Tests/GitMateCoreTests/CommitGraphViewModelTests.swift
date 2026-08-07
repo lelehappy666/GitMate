@@ -1061,6 +1061,290 @@ let commitGraphViewModelTests = [
             nil,
             "旧派生结果返回后必须被代次门禁拒绝"
         )
+    },
+    TestCase("刷新派生期间的全部场景编辑不会被旧副本覆盖") { @MainActor in
+        let oldSnapshot = commitGraphSnapshot(
+            commits: [
+                commitGraphCommit(hash: "hash-c", parents: ["hash-b"]),
+                commitGraphCommit(hash: "hash-b", parents: ["hash-a"]),
+                commitGraphCommit(hash: "hash-a")
+            ],
+            headHash: "hash-c"
+        )
+        let newSnapshot = commitGraphSnapshot(
+            commits: [
+                commitGraphCommit(hash: "hash-d", parents: ["hash-c"]),
+                commitGraphCommit(hash: "hash-c", parents: ["hash-b"]),
+                commitGraphCommit(hash: "hash-b", parents: ["hash-a"]),
+                commitGraphCommit(hash: "hash-a")
+            ],
+            headHash: "hash-d"
+        )
+        let sceneStore = InMemoryCommitGraphSceneStore()
+        let deriver = SelectivelyGatedCommitGraphDeriver(
+            blockedRequestID: 2
+        )
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: StaticCommitGraphSnapshotReader(snapshot: newSnapshot),
+            store: InMemoryCommitGraphSnapshotStore(snapshot: oldSnapshot)
+        )
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 910,
+            sceneStore: sceneStore,
+            refreshCoordinator: coordinator,
+            deriver: deriver
+        )
+        await viewModel.loadCachedSnapshot()
+        viewModel.replaceSelection(with: ["hash-a", "hash-b"])
+        let groupID = try viewModel.createManualGroup(title: "核心历史")
+        viewModel.setViewMode(.canvas)
+
+        let refreshTask = Task { @MainActor in
+            await viewModel.refresh(source: .toolbar)
+        }
+        await deriver.waitUntilBlocked()
+
+        viewModel.moveNode(
+            hash: "hash-c",
+            by: GraphPoint(x: 31, y: 17)
+        )
+        viewModel.moveGroup(
+            id: groupID,
+            by: GraphPoint(x: 44, y: -12)
+        )
+        viewModel.setGroupCollapsed(id: groupID, isCollapsed: true)
+        viewModel.setLineStyle(.orthogonal)
+        let regionID = viewModel.createRegion(
+            title: "v3.0",
+            colorHex: "#7B61FF",
+            rect: GraphRect(x: 80, y: 90, width: 520, height: 360)
+        )
+        viewModel.viewport = GraphViewport(
+            offsetX: 72,
+            offsetY: -38,
+            scale: 1.15
+        )
+        let editedNodePosition = viewModel.scene.nodePositions["hash-c"]
+        let editedGroup = viewModel.group(id: groupID)
+        let editedViewport = viewModel.viewport
+
+        await deriver.releaseBlockedRequest()
+        await refreshTask.value
+
+        try expectEqual(
+            viewModel.scene.nodePositions["hash-c"],
+            editedNodePosition,
+            "刷新返回时必须保留派生期间的节点拖动"
+        )
+        try expectEqual(
+            viewModel.group(id: groupID)?.origin,
+            editedGroup?.origin,
+            "刷新返回时必须保留派生期间的分组拖动"
+        )
+        try expectEqual(
+            viewModel.group(id: groupID)?.isCollapsed,
+            true,
+            "刷新返回时必须保留折叠状态"
+        )
+        try expectEqual(viewModel.scene.lineStyle, .orthogonal, "连线样式不得回退")
+        try expectEqual(
+            viewModel.region(id: regionID)?.title,
+            "v3.0",
+            "刷新返回时必须保留新增版本区域"
+        )
+        try expectEqual(viewModel.viewport, editedViewport, "画布视口不得回退")
+        await viewModel.persistSceneImmediately()
+        let persisted = try await required(
+            sceneStore.load(repositoryID: 910),
+            "刷新后的最新场景必须持久化"
+        )
+        try expectEqual(
+            persisted.groups.first(where: { $0.id == groupID })?.origin,
+            editedGroup?.origin,
+            "持久化场景不得写回后台派生的旧分组位置"
+        )
+        try expectEqual(persisted.lineStyle, .orthogonal, "持久化线型不得回退")
+        try expectEqual(persisted.canvasViewport, editedViewport, "持久化视口不得回退")
+    },
+    TestCase("场景恢复完成前与未来版本确认后都禁止写入") { @MainActor in
+        let directory = commitGraphViewModelTemporaryDirectory()
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let sceneURL = directory.appending(path: "911.json")
+        let originalData = Data(
+            """
+            {"schemaVersion":99,"futureState":"恢复窗口也必须保留"}
+            """.utf8
+        )
+        try originalData.write(to: sceneURL)
+        let gatedStore = GatedDelegatingSceneStore(
+            base: JSONCommitGraphSceneStore(rootDirectory: directory)
+        )
+        let snapshot = commitGraphSnapshot(
+            commits: [commitGraphCommit(hash: "hash-a")],
+            headHash: "hash-a"
+        )
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 911,
+            sceneStore: gatedStore,
+            refreshCoordinator: CommitGraphRefreshCoordinator(
+                reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
+                store: InMemoryCommitGraphSnapshotStore(snapshot: snapshot)
+            )
+        )
+        let loadTask = Task { @MainActor in
+            await viewModel.loadCachedSnapshot()
+        }
+        await gatedStore.waitUntilLoadStarts()
+
+        viewModel.setLineStyle(.orthogonal)
+        _ = viewModel.createRegion(
+            title: "恢复中编辑",
+            colorHex: "#2F80ED",
+            rect: GraphRect(x: 20, y: 20, width: 240, height: 160)
+        )
+        await viewModel.persistSceneImmediately()
+        try await Task.sleep(for: .milliseconds(350))
+        let restoringData = try Data(contentsOf: sceneURL)
+        try expectEqual(
+            restoringData,
+            originalData,
+            "识别场景版本之前，立即保存和延迟保存都不得写文件"
+        )
+
+        await gatedStore.releaseLoad()
+        await loadTask.value
+        viewModel.setLineStyle(.orthogonal)
+        viewModel.pan(by: GraphPoint(x: 16, y: 8))
+        await viewModel.persistSceneImmediately()
+        try await Task.sleep(for: .milliseconds(350))
+        let finalData = try Data(contentsOf: sceneURL)
+        try expectEqual(
+            finalData,
+            originalData,
+            "确认未来 schema 后仍必须保持原文件字节不变"
+        )
+        let saveCount = await gatedStore.saveCount()
+        try expectEqual(
+            saveCount,
+            0,
+            "恢复中与只读未来版本状态都不得进入存储层保存"
+        )
+    },
+    TestCase("新代次主动取消旧的大型后台派生") { @MainActor in
+        let largeSnapshot = largeCommitGraphSnapshot(count: 50_000)
+        let latestSnapshot = commitGraphSnapshot(
+            commits: [commitGraphCommit(hash: "hash-latest")],
+            headHash: "hash-latest"
+        )
+        let snapshotStore = InMemoryCommitGraphSnapshotStore(
+            snapshot: largeSnapshot
+        )
+        let deriver = CancellationAwareCommitGraphDeriver()
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 912,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: CommitGraphRefreshCoordinator(
+                reader: StaticCommitGraphSnapshotReader(snapshot: latestSnapshot),
+                store: snapshotStore
+            ),
+            deriver: deriver
+        )
+        let oldTask = Task { @MainActor in
+            await viewModel.loadCachedSnapshot()
+        }
+        await deriver.waitUntilFirstDerivationStarts()
+        try await snapshotStore.save(latestSnapshot, repositoryID: 912)
+
+        await viewModel.loadCachedSnapshot()
+        await oldTask.value
+
+        let wasFirstCancelled = await deriver.wasFirstCancelled()
+        let didFirstComplete = await deriver.didFirstCompleteFullChain()
+        try expect(wasFirstCancelled, "新代次必须主动取消旧派生任务")
+        try expect(
+            !didFirstComplete,
+            "取消后的五万提交派生不得继续完成布局、投影和索引全链"
+        )
+        try expect(
+            viewModel.layout.node(hash: "hash-latest") != nil,
+            "取消旧派生后必须安装新代次的小快照"
+        )
+    },
+    TestCase("已有结果遇到缓存缺失或损坏时保留场景并进入陈旧状态") { @MainActor in
+        let snapshot = commitGraphSnapshot(
+            commits: [commitGraphCommit(hash: "hash-a")],
+            headHash: "hash-a"
+        )
+        let followUps: [ScriptedSnapshotStore.Step] = [
+            .missing,
+            .failure(.corruptedSnapshot(repositoryID: 913))
+        ]
+        for (index, followUp) in followUps.enumerated() {
+            let store = ScriptedSnapshotStore(steps: [.snapshot(snapshot), followUp])
+            let viewModel = CommitGraphViewModel(
+                reader: StaticCommitGraphReader(),
+                repositoryURL: commitGraphRepositoryURL,
+                repositoryID: Int64(913 + index),
+                sceneStore: InMemoryCommitGraphSceneStore(),
+                refreshCoordinator: CommitGraphRefreshCoordinator(
+                    reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
+                    store: store
+                )
+            )
+            await viewModel.loadCachedSnapshot()
+            let layoutBefore = viewModel.layout
+
+            await viewModel.loadCachedSnapshot()
+
+            try expectEqual(viewModel.layout, layoutBefore, "缓存异常不得清空已有布局")
+            guard case .stale = viewModel.refreshState else {
+                throw TestFailure(description: "已有结果的缓存异常必须进入陈旧状态")
+            }
+        }
+    },
+    TestCase("首次缓存缺失与损坏使用不同状态语义") { @MainActor in
+        let snapshot = commitGraphSnapshot(
+            commits: [commitGraphCommit(hash: "hash-a")],
+            headHash: "hash-a"
+        )
+        let missingViewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 915,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: CommitGraphRefreshCoordinator(
+                reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
+                store: ScriptedSnapshotStore(steps: [.missing])
+            )
+        )
+        await missingViewModel.loadCachedSnapshot()
+        try expectEqual(missingViewModel.refreshState, .idle, "首次无缓存应保持空闲等待刷新")
+
+        let corruptViewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 916,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: CommitGraphRefreshCoordinator(
+                reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
+                store: ScriptedSnapshotStore(
+                    steps: [.failure(.corruptedSnapshot(repositoryID: 916))]
+                )
+            )
+        )
+        await corruptViewModel.loadCachedSnapshot()
+        guard case .failed = corruptViewModel.refreshState else {
+            throw TestFailure(description: "首次缓存损坏且无显示快照时必须进入失败状态")
+        }
     }
 ]
 
@@ -1351,7 +1635,7 @@ private actor SelectivelyGatedCommitGraphDeriver:
 
     func derive(
         _ request: CommitGraphViewModelDerivationRequest
-    ) async -> CommitGraphViewModelDerivedState {
+    ) async throws -> CommitGraphViewModelDerivedState {
         requestCount += 1
         let requestID = requestCount
         if requestID == blockedRequestID {
@@ -1364,7 +1648,7 @@ private actor SelectivelyGatedCommitGraphDeriver:
                 blockedWaiters.removeAll()
             }
         }
-        return await base.derive(request)
+        return try await base.derive(request)
     }
 
     func waitUntilBlocked() async {
@@ -1377,6 +1661,128 @@ private actor SelectivelyGatedCommitGraphDeriver:
     func releaseBlockedRequest() {
         blockedContinuation?.resume()
         blockedContinuation = nil
+    }
+}
+
+private actor CancellationAwareCommitGraphDeriver:
+    CommitGraphViewModelDeriving
+{
+    private let base = DefaultCommitGraphViewModelDeriver()
+    private var invocationCount = 0
+    private var firstStarted = false
+    private var firstCancelled = false
+    private var firstCompletedFullChain = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func derive(
+        _ request: CommitGraphViewModelDerivationRequest
+    ) async throws -> CommitGraphViewModelDerivedState {
+        invocationCount += 1
+        let invocation = invocationCount
+        if invocation == 1 {
+            firstStarted = true
+            for waiter in startWaiters { waiter.resume() }
+            startWaiters.removeAll()
+            do {
+                try await Task.sleep(for: .seconds(60))
+            } catch is CancellationError {
+                firstCancelled = true
+                throw CancellationError()
+            }
+        }
+        let result = try await base.derive(request)
+        if invocation == 1 {
+            firstCompletedFullChain = true
+        }
+        return result
+    }
+
+    func waitUntilFirstDerivationStarts() async {
+        guard !firstStarted else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func wasFirstCancelled() -> Bool { firstCancelled }
+
+    func didFirstCompleteFullChain() -> Bool { firstCompletedFullChain }
+}
+
+private actor GatedDelegatingSceneStore: CommitGraphSceneStoring {
+    private let base: any CommitGraphSceneStoring
+    private var loadStarted = false
+    private var loadContinuation: CheckedContinuation<Void, Never>?
+    private var loadWaiters: [CheckedContinuation<Void, Never>] = []
+    private var saves = 0
+
+    init(base: any CommitGraphSceneStoring) {
+        self.base = base
+    }
+
+    func load(repositoryID: Int64) async throws -> CommitGraphSceneState? {
+        loadStarted = true
+        for waiter in loadWaiters { waiter.resume() }
+        loadWaiters.removeAll()
+        await withCheckedContinuation { continuation in
+            loadContinuation = continuation
+        }
+        return try await base.load(repositoryID: repositoryID)
+    }
+
+    func save(
+        _ scene: CommitGraphSceneState,
+        repositoryID: Int64
+    ) async throws {
+        saves += 1
+        try await base.save(scene, repositoryID: repositoryID)
+    }
+
+    func waitUntilLoadStarts() async {
+        guard !loadStarted else { return }
+        await withCheckedContinuation { continuation in
+            loadWaiters.append(continuation)
+        }
+    }
+
+    func releaseLoad() {
+        loadContinuation?.resume()
+        loadContinuation = nil
+    }
+
+    func saveCount() -> Int { saves }
+}
+
+private actor ScriptedSnapshotStore: CommitGraphSnapshotStoring {
+    enum Step: Sendable {
+        case snapshot(CommitGraphSnapshot)
+        case missing
+        case failure(CommitGraphSnapshotStoreError)
+    }
+
+    private var steps: [Step]
+
+    init(steps: [Step]) {
+        self.steps = steps
+    }
+
+    func load(repositoryID _: Int64) async throws -> CommitGraphSnapshot? {
+        guard !steps.isEmpty else { return nil }
+        switch steps.removeFirst() {
+        case let .snapshot(snapshot):
+            return snapshot
+        case .missing:
+            return nil
+        case let .failure(error):
+            throw error
+        }
+    }
+
+    func save(
+        _ snapshot: CommitGraphSnapshot,
+        repositoryID _: Int64
+    ) async throws {
+        steps.append(.snapshot(snapshot))
     }
 }
 
@@ -1399,6 +1805,20 @@ private actor InMemoryCommitGraphSnapshotStore:
     ) async throws {
         value = snapshot
     }
+}
+
+private func largeCommitGraphSnapshot(count: Int) -> CommitGraphSnapshot {
+    let commits = (0..<count).reversed().map { index in
+        let hash = "large-\(index)"
+        return commitGraphCommit(
+            hash: hash,
+            parents: index == 0 ? [] : ["large-\(index - 1)"]
+        )
+    }
+    return commitGraphSnapshot(
+        commits: commits,
+        headHash: "large-\(max(count - 1, 0))"
+    )
 }
 
 private func commitGraphCommit(

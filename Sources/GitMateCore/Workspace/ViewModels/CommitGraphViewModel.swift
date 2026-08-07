@@ -67,7 +67,7 @@ public struct CommitGraphViewModelDerivedState: Sendable {
 public protocol CommitGraphViewModelDeriving: Sendable {
     func derive(
         _ request: CommitGraphViewModelDerivationRequest
-    ) async -> CommitGraphViewModelDerivedState
+    ) async throws -> CommitGraphViewModelDerivedState
 }
 
 public struct DefaultCommitGraphViewModelDeriver:
@@ -88,12 +88,14 @@ public struct DefaultCommitGraphViewModelDeriver:
 
     public func derive(
         _ request: CommitGraphViewModelDerivationRequest
-    ) async -> CommitGraphViewModelDerivedState {
+    ) async throws -> CommitGraphViewModelDerivedState {
         let graphLayout = graphLayout
         let traditionalLayout = traditionalLayout
-        return await Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
             let integrity = request.integrityReport
                 ?? CommitGraphIntegrityValidator.validate(request.snapshot)
+            try Task.checkCancellation()
             guard integrity.status != .invalid else {
                 let projection = CommitGraphSceneProjection(
                     nodes: [],
@@ -119,8 +121,11 @@ public struct DefaultCommitGraphViewModelDeriver:
             let topology = CommitGraphLaneTopology.build(
                 snapshot: request.snapshot
             )
+            try Task.checkCancellation()
             let canvas = graphLayout.layout(topology: topology)
+            try Task.checkCancellation()
             let traditional = traditionalLayout.layout(topology: topology)
+            try Task.checkCancellation()
             let defaultPositions = Dictionary(
                 uniqueKeysWithValues: canvas.nodes.map {
                     ($0.hash, GraphPoint(x: $0.x, y: $0.y))
@@ -132,6 +137,7 @@ public struct DefaultCommitGraphViewModelDeriver:
                 newSnapshot: request.snapshot,
                 defaultPositions: defaultPositions
             )
+            try Task.checkCancellation()
             let provisionalProjection = CommitGraphSceneProjector.project(
                 layout: canvas,
                 scene: reconciled
@@ -141,26 +147,51 @@ public struct DefaultCommitGraphViewModelDeriver:
                     && reconciled.edgePorts[edge.id] == nil {
                 reconciled.edgePorts[edge.id] = edge.ports
             }
+            try Task.checkCancellation()
             let projection = CommitGraphSceneProjector.project(
                 layout: canvas,
                 scene: reconciled
             )
+            try Task.checkCancellation()
+            let renderIndex = CommitGraphRenderIndex(projection: projection)
+            try Task.checkCancellation()
             return CommitGraphViewModelDerivedState(
                 integrityReport: integrity,
                 canvasLayout: canvas,
                 traditionalLayout: traditional,
                 scene: reconciled,
                 projection: projection,
-                renderIndex: CommitGraphRenderIndex(projection: projection)
+                renderIndex: renderIndex
             )
-        }.value
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
+}
+
+private enum CommitGraphScenePersistenceState: Sendable {
+    case restoring
+    case writable
+    case readOnlyFutureSchema
 }
 
 @MainActor
 @Observable
 public final class CommitGraphViewModel {
-    public var viewport = GraphViewport()
+    public var viewport = GraphViewport() {
+        didSet {
+            guard viewport != oldValue,
+                  scene.viewMode == .canvas,
+                  scene.canvasViewport != viewport
+            else { return }
+            scene.canvasViewport = viewport
+            recordSceneMutation()
+            scheduleSceneSave()
+        }
+    }
     public private(set) var layout = CommitGraphLayoutResult()
     public private(set) var scene = CommitGraphSceneState()
     public private(set) var projection = CommitGraphSceneProjection(
@@ -243,13 +274,24 @@ public final class CommitGraphViewModel {
     private var currentSnapshot: CommitGraphSnapshot?
 
     @ObservationIgnored
+    private var installedSnapshotIdentity: CommitGraphSnapshotIdentity?
+
+    @ObservationIgnored
     private var renderIndex: CommitGraphRenderIndex?
 
     @ObservationIgnored
     private var refreshRequestID: UInt64 = 0
 
     @ObservationIgnored
-    private var isScenePersistenceProtected = false
+    private var sceneRevision: UInt64 = 0
+
+    @ObservationIgnored
+    private var scenePersistenceState: CommitGraphScenePersistenceState =
+        .restoring
+
+    @ObservationIgnored
+    private var derivationTask:
+        Task<CommitGraphViewModelDerivedState, Error>?
 
     public init(
         reader: any LocalGitReading,
@@ -291,35 +333,43 @@ public final class CommitGraphViewModel {
             loadedScene,
             requestID: requestID
         ) else { return }
-        guard let snapshot = await refreshCoordinator.cachedSnapshot(
-            repositoryID: repositoryID
-        ) else {
-            guard isCurrentRefreshRequest(requestID) else { return }
-            refreshState = .idle
-            return
-        }
-        let previousSnapshot = currentSnapshot
-        let sceneSnapshot = scene
-        let derived = await deriver.derive(
-            CommitGraphViewModelDerivationRequest(
+        do {
+            guard let snapshot = try await refreshCoordinator.cachedSnapshot(
+                repositoryID: repositoryID
+            ) else {
+                guard isCurrentRefreshRequest(requestID) else { return }
+                refreshState = currentSnapshot == nil
+                    ? .idle
+                    : .stale(message: "本地缓存缺失，继续显示上次正确结果。")
+                return
+            }
+            guard let derived = try await deriveLatestScene(
                 snapshot: snapshot,
-                previousSnapshot: previousSnapshot,
-                scene: sceneSnapshot
-            )
-        )
-        guard isCurrentRefreshRequest(requestID) else { return }
-        guard derived.integrityReport.status != .invalid else {
-            guard isCurrentRefreshRequest(requestID) else { return }
-            integrityReport = derived.integrityReport
-            refreshState = .failed(message: "本地提交图缓存已损坏。")
+                integrityReport: nil,
+                requestID: requestID
+            ) else { return }
+            guard derived.state.integrityReport.status != .invalid else {
+                integrityReport = derived.state.integrityReport
+                refreshState = currentSnapshot == nil
+                    ? .failed(message: "本地提交图缓存已损坏。")
+                    : .stale(message: "本地缓存损坏，继续显示上次正确结果。")
+                return
+            }
+            guard installDerivedState(
+                snapshot,
+                derived: derived.state,
+                expectedSceneRevision: derived.sceneRevision,
+                requestID: requestID
+            ) else { return }
+            refreshState = .stale(message: "正在显示上次正确结果。")
+        } catch is CancellationError {
             return
+        } catch {
+            guard isCurrentRefreshRequest(requestID) else { return }
+            refreshState = currentSnapshot == nil
+                ? .failed(message: "本地提交图缓存已损坏。")
+                : .stale(message: "本地缓存损坏，继续显示上次正确结果。")
         }
-        guard installDerivedState(
-            snapshot,
-            derived: derived,
-            requestID: requestID
-        ) else { return }
-        refreshState = .stale(message: "正在显示上次正确结果。")
     }
 
     public func refresh(source _: CommitGraphRefreshSource) async {
@@ -345,20 +395,17 @@ public final class CommitGraphViewModel {
                 repositoryURL: repositoryURL
             )
             guard isCurrentRefreshRequest(requestID) else { return }
-            if currentSnapshot != result.snapshot {
-                let previousSnapshot = currentSnapshot
-                let sceneSnapshot = scene
-                let derived = await deriver.derive(
-                    CommitGraphViewModelDerivationRequest(
-                        snapshot: result.snapshot,
-                        previousSnapshot: previousSnapshot,
-                        scene: sceneSnapshot,
-                        integrityReport: result.integrity
-                    )
-                )
+            let resultIdentity = CommitGraphSnapshotIdentity(result.snapshot)
+            if installedSnapshotIdentity != resultIdentity {
+                guard let derived = try await deriveLatestScene(
+                    snapshot: result.snapshot,
+                    integrityReport: result.integrity,
+                    requestID: requestID
+                ) else { return }
                 guard installDerivedState(
                     result.snapshot,
-                    derived: derived,
+                    derived: derived.state,
+                    expectedSceneRevision: derived.sceneRevision,
                     requestID: requestID
                 ) else { return }
             } else {
@@ -398,6 +445,7 @@ public final class CommitGraphViewModel {
             viewport = scene.canvasViewport
         }
         focusedHash = navigationFocusHash()
+        recordSceneMutation()
         scheduleSceneSave()
     }
 
@@ -591,6 +639,7 @@ public final class CommitGraphViewModel {
         if !movedNodeHashes.isEmpty || !movedGroupIDs.isEmpty {
             pathRevision &+= 1
         }
+        recordSceneMutation()
         scheduleSceneSave()
     }
 
@@ -659,6 +708,7 @@ public final class CommitGraphViewModel {
             Set(updatedLayout.nodes.map(\.hash))
         )
         refreshProjection(incrementingPathRevision: true)
+        recordSceneMutation()
         scheduleSceneSave()
     }
 
@@ -749,6 +799,7 @@ public final class CommitGraphViewModel {
             scene: scene
         )
         refreshProjection(incrementingPathRevision: false)
+        recordSceneMutation()
         scheduleSceneSave()
     }
 
@@ -764,6 +815,7 @@ public final class CommitGraphViewModel {
         )
         selectedHashes.removeAll()
         refreshProjection(incrementingPathRevision: true)
+        recordSceneMutation()
         scheduleSceneSave()
     }
 
@@ -775,6 +827,7 @@ public final class CommitGraphViewModel {
         )
         selectedHashes.removeAll()
         refreshProjection(incrementingPathRevision: true)
+        recordSceneMutation()
         scheduleSceneSave()
     }
 
@@ -791,6 +844,7 @@ public final class CommitGraphViewModel {
         )
         selectedHashes.removeAll()
         refreshProjection(incrementingPathRevision: true)
+        recordSceneMutation()
         scheduleSceneSave()
         return id
     }
@@ -813,6 +867,7 @@ public final class CommitGraphViewModel {
         )
         groupSuggestions.removeAll { $0.id == id }
         refreshProjection(incrementingPathRevision: true)
+        recordSceneMutation()
         scheduleSceneSave()
         return groupID
     }
@@ -844,8 +899,10 @@ public final class CommitGraphViewModel {
         ) else {
             return
         }
+        guard scene.groups[index].isCollapsed != isCollapsed else { return }
         scene.groups[index].isCollapsed = isCollapsed
         refreshProjection(incrementingPathRevision: true)
+        recordSceneMutation()
         scheduleSceneSave()
     }
 
@@ -865,6 +922,7 @@ public final class CommitGraphViewModel {
             rect: rect
         )
         scene.regions.append(region)
+        recordSceneMutation()
         scheduleSceneSave()
         return region.id
     }
@@ -885,6 +943,7 @@ public final class CommitGraphViewModel {
         if let rect {
             scene.regions[index].rect = rect
         }
+        recordSceneMutation()
         scheduleSceneSave()
     }
 
@@ -896,6 +955,7 @@ public final class CommitGraphViewModel {
         )
         guard updated != scene else { return }
         scene = updated
+        recordSceneMutation()
         scheduleSceneSave()
     }
 
@@ -907,11 +967,14 @@ public final class CommitGraphViewModel {
         )
         guard updated != scene else { return }
         scene = updated
+        recordSceneMutation()
         scheduleSceneSave()
     }
 
     public func deleteRegion(id: UUID) {
+        guard scene.regions.contains(where: { $0.id == id }) else { return }
         scene.regions.removeAll { $0.id == id }
+        recordSceneMutation()
         scheduleSceneSave()
     }
 
@@ -942,6 +1005,7 @@ public final class CommitGraphViewModel {
             lineStyle: style
         )
         pathRevision &+= 1
+        recordSceneMutation()
         scheduleSceneSave()
     }
 
@@ -949,7 +1013,7 @@ public final class CommitGraphViewModel {
         synchronizeCanvasViewportIfNeeded()
         sceneSaveTask?.cancel()
         sceneSaveTask = nil
-        guard !isScenePersistenceProtected else { return }
+        guard scenePersistenceState == .writable else { return }
         await saveScene(scene)
     }
 
@@ -1033,10 +1097,17 @@ public final class CommitGraphViewModel {
     private struct LoadedScene: Sendable {
         let scene: CommitGraphSceneState
         let warningMessage: String?
-        let protectsPersistence: Bool
+        let persistenceState: CommitGraphScenePersistenceState
+    }
+
+    private struct RevisionMatchedDerivedState: Sendable {
+        let state: CommitGraphViewModelDerivedState
+        let sceneRevision: UInt64
     }
 
     private func beginRefreshRequest() -> UInt64 {
+        derivationTask?.cancel()
+        derivationTask = nil
         refreshRequestID &+= 1
         return refreshRequestID
     }
@@ -1047,6 +1118,7 @@ public final class CommitGraphViewModel {
 
     private func finishRefreshRequest(_ requestID: UInt64) {
         guard isCurrentRefreshRequest(requestID) else { return }
+        derivationTask = nil
         isLoading = false
         isLoadingMore = false
     }
@@ -1056,14 +1128,14 @@ public final class CommitGraphViewModel {
             return LoadedScene(
                 scene: scene,
                 warningMessage: sceneWarningMessage,
-                protectsPersistence: isScenePersistenceProtected
+                persistenceState: scenePersistenceState
             )
         }
         guard let repositoryID, let sceneStore else {
             return LoadedScene(
                 scene: CommitGraphSceneState(),
                 warningMessage: nil,
-                protectsPersistence: false
+                persistenceState: .writable
             )
         }
         do {
@@ -1072,26 +1144,26 @@ public final class CommitGraphViewModel {
                     repositoryID: repositoryID
                 ) ?? CommitGraphSceneState(),
                 warningMessage: nil,
-                protectsPersistence: false
+                persistenceState: .writable
             )
         } catch let error as CommitGraphSceneStoreError {
             if case .unsupportedSchema = error {
                 return LoadedScene(
                     scene: CommitGraphSceneState(),
                     warningMessage: "检测到较新版本的画布数据，当前仅以只读默认布局显示。",
-                    protectsPersistence: true
+                    persistenceState: .readOnlyFutureSchema
                 )
             }
             return LoadedScene(
                 scene: CommitGraphSceneState(),
                 warningMessage: "已使用默认画布布局。",
-                protectsPersistence: false
+                persistenceState: .writable
             )
         } catch {
             return LoadedScene(
                 scene: CommitGraphSceneState(),
                 warningMessage: "已使用默认画布布局。",
-                protectsPersistence: false
+                persistenceState: .writable
             )
         }
     }
@@ -1104,20 +1176,61 @@ public final class CommitGraphViewModel {
         if !didRestoreScene {
             scene = loadedScene.scene
             sceneWarningMessage = loadedScene.warningMessage
-            isScenePersistenceProtected =
-                loadedScene.protectsPersistence
+            scenePersistenceState = loadedScene.persistenceState
             viewport = loadedScene.scene.canvasViewport
             didRestoreScene = true
+            sceneRevision &+= 1
         }
         return true
+    }
+
+    private func deriveLatestScene(
+        snapshot: CommitGraphSnapshot,
+        integrityReport: CommitGraphIntegrityReport?,
+        requestID: UInt64
+    ) async throws -> RevisionMatchedDerivedState? {
+        while isCurrentRefreshRequest(requestID) {
+            try Task.checkCancellation()
+            let revision = sceneRevision
+            let request = CommitGraphViewModelDerivationRequest(
+                snapshot: snapshot,
+                previousSnapshot: currentSnapshot,
+                scene: scene,
+                integrityReport: integrityReport
+            )
+            let deriver = deriver
+            let task = Task {
+                try await deriver.derive(request)
+            }
+            derivationTask?.cancel()
+            derivationTask = task
+            let state = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+            guard isCurrentRefreshRequest(requestID) else { return nil }
+            guard sceneRevision == revision else {
+                continue
+            }
+            derivationTask = nil
+            return RevisionMatchedDerivedState(
+                state: state,
+                sceneRevision: revision
+            )
+        }
+        return nil
     }
 
     private func installDerivedState(
         _ snapshot: CommitGraphSnapshot,
         derived: CommitGraphViewModelDerivedState,
+        expectedSceneRevision: UInt64,
         requestID: UInt64
     ) -> Bool {
-        guard isCurrentRefreshRequest(requestID) else { return false }
+        guard isCurrentRefreshRequest(requestID),
+              sceneRevision == expectedSceneRevision
+        else { return false }
 
         let availableHashes = Set(
             snapshot.commitsNewestFirst.map(\.fullHash)
@@ -1127,6 +1240,7 @@ public final class CommitGraphViewModel {
         } ?? false
         commits = snapshot.commitsNewestFirst
         currentSnapshot = snapshot
+        installedSnapshotIdentity = CommitGraphSnapshotIdentity(snapshot)
         layout = derived.canvasLayout
         traditionalLayout = derived.traditionalLayout
         scene = derived.scene
@@ -1151,6 +1265,7 @@ public final class CommitGraphViewModel {
             self.focusedHash = nil
         }
         pathRevision &+= 1
+        recordSceneMutation()
         scheduleSceneSave()
         return true
     }
@@ -1176,6 +1291,7 @@ public final class CommitGraphViewModel {
               scene.canvasViewport != viewport
         else { return }
         scene.canvasViewport = viewport
+        recordSceneMutation()
         scheduleSceneSave()
     }
 
@@ -1217,7 +1333,7 @@ public final class CommitGraphViewModel {
         didRestoreScene = true
 
         guard let repositoryID, let sceneStore else {
-            isScenePersistenceProtected = false
+            scenePersistenceState = .writable
             scene = CommitGraphSceneState.defaultState(layout: layout)
             refreshProjection(incrementingPathRevision: false)
             return
@@ -1227,21 +1343,21 @@ public final class CommitGraphViewModel {
                 repositoryID: repositoryID
             ) ?? CommitGraphSceneState.defaultState(layout: layout)
             sceneWarningMessage = nil
-            isScenePersistenceProtected = false
+            scenePersistenceState = .writable
         } catch let error as CommitGraphSceneStoreError {
             scene = CommitGraphSceneState.defaultState(layout: layout)
             if case .unsupportedSchema = error {
                 sceneWarningMessage =
                     "检测到较新版本的画布数据，当前仅以只读默认布局显示。"
-                isScenePersistenceProtected = true
+                scenePersistenceState = .readOnlyFutureSchema
             } else {
                 sceneWarningMessage = "已使用默认画布布局。"
-                isScenePersistenceProtected = false
+                scenePersistenceState = .writable
             }
         } catch {
             scene = CommitGraphSceneState.defaultState(layout: layout)
             sceneWarningMessage = "已使用默认画布布局。"
-            isScenePersistenceProtected = false
+            scenePersistenceState = .writable
         }
         reconcileSceneWithLayout()
     }
@@ -1289,6 +1405,7 @@ public final class CommitGraphViewModel {
             movedGroupIDs: [id]
         )
         pathRevision &+= 1
+        recordSceneMutation()
         if schedulesPersistence {
             scheduleSceneSave()
         }
@@ -1311,6 +1428,7 @@ public final class CommitGraphViewModel {
             movedGroupIDs: []
         )
         pathRevision &+= 1
+        recordSceneMutation()
         if schedulesPersistence {
             scheduleSceneSave()
         }
@@ -1410,8 +1528,12 @@ public final class CommitGraphViewModel {
         }
     }
 
+    private func recordSceneMutation() {
+        sceneRevision &+= 1
+    }
+
     private func scheduleSceneSave() {
-        guard !isScenePersistenceProtected,
+        guard scenePersistenceState == .writable,
               sceneStore != nil,
               repositoryID != nil
         else { return }
@@ -1431,7 +1553,7 @@ public final class CommitGraphViewModel {
     }
 
     private func saveScene(_ snapshot: CommitGraphSceneState) async {
-        guard !isScenePersistenceProtected,
+        guard scenePersistenceState == .writable,
               let repositoryID,
               let sceneStore
         else { return }
