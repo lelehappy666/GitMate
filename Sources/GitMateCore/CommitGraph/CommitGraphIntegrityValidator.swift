@@ -14,17 +14,24 @@ public enum CommitGraphIntegrityValidator {
         let duplicateEdgeIDs = duplicates(in: edgeIDs)
         let parentHashes = snapshot.commitsNewestFirst.flatMap(\.parentHashes)
         let missingParentHashSet = Set(parentHashes).subtracting(commitHashSet)
+        let shallowBoundaryHashSet = snapshot.fingerprint.isShallow
+            ? snapshot.shallowBoundaryParentHashes
+            : []
         let shallowBoundaryParentHashes = missingParentHashSet
-            .intersection(snapshot.shallowBoundaryParentHashes)
+            .intersection(shallowBoundaryHashSet)
             .sorted()
         let missingParentHashes = missingParentHashSet
-            .subtracting(snapshot.shallowBoundaryParentHashes)
+            .subtracting(shallowBoundaryHashSet)
             .sorted()
-        let missingReferenceTargets = Set(snapshot.fingerprint.references.map(\.targetHash))
+        var referenceTargets = Set(snapshot.fingerprint.references.map(\.targetHash))
+        if let headHash = snapshot.fingerprint.headHash {
+            referenceTargets.insert(headHash)
+        }
+        let missingReferenceTargets = referenceTargets
             .subtracting(commitHashSet)
             .sorted()
         let expectedRelationshipCount = parentHashes.filter {
-            !snapshot.shallowBoundaryParentHashes.contains($0)
+            !shallowBoundaryHashSet.contains($0)
         }.count
         let actualRelationshipCount = parentHashes.filter { commitHashSet.contains($0) }.count
 

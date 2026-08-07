@@ -71,6 +71,47 @@ let commitGraphIntegrityValidatorTests = [
             ["boundary"],
             "必须报告实际命中的浅克隆边界"
         )
+    },
+    TestCase("缺失 HEAD 顶点返回无效报告") {
+        let snapshot = CommitGraphSnapshot(
+            repositoryPath: "/repo",
+            fingerprint: CommitGraphReferenceFingerprint(
+                references: [],
+                headName: nil,
+                headHash: "detached-head",
+                isShallow: false
+            ),
+            commitsNewestFirst: [integrityCommit("child")],
+            expectedCommitCount: 1,
+            shallowBoundaryParentHashes: [],
+            generatedAt: Date(timeIntervalSince1970: 200)
+        )
+        let report = CommitGraphIntegrityValidator.validate(snapshot)
+        try expectEqual(report.status, .invalid, "缺失 HEAD 顶点必须失败")
+        try expectEqual(
+            report.missingReferenceTargets,
+            ["detached-head"],
+            "必须报告缺失 HEAD 顶点"
+        )
+    },
+    TestCase("非浅克隆边界缺失父节点返回无效报告") {
+        let snapshot = CommitGraphSnapshot(
+            repositoryPath: "/repo",
+            fingerprint: CommitGraphReferenceFingerprint(
+                references: [],
+                headName: "main",
+                headHash: "child",
+                isShallow: false
+            ),
+            commitsNewestFirst: [integrityCommit("child", parents: ["boundary"])],
+            expectedCommitCount: 1,
+            shallowBoundaryParentHashes: ["boundary"],
+            generatedAt: Date(timeIntervalSince1970: 200)
+        )
+        let report = CommitGraphIntegrityValidator.validate(snapshot)
+        try expectEqual(report.status, .invalid, "非浅克隆不得豁免缺失父节点")
+        try expectEqual(report.missingParentHashes, ["boundary"], "必须保留真实缺失父节点")
+        try expectEqual(report.shallowBoundaryParentHashes, [], "非浅克隆不能报告浅边界")
     }
 ]
 
