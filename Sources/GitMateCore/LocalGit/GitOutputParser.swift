@@ -48,18 +48,21 @@ public enum GitOutputParser {
         }
     }
 
-    public static func parseShallowBoundaryParentHashes(
-        _ output: String
-    ) throws -> Set<String> {
-        Set(
-            output.split(separator: "\n", omittingEmptySubsequences: true)
-                .compactMap { line in
-                    guard line.first == "-", line.count > 1 else {
-                        return nil
-                    }
-                    return String(line.dropFirst())
-                }
-        )
+    public static func parseShallowCommitHashes(_ output: String) -> [String] {
+        output
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+    }
+
+    public static func parseRawCommitParentHashes(_ output: String) -> [String] {
+        output
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .prefix { !$0.isEmpty }
+            .compactMap { line in
+                guard line.hasPrefix("parent ") else { return nil }
+                let hash = line.dropFirst("parent ".count)
+                return hash.isEmpty ? nil : String(hash)
+            }
     }
 
     public static func parseCommitCount(_ output: String) throws -> Int {

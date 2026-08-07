@@ -238,30 +238,86 @@ public final class CommandLocalGitReader: LocalGitReading, CommitGraphSnapshotRe
         let commitsNewestFirst = parsedCommits.filter {
             seenHashes.insert($0.fullHash).inserted
         }
-        let shallowBoundaryParentHashes: Set<String>
+        let shallowParentHashesByCommit: [String: [String]]
         if fingerprint.isShallow {
-            shallowBoundaryParentHashes = try GitOutputParser
-                .parseShallowBoundaryParentHashes(
-                    decode(
-                        await execute([
-                            "-C", repositoryPath, "rev-list", "--boundary",
-                            "--branches", "--remotes"
-                        ]),
-                        context: "浅克隆边界"
-                    )
-                )
+            shallowParentHashesByCommit = try await readShallowParentHashes(
+                repositoryPath: repositoryPath
+            )
         } else {
-            shallowBoundaryParentHashes = []
+            shallowParentHashesByCommit = [:]
         }
+        let commitsWithShallowParents = commitsNewestFirst.map { commit in
+            guard let parentHashes = shallowParentHashesByCommit[commit.fullHash]
+            else {
+                return commit
+            }
+            return GitCommit(
+                shortHash: commit.shortHash,
+                fullHash: commit.fullHash,
+                subject: commit.subject,
+                authorName: commit.authorName,
+                authorEmail: commit.authorEmail,
+                authoredAt: commit.authoredAt,
+                parentHashes: parentHashes,
+                decorations: commit.decorations
+            )
+        }
+        let shallowBoundaryParentHashes = Set(
+            shallowParentHashesByCommit.values.flatMap { $0 }
+        )
 
         return CommitGraphSnapshot(
             repositoryPath: repositoryPath,
             fingerprint: fingerprint,
-            commitsNewestFirst: commitsNewestFirst,
+            commitsNewestFirst: commitsWithShallowParents,
             expectedCommitCount: expectedCommitCount,
             shallowBoundaryParentHashes: shallowBoundaryParentHashes,
             generatedAt: Date()
         )
+    }
+
+    private func readShallowParentHashes(
+        repositoryPath: String
+    ) async throws -> [String: [String]] {
+        let shallowPath = try decode(
+            await execute([
+                "-C", repositoryPath, "rev-parse", "--git-path", "shallow"
+            ]),
+            context: "浅克隆元数据路径"
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let repositoryDirectory = URL(
+            fileURLWithPath: repositoryPath,
+            isDirectory: true
+        )
+        let shallowURL: URL
+        if shallowPath.hasPrefix("/") {
+            shallowURL = URL(fileURLWithPath: shallowPath)
+        } else {
+            shallowURL = URL(
+                fileURLWithPath: shallowPath,
+                relativeTo: repositoryDirectory
+            )
+        }
+        let shallowData = try Data(contentsOf: shallowURL.standardizedFileURL)
+        guard let shallowOutput = String(data: shallowData, encoding: .utf8) else {
+            throw GitOutputParsingError.invalidUTF8("浅克隆元数据")
+        }
+        let shallowCommitHashes = GitOutputParser.parseShallowCommitHashes(
+            shallowOutput
+        )
+        var parentHashesByCommit: [String: [String]] = [:]
+        for shallowCommitHash in shallowCommitHashes {
+            try validateRevision(shallowCommitHash)
+            let rawCommit = try decode(
+                await execute([
+                    "-C", repositoryPath, "cat-file", "-p", shallowCommitHash
+                ]),
+                context: "浅克隆边界提交"
+            )
+            parentHashesByCommit[shallowCommitHash] = GitOutputParser
+                .parseRawCommitParentHashes(rawCommit)
+        }
+        return parentHashesByCommit
     }
 
     private func readCommitPage(

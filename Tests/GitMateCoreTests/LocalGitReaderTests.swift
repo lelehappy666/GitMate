@@ -67,6 +67,12 @@ private struct RealGitFixture: Sendable {
     let commitMessage: String
 }
 
+private struct RealShallowGitFixture: Sendable {
+    let repositoryURL: URL
+    let missingParentHash: String
+    let cleanupURLs: [URL]
+}
+
 private final class PipeReadTestState: @unchecked Sendable {
     let handlerStarted = DispatchSemaphore(value: 0)
     let releaseHandler = DispatchSemaphore(value: 0)
@@ -174,6 +180,84 @@ private func makeRealGitFixture() throws -> RealGitFixture {
         whitespaceText: whitespaceText,
         commitMessage: commitMessage
     )
+}
+
+private func makeRealShallowGitFixture() throws -> RealShallowGitFixture {
+    let sourceURL = FileManager.default.temporaryDirectory
+        .appending(
+            path: "GitMateShallowSource-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+    let originURL = FileManager.default.temporaryDirectory
+        .appending(
+            path: "GitMateShallowOrigin-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+    let cloneURL = FileManager.default.temporaryDirectory
+        .appending(
+            path: "GitMateShallowClone-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+    try FileManager.default.createDirectory(
+        at: sourceURL,
+        withIntermediateDirectories: true
+    )
+    try runGitSetup(
+        ["init", "--quiet", "--initial-branch=main"],
+        repositoryURL: sourceURL
+    )
+    try runGitSetup(["config", "user.name", "GitMate Tests"], repositoryURL: sourceURL)
+    try runGitSetup(
+        ["config", "user.email", "gitmate-tests@example.com"],
+        repositoryURL: sourceURL
+    )
+    for index in 1...3 {
+        try Data("提交 \(index)\n".utf8).write(
+            to: sourceURL.appending(path: "History.txt")
+        )
+        try runGitSetup(["add", "History.txt"], repositoryURL: sourceURL)
+        try runGitSetup(
+            ["commit", "--quiet", "-m", "提交 \(index)"],
+            repositoryURL: sourceURL
+        )
+    }
+    _ = try runGitCommand([
+        "init", "--bare", "--quiet", "--initial-branch=main", originURL.path
+    ])
+    try runGitSetup(["remote", "add", "origin", originURL.path], repositoryURL: sourceURL)
+    try runGitSetup(["push", "--quiet", "origin", "main"], repositoryURL: sourceURL)
+    let missingParentHash = try runGitCommand([
+        "-C", sourceURL.path, "rev-parse", "HEAD~1"
+    ]).trimmingCharacters(in: .whitespacesAndNewlines)
+    _ = try runGitCommand([
+        "clone", "--quiet", "--depth", "1", "file://\(originURL.path)", cloneURL.path
+    ])
+
+    return RealShallowGitFixture(
+        repositoryURL: cloneURL,
+        missingParentHash: missingParentHash,
+        cleanupURLs: [sourceURL, originURL, cloneURL]
+    )
+}
+
+private func runGitCommand(_ arguments: [String]) throws -> String {
+    let process = Process()
+    let standardOutput = Pipe()
+    let standardError = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    process.arguments = arguments
+    process.standardOutput = standardOutput
+    process.standardError = standardError
+    try process.run()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        let errorData = standardError.fileHandleForReading.readDataToEndOfFile()
+        throw TestFailure(
+            description: String(decoding: errorData, as: UTF8.self)
+        )
+    }
+    let outputData = standardOutput.fileHandleForReading.readDataToEndOfFile()
+    return String(decoding: outputData, as: UTF8.self)
 }
 
 private func runGitSetup(
@@ -787,60 +871,72 @@ let localGitReaderTests = [
         try expectEqual(snapshot.expectedCommitCount, 3, "总数必须保留 Git 原始统计值")
         try executor.verifyComplete()
     },
-    TestCase("浅克隆快照读取边界父提交") {
-        let repositoryURL = URL(fileURLWithPath: "/repo")
+    TestCase("浅克隆快照从元数据和原始提交读取边界父提交") {
+        let repositoryURL = FileManager.default.temporaryDirectory
+            .appending(path: "GitMateShallowMetadata-\(UUID().uuidString)")
+        let shallowDirectory = repositoryURL.appending(
+            path: ".git",
+            directoryHint: .isDirectory
+        )
+        try FileManager.default.createDirectory(
+            at: shallowDirectory,
+            withIntermediateDirectories: true
+        )
+        try Data("shallowhead\n".utf8).write(
+            to: shallowDirectory.appending(path: "shallow")
+        )
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        let shallowLog =
+            "shallow1\u{0}shallowhead\u{0}浅克隆提交\u{0}lele\u{0}lele@example.com\u{0}2026-07-29T11:00:00Z\u{0}\u{0}\u{0}"
         let executor = FakeCommandExecutor(
             results: [
-                .success([.standardOutput("refs/heads/main\u{0}child02full\u{0}\u{0}\n")]),
-                .success([.standardOutput("main\n")]),
-                .success([.standardOutput("child02full\n")]),
-                .success([.standardOutput("true\n")]),
                 .success([.standardOutput("1\n")]),
-                .success([.standardOutput(newestToOldestTwoCommitFixture)]),
-                .success([.standardOutput("-root001full\n")])
+                .success([.standardOutput(shallowLog)]),
+                .success([.standardOutput(".git/shallow\n")]),
+                .success([.standardOutput(
+                    "tree treehash\nparent boundaryparent\nauthor Lele <lele@example.com> 0 +0000\n\n浅克隆提交\n"
+                )])
             ],
             expectedInvocations: [
                 expectedInvocation([
-                    "-C", "/repo", "for-each-ref",
-                    "--format=%(refname)%00%(objectname)%00%(symref)%00",
-                    "refs/heads", "refs/remotes"
-                ]),
-                expectedInvocation([
-                    "-C", "/repo", "rev-parse", "--abbrev-ref", "HEAD"
-                ]),
-                expectedInvocation([
-                    "-C", "/repo", "rev-parse", "HEAD"
-                ]),
-                expectedInvocation([
-                    "-C", "/repo", "rev-parse", "--is-shallow-repository"
-                ]),
-                expectedInvocation([
-                    "-C", "/repo", "rev-list",
+                    "-C", repositoryURL.path, "rev-list",
                     "--branches", "--remotes", "--count"
                 ]),
                 expectedInvocation([
-                    "-C", "/repo", "log",
+                    "-C", repositoryURL.path, "log",
                     "--branches", "--remotes", "--topo-order",
                     "--decorate=short", CommandLocalGitReader.commitLogFormat
                 ]),
                 expectedInvocation([
-                    "-C", "/repo", "rev-list", "--boundary",
-                    "--branches", "--remotes"
+                    "-C", repositoryURL.path, "rev-parse",
+                    "--git-path", "shallow"
+                ]),
+                expectedInvocation([
+                    "-C", repositoryURL.path, "cat-file", "-p", "shallowhead"
                 ])
             ]
         )
         let reader = CommandLocalGitReader(executor: executor)
 
-        let fingerprint = try await reader.fingerprint(repositoryURL: repositoryURL)
         let snapshot = try await reader.snapshot(
             repositoryURL: repositoryURL,
-            fingerprint: fingerprint
+            fingerprint: CommitGraphReferenceFingerprint(
+                references: [],
+                headName: "main",
+                headHash: "shallowhead",
+                isShallow: true
+            )
         )
 
         try expectEqual(
             snapshot.shallowBoundaryParentHashes,
-            ["root001full"],
+            ["boundaryparent"],
             "浅克隆必须保存边界父提交哈希"
+        )
+        try expectEqual(
+            snapshot.commitsNewestFirst[0].parentHashes,
+            ["boundaryparent"],
+            "浅克隆提交必须恢复被 Git 日志隐藏的父边"
         )
         try executor.verifyComplete()
     },
@@ -1102,6 +1198,38 @@ let localGitReaderTests = [
             diff.patch.contains("+  前导新增\n+\n+结尾\n"),
             "patch 必须保留新增行前导空白与空行，实际：\(diff.patch)"
         )
+    },
+    TestCase("真实浅克隆快照记录原始缺失父边") {
+        let fixture = try makeRealShallowGitFixture()
+        defer {
+            for url in fixture.cleanupURLs {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        let reader = CommandLocalGitReader()
+
+        let fingerprint = try await reader.fingerprint(
+            repositoryURL: fixture.repositoryURL
+        )
+        let snapshot = try await reader.snapshot(
+            repositoryURL: fixture.repositoryURL,
+            fingerprint: fingerprint
+        )
+        let report = CommitGraphIntegrityValidator.validate(snapshot)
+
+        try expect(fingerprint.isShallow, "深度一克隆必须被识别为浅克隆")
+        try expectEqual(snapshot.commitsNewestFirst.count, 1, "浅克隆只能读取下载的顶端提交")
+        try expectEqual(
+            snapshot.commitsNewestFirst[0].parentHashes,
+            [fixture.missingParentHash],
+            "原始提交对象中的父提交必须补回快照"
+        )
+        try expectEqual(
+            snapshot.shallowBoundaryParentHashes,
+            [fixture.missingParentHash],
+            "浅克隆边界必须使用未下载父提交的真实哈希"
+        )
+        try expectEqual(report.status, .warning, "真实浅克隆边界必须得到警告而非伪完整图")
     },
     TestCase("命令 fake 拒绝预期之外的额外调用") {
         let output = "# branch.head main\u{0}"
