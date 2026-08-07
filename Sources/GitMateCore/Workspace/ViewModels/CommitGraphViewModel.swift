@@ -340,7 +340,16 @@ public final class CommitGraphViewModel {
         Task<CommitGraphSceneDerivedState, Error>?
 
     @ObservationIgnored
-    private var initialCacheLoadTask: Task<Void, Never>?
+    private var initialCacheLoadTask: Task<Bool, Never>?
+
+    @ObservationIgnored
+    private var initialCacheLoadID: UUID?
+
+    @ObservationIgnored
+    private var didCompleteInitialCacheLoad = false
+
+    @ObservationIgnored
+    private var initialPresentationLeases: Set<UUID> = []
 
     public init(
         reader: any LocalGitReading,
@@ -369,10 +378,11 @@ public final class CommitGraphViewModel {
         graphLayout = layout
     }
 
-    public func loadCachedSnapshot() async {
+    @discardableResult
+    public func loadCachedSnapshot() async -> Bool {
         guard let repositoryID, let refreshCoordinator else {
             await load()
-            return
+            return !Task.isCancelled
         }
         let requestID = beginRefreshRequest()
         isLoading = currentSnapshot == nil
@@ -381,74 +391,126 @@ public final class CommitGraphViewModel {
         guard adoptLoadedScene(
             loadedScene,
             requestID: requestID
-        ) else { return }
+        ) else { return false }
         do {
             guard let snapshot = try await refreshCoordinator.cachedSnapshot(
                 repositoryID: repositoryID
             ) else {
-                guard isCurrentRefreshRequest(requestID) else { return }
+                guard isCurrentRefreshRequest(requestID) else { return false }
                 refreshState = currentSnapshot == nil
                     ? .idle
                     : .stale(message: "本地缓存缺失，继续显示上次正确结果。")
-                return
+                return true
             }
             guard let base = try await deriveGitBase(
                 snapshot: snapshot,
                 integrityReport: nil,
                 requestID: requestID
-            ) else { return }
+            ) else { return false }
             guard base.integrityReport.status != .invalid else {
                 integrityReport = base.integrityReport
                 refreshState = currentSnapshot == nil
                     ? .failed(message: "本地提交图缓存已损坏。")
                     : .stale(message: "本地缓存损坏，继续显示上次正确结果。")
-                return
+                return false
             }
             guard let derived = try await deriveLatestScene(
                 snapshot: snapshot,
                 base: base,
                 requestID: requestID
-            ) else { return }
+            ) else { return false }
             guard installDerivedState(
                 snapshot,
                 base: base,
                 derived: derived.state,
                 expectedSceneRevision: derived.sceneRevision,
                 requestID: requestID
-            ) else { return }
+            ) else { return false }
             refreshState = .stale(message: "正在显示上次正确结果。")
+            return true
         } catch is CancellationError {
-            return
+            return false
         } catch {
-            guard isCurrentRefreshRequest(requestID) else { return }
+            guard isCurrentRefreshRequest(requestID) else { return false }
             refreshState = currentSnapshot == nil
                 ? .failed(message: "本地提交图缓存已损坏。")
                 : .stale(message: "本地缓存损坏，继续显示上次正确结果。")
+            return false
         }
     }
 
-    /// 页面首次出现时先且只先读取一次本地快照；随后所有来源都可继续
-    /// 请求完整刷新。任务被 SwiftUI 取消时不启动过期来源的刷新。
-    public func refreshAfterInitialCacheLoad(
+    /// 一个呈现任务的首次加载租约。多个同时存在的页面任务复用同一个
+    /// 缓存读取；只有最后一个租约结束时才取消该读取及其派生工作。
+    public func refreshForPresentation(
         source: CommitGraphRefreshSource
     ) async {
-        await loadCachedSnapshotOnce()
-        guard !Task.isCancelled else { return }
-        await refresh(source: source)
+        let leaseID = beginInitialPresentationLease()
+        await withTaskCancellationHandler {
+            defer { endInitialPresentationLease(leaseID) }
+            await loadCachedSnapshotForPresentation()
+            guard !Task.isCancelled else { return }
+            await refresh(source: source)
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.endInitialPresentationLease(leaseID)
+            }
+        }
     }
 
-    private func loadCachedSnapshotOnce() async {
-        if let initialCacheLoadTask {
-            await initialCacheLoadTask.value
-            return
+    private func beginInitialPresentationLease() -> UUID {
+        let leaseID = UUID()
+        initialPresentationLeases.insert(leaseID)
+        return leaseID
+    }
+
+    private func endInitialPresentationLease(_ leaseID: UUID) {
+        guard initialPresentationLeases.remove(leaseID) != nil,
+              initialPresentationLeases.isEmpty
+        else { return }
+
+        initialCacheLoadTask?.cancel()
+        initialCacheLoadTask = nil
+        initialCacheLoadID = nil
+        baseDerivationTask?.cancel()
+        sceneDerivationTask?.cancel()
+        baseDerivationTask = nil
+        sceneDerivationTask = nil
+        refreshRequestID &+= 1
+        isLoading = false
+        isLoadingMore = false
+    }
+
+    private func loadCachedSnapshotForPresentation() async {
+        guard !didCompleteInitialCacheLoad else { return }
+
+        let task: Task<Bool, Never>
+        let loadID: UUID
+        if let initialCacheLoadTask, let initialCacheLoadID {
+            task = initialCacheLoadTask
+            loadID = initialCacheLoadID
+        } else {
+            let nextLoadID = UUID()
+            let nextTask = Task { @MainActor [weak self] in
+                guard let self else { return false }
+                return await self.loadCachedSnapshot()
+            }
+            initialCacheLoadTask = nextTask
+            initialCacheLoadID = nextLoadID
+            task = nextTask
+            loadID = nextLoadID
         }
 
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.loadCachedSnapshot()
+        let didLoad = await task.value
+        guard !Task.isCancelled,
+              initialCacheLoadID == loadID
+        else { return }
+        initialCacheLoadTask = nil
+        initialCacheLoadID = nil
+        didCompleteInitialCacheLoad = didLoad
+        if !didLoad {
+            // 失败或取消不应消耗首次缓存机会；下一次呈现可以重新尝试。
+            return
         }
-        initialCacheLoadTask = task
-        await task.value
     }
 
     public func refresh(source _: CommitGraphRefreshSource) async {

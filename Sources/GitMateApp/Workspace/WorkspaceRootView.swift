@@ -897,7 +897,7 @@ private struct CommitGraphPageContainer: View {
     var body: some View {
         CommitGraphView(viewModel: viewModel)
             .task(id: refreshRevision) {
-                await viewModel.refreshAfterInitialCacheLoad(
+                await viewModel.refreshForPresentation(
                     source: refreshRevision == 0 ? .initial : .sidebar
                 )
             }
