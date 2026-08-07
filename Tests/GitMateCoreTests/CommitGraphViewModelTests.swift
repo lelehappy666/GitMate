@@ -74,6 +74,28 @@ let commitGraphViewModelTests = [
             "适配全部内容必须居中并保留指定边距"
         )
     },
+    TestCase("超长历史适配全部时降级到最新提交可见的历史概览") { @MainActor in
+        let viewModel = CommitGraphViewModel(
+            reader: LongHistoryCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            pageSize: 200
+        )
+        await viewModel.load()
+        let screenSize = GraphSize(width: 800, height: 600)
+
+        viewModel.fitAll(in: screenSize, padding: 48)
+
+        try expectEqual(
+            viewModel.viewport.scale,
+            CommitGraphViewportProjector.minimumScale,
+            "超长历史必须使用可读的最小安全缩放"
+        )
+        try expectEqual(
+            viewModel.viewport.offsetY,
+            48,
+            "无法完整容纳时必须保留最新提交在首屏而不是跳到历史中段"
+        )
+    },
     TestCase("切换节点时旧详情不得覆盖最新提交") { @MainActor in
         let reader = ControlledCommitGraphReader()
         let viewModel = CommitGraphViewModel(
@@ -1379,6 +1401,32 @@ let commitGraphViewModelTests = [
             throw TestFailure(description: "首次缓存损坏且无显示快照时必须进入失败状态")
         }
     },
+    TestCase("首屏缓存不安装重绑前仓库路径的提交") { @MainActor in
+        let stale = CommitGraphSnapshot(
+            repositoryPath: "/previous/repository",
+            fingerprint: commitGraphFingerprint(headHash: "stale-hash"),
+            commitsNewestFirst: [commitGraphCommit(hash: "stale-hash")],
+            expectedCommitCount: 1,
+            shallowBoundaryParentHashes: [],
+            generatedAt: Date(timeIntervalSince1970: 1_000)
+        )
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 918,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: CommitGraphRefreshCoordinator(
+                reader: StaticCommitGraphSnapshotReader(snapshot: stale),
+                store: InMemoryCommitGraphSnapshotStore(snapshot: stale)
+            )
+        )
+
+        let didLoad = await viewModel.loadCachedSnapshot()
+
+        try expectEqual(didLoad, true, "路径不匹配应安全完成缓存阶段")
+        try expectEqual(viewModel.layout.nodes, [], "旧路径的提交节点不得短暂安装")
+        try expectEqual(viewModel.refreshState, .idle, "应继续等待当前路径刷新")
+    },
     TestCase("安装阶段直接复用后台预构建的可用提交集合") { @MainActor in
         let oldSnapshot = commitGraphSnapshot(
             generationID: UUID(
@@ -1754,6 +1802,24 @@ private actor PagedCommitGraphReader: CommitGraphTestReading {
             ],
             nextCursor: nil
         )
+    }
+}
+
+private actor LongHistoryCommitGraphReader: CommitGraphTestReading {
+    func graph(
+        repositoryURL _: URL,
+        cursor _: String?,
+        limit _: Int
+    ) async throws -> CommitGraphPage {
+        let count = 200
+        let commits = (0..<count).map { index in
+            let hash = String(format: "long-%03d", index)
+            let parent = index + 1 < count
+                ? [String(format: "long-%03d", index + 1)]
+                : []
+            return commitGraphCommit(hash: hash, parents: parent)
+        }
+        return CommitGraphPage(commits: commits, nextCursor: nil)
     }
 }
 

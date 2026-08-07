@@ -34,6 +34,41 @@ public enum CommitGraphIntegrityValidator {
             !shallowBoundaryHashSet.contains($0)
         }.count
         let actualRelationshipCount = parentHashes.filter { commitHashSet.contains($0) }.count
+        var commitIndexByHash: [String: Int] = [:]
+        for (index, commit) in snapshot.commitsNewestFirst.enumerated()
+        where commitIndexByHash[commit.fullHash] == nil {
+            commitIndexByHash[commit.fullHash] = index
+        }
+        let topologyOrderViolations: [CommitGraphTopologyOrderViolation] =
+            snapshot.commitsNewestFirst.enumerated().flatMap { indexedCommit in
+                let (childIndex, commit) = indexedCommit
+                return commit.parentHashes.compactMap {
+                    parentHash -> CommitGraphTopologyOrderViolation? in
+                    guard let parentIndex = commitIndexByHash[parentHash],
+                          parentIndex <= childIndex
+                    else {
+                        return nil
+                    }
+                    return CommitGraphTopologyOrderViolation(
+                        childHash: commit.fullHash,
+                        childIndex: childIndex,
+                        parentHash: parentHash,
+                        parentIndex: parentIndex
+                    )
+                }
+            }
+            .sorted {
+                if $0.childIndex != $1.childIndex {
+                    return $0.childIndex < $1.childIndex
+                }
+                if $0.parentIndex != $1.parentIndex {
+                    return $0.parentIndex < $1.parentIndex
+                }
+                if $0.childHash != $1.childHash {
+                    return $0.childHash < $1.childHash
+                }
+                return $0.parentHash < $1.parentHash
+            }
 
         let isInvalid = snapshot.expectedCommitCount != commitHashes.count
             || expectedRelationshipCount != actualRelationshipCount
@@ -41,6 +76,7 @@ public enum CommitGraphIntegrityValidator {
             || !duplicateEdgeIDs.isEmpty
             || !missingParentHashes.isEmpty
             || !missingReferenceTargets.isEmpty
+            || !topologyOrderViolations.isEmpty
         let status: CommitGraphIntegrityStatus
         if isInvalid {
             status = .invalid
@@ -61,6 +97,7 @@ public enum CommitGraphIntegrityValidator {
             missingParentHashes: missingParentHashes,
             missingReferenceTargets: missingReferenceTargets,
             shallowBoundaryParentHashes: shallowBoundaryParentHashes,
+            topologyOrderViolations: topologyOrderViolations,
             checkedAt: Date()
         )
     }

@@ -112,6 +112,60 @@ let commitGraphIntegrityValidatorTests = [
         try expectEqual(report.status, .invalid, "非浅克隆不得豁免缺失父节点")
         try expectEqual(report.missingParentHashes, ["boundary"], "必须保留真实缺失父节点")
         try expectEqual(report.shallowBoundaryParentHashes, [], "非浅克隆不能报告浅边界")
+    },
+    TestCase("最新优先快照中父节点不得出现在子节点之前") {
+        let snapshot = integritySnapshot(
+            commits: [
+                integrityCommit("root"),
+                integrityCommit("child", parents: ["root"])
+            ],
+            expectedCommitCount: 2
+        )
+
+        let report = CommitGraphIntegrityValidator.validate(snapshot)
+
+        try expectEqual(report.status, .invalid, "拓扑顺序损坏必须使快照无效")
+        try expectEqual(
+            report.topologyOrderViolations,
+            [
+                CommitGraphTopologyOrderViolation(
+                    childHash: "child",
+                    childIndex: 1,
+                    parentHash: "root",
+                    parentIndex: 0
+                )
+            ],
+            "必须记录子父哈希和两个行号"
+        )
+    },
+    TestCase("完整性报告编码解码保留拓扑顺序违规") {
+        let violation = CommitGraphTopologyOrderViolation(
+            childHash: "child",
+            childIndex: 2,
+            parentHash: "parent",
+            parentIndex: 1
+        )
+        let report = CommitGraphIntegrityReport(
+            status: .invalid,
+            expectedCommitCount: 2,
+            actualCommitCount: 2,
+            expectedRelationshipCount: 1,
+            actualRelationshipCount: 1,
+            duplicateCommitHashes: [],
+            duplicateEdgeIDs: [],
+            missingParentHashes: [],
+            missingReferenceTargets: [],
+            shallowBoundaryParentHashes: [],
+            topologyOrderViolations: [violation],
+            checkedAt: Date(timeIntervalSince1970: 42)
+        )
+
+        let restored = try JSONDecoder().decode(
+            CommitGraphIntegrityReport.self,
+            from: JSONEncoder().encode(report)
+        )
+
+        try expectEqual(restored, report, "完整性报告 Codable 不得丢失顺序违规")
     }
 ]
 

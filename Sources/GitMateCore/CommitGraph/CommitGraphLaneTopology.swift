@@ -58,15 +58,18 @@ public struct CommitGraphLaneRow: Equatable, Sendable {
 public struct CommitGraphLaneTopology: Equatable, Sendable {
     public let rowsNewestFirst: [CommitGraphLaneRow]
     public let maximumLane: Int
+    public let shallowBoundaryRelations: [CommitGraphShallowBoundaryRelation]
 
     private let rowIndexByHash: [String: Int]
 
     public init(
         rowsNewestFirst: [CommitGraphLaneRow],
-        maximumLane: Int
+        maximumLane: Int,
+        shallowBoundaryRelations: [CommitGraphShallowBoundaryRelation] = []
     ) {
         self.rowsNewestFirst = rowsNewestFirst
         self.maximumLane = max(maximumLane, 0)
+        self.shallowBoundaryRelations = shallowBoundaryRelations
         rowIndexByHash = Dictionary(
             rowsNewestFirst.enumerated().map {
                 ($0.element.commit.fullHash, $0.offset)
@@ -284,9 +287,30 @@ public struct CommitGraphLaneTopology: Equatable, Sendable {
             )
         }
 
+        let shallowBoundaryRelations: [CommitGraphShallowBoundaryRelation] =
+            rows.flatMap { row in
+                row.connections.compactMap { connection
+                    -> CommitGraphShallowBoundaryRelation? in
+                    guard snapshot.shallowBoundaryParentHashes.contains(
+                        connection.parentHash
+                    ) else {
+                        return nil
+                    }
+                    return CommitGraphShallowBoundaryRelation(
+                        childHash: connection.childHash,
+                        missingParentHash: connection.parentHash,
+                        parentIndex: connection.parentIndex,
+                        sourceLane: connection.sourceLane,
+                        targetLane: connection.targetLane,
+                        colorIndex: connection.colorIndex
+                    )
+                }
+            }
+
         return CommitGraphLaneTopology(
             rowsNewestFirst: rows,
-            maximumLane: maximumLane
+            maximumLane: maximumLane,
+            shallowBoundaryRelations: shallowBoundaryRelations
         )
     }
 

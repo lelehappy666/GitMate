@@ -29,10 +29,13 @@ public enum GitOutputParser {
                 } else {
                     throw GitOutputParsingError.malformedCommit(String(rawLine))
                 }
+                let symbolicTarget = fields[2]
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 return CommitGraphReference(
                     name: fields[0],
                     targetHash: fields[1],
-                    kind: kind
+                    kind: kind,
+                    symbolicTarget: symbolicTarget.isEmpty ? nil : symbolicTarget
                 )
             }
     }

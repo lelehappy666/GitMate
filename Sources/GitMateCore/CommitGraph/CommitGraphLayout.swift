@@ -93,10 +93,26 @@ public struct CommitGraphLayout: Sendable {
                 )
             }
         }
+        let nodesByHash = Dictionary(
+            uniqueKeysWithValues: nodes.map { ($0.hash, $0) }
+        )
+        let shallowBoundaryEndpoints = topology.shallowBoundaryRelations
+            .compactMap { relation -> CommitGraphShallowBoundaryEndpoint? in
+                guard let child = nodesByHash[relation.childHash] else {
+                    return nil
+                }
+                return CommitGraphShallowBoundaryEndpoint(
+                    relation: relation,
+                    x: 150 + Double(relation.targetLane)
+                        * horizontalSpacing,
+                    y: child.y - verticalSpacing * 0.65
+                )
+            }
         let maximumColumn = nodes.map(\.column).max() ?? 0
         return CommitGraphLayoutResult(
             nodes: nodes,
             edges: edges,
+            shallowBoundaryEndpoints: shallowBoundaryEndpoints,
             contentWidth: max(
                 1_040,
                 300 + Double(maximumColumn) * horizontalSpacing

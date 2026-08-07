@@ -51,6 +51,26 @@ public enum CommitGraphSceneProjector {
             )
         }
 
+        let visibleNodesByHash = Dictionary(
+            uniqueKeysWithValues: visibleNodes.map { ($0.node.hash, $0) }
+        )
+        let visibleShallowBoundaryEndpoints = layout.shallowBoundaryEndpoints
+            .compactMap {
+                endpoint -> CommitGraphVisibleShallowBoundaryEndpoint? in
+                guard let child = visibleNodesByHash[endpoint.childHash],
+                      let laidOutChild = layout.node(hash: endpoint.childHash)
+                else {
+                    return nil
+                }
+                return CommitGraphVisibleShallowBoundaryEndpoint(
+                    endpoint: endpoint,
+                    position: GraphPoint(
+                        x: child.position.x + endpoint.x - laidOutChild.x,
+                        y: child.position.y + endpoint.y - laidOutChild.y
+                    )
+                )
+            }
+
         var ordinaryEdges: [CommitGraphVisibleEdge] = []
         var aggregateEdges:
             [CollapsedEdgeKey: AggregateAccumulator] = [:]
@@ -123,6 +143,25 @@ public enum CommitGraphSceneProjector {
             )
         }
 
+        for endpoint in visibleShallowBoundaryEndpoints {
+            ordinaryEdges.append(
+                CommitGraphVisibleEdge(
+                    id: "shallow:\(endpoint.id)",
+                    source: .node(endpoint.endpoint.childHash),
+                    target: .shallowBoundary(endpoint.id),
+                    kind: .shallowBoundary,
+                    colorIndex: endpoint.endpoint.colorIndex,
+                    ports: CommitGraphEdgePorts(
+                        source: PortAnchor(side: .top, offset: 0.5),
+                        target: PortAnchor(side: .bottom, offset: 0.5)
+                    ),
+                    aggregateKey: nil,
+                    aggregateCount: 1,
+                    originalEdgeIDs: [endpoint.id]
+                )
+            )
+        }
+
         let collapsedEdges = aggregateEdges
             .sorted { edgeKey($0.key) < edgeKey($1.key) }
             .map { key, accumulator in
@@ -142,6 +181,8 @@ public enum CommitGraphSceneProjector {
         return CommitGraphSceneProjection(
             nodes: visibleNodes,
             groups: visibleGroups,
+            regions: scene.regions,
+            shallowBoundaryEndpoints: visibleShallowBoundaryEndpoints,
             edges: ordinaryEdges + collapsedEdges,
             lineStyle: scene.lineStyle
         )
@@ -279,6 +320,14 @@ public enum CommitGraphSceneProjector {
         )
         for group in projection.groups {
             result[.group(group.id)] = group.rect
+        }
+        for endpoint in projection.shallowBoundaryEndpoints {
+            result[.shallowBoundary(endpoint.id)] = GraphRect(
+                x: endpoint.position.x - 80,
+                y: endpoint.position.y - 18,
+                width: 160,
+                height: 36
+            )
         }
         return result
     }

@@ -414,6 +414,60 @@ let commitGraphSnapshotStoreTests = [
             secondLoad?.generationID,
             "未写 generationID 的旧缓存每次读取也必须得到稳定标识"
         )
+    },
+    TestCase("schema 2 快照迁移到 schema 3 并补全符号目标") {
+        let directory = commitGraphSnapshotStoreTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let generationID = UUID(
+            uuidString: "21212121-3434-5656-7878-909090909090"
+        )!
+        let legacy = LegacyCommitGraphSnapshotV2(
+            schemaVersion: 2,
+            generationID: generationID,
+            repositoryPath: "/legacy-v2",
+            fingerprint: LegacyCommitGraphReferenceFingerprintV2(
+                references: [
+                    LegacyCommitGraphReferenceV2(
+                        name: "refs/remotes/origin/HEAD",
+                        targetHash: "root",
+                        kind: .remoteBranch
+                    )
+                ],
+                headName: "main",
+                headHash: "root",
+                isShallow: false
+            ),
+            commitsNewestFirst: [
+                commitGraphSnapshotIdentityCommit(hash: "root", subject: "v2 提交")
+            ],
+            expectedCommitCount: 1,
+            shallowBoundaryParentHashes: [],
+            generatedAt: Date(timeIntervalSince1970: 301)
+        )
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        try encoder.encode(legacy).write(
+            to: directory.appending(path: "83.plist")
+        )
+        let store = BinaryCommitGraphSnapshotStore(rootDirectory: directory)
+
+        let restored = try await store.load(repositoryID: 83)
+
+        try expectEqual(
+            restored?.schemaVersion,
+            CommitGraphSnapshot.currentSchemaVersion,
+            "schema 2 必须迁移到当前版本"
+        )
+        try expectEqual(restored?.generationID, generationID, "schema 2 代次标识必须保留")
+        try expectEqual(
+            restored?.fingerprint.references.first?.symbolicTarget,
+            nil,
+            "旧引用缺少 symref 时必须兼容为 nil"
+        )
     }
 ]
 
@@ -472,6 +526,30 @@ private struct LegacyCommitGraphSnapshotV1: Codable {
     let schemaVersion: Int
     let repositoryPath: String
     let fingerprint: CommitGraphReferenceFingerprint
+    let commitsNewestFirst: [GitCommit]
+    let expectedCommitCount: Int
+    let shallowBoundaryParentHashes: Set<String>
+    let generatedAt: Date
+}
+
+private struct LegacyCommitGraphReferenceV2: Codable {
+    let name: String
+    let targetHash: String
+    let kind: CommitGraphReferenceKind
+}
+
+private struct LegacyCommitGraphReferenceFingerprintV2: Codable {
+    let references: [LegacyCommitGraphReferenceV2]
+    let headName: String?
+    let headHash: String?
+    let isShallow: Bool
+}
+
+private struct LegacyCommitGraphSnapshotV2: Codable {
+    let schemaVersion: Int
+    let generationID: UUID
+    let repositoryPath: String
+    let fingerprint: LegacyCommitGraphReferenceFingerprintV2
     let commitsNewestFirst: [GitCommit]
     let expectedCommitCount: Int
     let shallowBoundaryParentHashes: Set<String>

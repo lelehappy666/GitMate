@@ -418,7 +418,8 @@ public final class CommitGraphViewModel {
         ) else { return false }
         do {
             guard let snapshot = try await refreshCoordinator.cachedSnapshot(
-                repositoryID: repositoryID
+                repositoryID: repositoryID,
+                repositoryURL: repositoryURL
             ) else {
                 guard isCurrentRefreshRequest(requestID) else { return false }
                 refreshState = currentSnapshot == nil
@@ -977,20 +978,22 @@ public final class CommitGraphViewModel {
         let availableHeight = max(screenSize.height - safePadding * 2, 1)
         let contentWidth = max(layout.contentWidth, 1)
         let contentHeight = max(layout.contentHeight, 1)
+        let requestedScale = min(
+            availableWidth / contentWidth,
+            availableHeight / contentHeight
+        )
         let scale = min(
-            max(
-                min(
-                    availableWidth / contentWidth,
-                    availableHeight / contentHeight
-                ),
-                CommitGraphViewportProjector.minimumScale
-            ),
+            max(requestedScale, CommitGraphViewportProjector.minimumScale),
             CommitGraphViewportProjector.maximumScale
         )
+        let cannotFitEntireHistory = requestedScale
+            < CommitGraphViewportProjector.minimumScale
 
         viewport = GraphViewport(
             offsetX: (screenSize.width - contentWidth * scale) / 2,
-            offsetY: (screenSize.height - contentHeight * scale) / 2,
+            offsetY: cannotFitEntireHistory
+                ? safePadding
+                : (screenSize.height - contentHeight * scale) / 2,
             scale: scale
         )
         synchronizeCanvasViewportIfNeeded()

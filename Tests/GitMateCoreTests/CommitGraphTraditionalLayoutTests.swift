@@ -109,6 +109,47 @@ let commitGraphTraditionalLayoutTests = [
             ["HEAD", "main", "origin/main", "upstream/main", "v2.0"],
             "引用名称必须保持可读且顺序稳定"
         )
+    },
+    TestCase("传统布局将浅克隆缺失父提交建模为边界端点") {
+        let commits = [
+            traditionalCommit(hash: "tip", parents: ["boundary"]),
+            traditionalCommit(hash: "boundary", parents: ["missing-parent"])
+        ]
+        let snapshot = CommitGraphSnapshot(
+            repositoryPath: "/repo",
+            fingerprint: CommitGraphReferenceFingerprint(
+                references: [],
+                headName: "main",
+                headHash: "tip",
+                isShallow: true
+            ),
+            commitsNewestFirst: commits,
+            expectedCommitCount: commits.count,
+            shallowBoundaryParentHashes: ["missing-parent"],
+            generatedAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let layout = CommitGraphTraditionalLayout().layout(
+            topology: CommitGraphLaneTopology.build(snapshot: snapshot)
+        )
+
+        try expectEqual(
+            layout.rows.map(\.commit.fullHash),
+            ["tip", "boundary"],
+            "传统布局必须保持最新提交在上"
+        )
+        try expectEqual(layout.rows.count, commits.count, "边界端点不得伪装成提交行")
+        try expectEqual(layout.contentRowCount, 3, "边界端点必须获得独立的可滚动显示行")
+        try expectEqual(
+            layout.shallowBoundaryEndpoints.map(\.missingParentHash),
+            ["missing-parent"],
+            "传统布局必须保留缺失父哈希"
+        )
+        try expectEqual(
+            layout.shallowBoundaryEndpoints.first?.row,
+            2,
+            "传统布局中的缺失父端点必须位于最旧可见提交之后"
+        )
     }
 ]
 

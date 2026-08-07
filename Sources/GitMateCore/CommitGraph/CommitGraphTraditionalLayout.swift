@@ -50,6 +50,32 @@ public struct CommitGraphTraditionalConnectionSpan:
     }
 }
 
+public struct CommitGraphTraditionalShallowBoundaryEndpoint:
+    Identifiable,
+    Equatable,
+    Sendable
+{
+    public var id: String { relation.id }
+
+    public let relation: CommitGraphShallowBoundaryRelation
+    public let row: Int
+    public let lane: Int
+
+    public var childHash: String { relation.childHash }
+    public var missingParentHash: String { relation.missingParentHash }
+    public var colorIndex: Int { relation.colorIndex }
+
+    public init(
+        relation: CommitGraphShallowBoundaryRelation,
+        row: Int,
+        lane: Int
+    ) {
+        self.relation = relation
+        self.row = row
+        self.lane = lane
+    }
+}
+
 public enum CommitGraphTraditionalReferenceKind:
     Equatable,
     Sendable
@@ -98,6 +124,9 @@ public struct CommitGraphTraditionalGroupBadge:
 public struct CommitGraphTraditionalLayoutResult: Equatable, Sendable {
     public let rows: [CommitGraphTraditionalRow]
     public let maximumLane: Int
+    public let shallowBoundaryEndpoints:
+        [CommitGraphTraditionalShallowBoundaryEndpoint]
+    public let contentRowCount: Int
 
     private let rowIndexByHash: [String: Int]
     private let connectionSpanStorage:
@@ -106,9 +135,19 @@ public struct CommitGraphTraditionalLayoutResult: Equatable, Sendable {
     private let referencesByHash:
         [String: [CommitGraphTraditionalReference]]
 
-    public init(rows: [CommitGraphTraditionalRow], maximumLane: Int) {
+    public init(
+        rows: [CommitGraphTraditionalRow],
+        maximumLane: Int,
+        shallowBoundaryEndpoints:
+            [CommitGraphTraditionalShallowBoundaryEndpoint] = []
+    ) {
         self.rows = rows
         self.maximumLane = max(maximumLane, 0)
+        self.shallowBoundaryEndpoints = shallowBoundaryEndpoints
+        contentRowCount = max(
+            rows.count,
+            (shallowBoundaryEndpoints.map(\.row).max() ?? -1) + 1
+        )
         let builtRowIndexByHash = Dictionary(
             rows.enumerated().map {
                 ($0.element.commit.fullHash, $0.offset)
@@ -381,17 +420,32 @@ public struct CommitGraphTraditionalLayout: Sendable {
     public func layout(
         topology: CommitGraphLaneTopology
     ) -> CommitGraphTraditionalLayoutResult {
-        CommitGraphTraditionalLayoutResult(
-            rows: topology.rowsNewestFirst.enumerated().map { index, row in
-                CommitGraphTraditionalRow(
-                    commit: row.commit,
-                    row: index,
-                    lane: row.lane,
-                    colorIndex: row.colorIndex,
-                    connections: row.connections
-                )
-            },
-            maximumLane: topology.maximumLane
+        let rows = topology.rowsNewestFirst.enumerated().map { index, row in
+            CommitGraphTraditionalRow(
+                commit: row.commit,
+                row: index,
+                lane: row.lane,
+                colorIndex: row.colorIndex,
+                connections: row.connections
+            )
+        }
+        let rowByHash = Dictionary(
+            uniqueKeysWithValues: rows.map { ($0.commit.fullHash, $0) }
+        )
+        let endpoints = topology.shallowBoundaryRelations.enumerated().compactMap {
+            index,
+            relation -> CommitGraphTraditionalShallowBoundaryEndpoint? in
+            guard rowByHash[relation.childHash] != nil else { return nil }
+            return CommitGraphTraditionalShallowBoundaryEndpoint(
+                relation: relation,
+                row: rows.count + index,
+                lane: relation.targetLane
+            )
+        }
+        return CommitGraphTraditionalLayoutResult(
+            rows: rows,
+            maximumLane: topology.maximumLane,
+            shallowBoundaryEndpoints: endpoints
         )
     }
 }

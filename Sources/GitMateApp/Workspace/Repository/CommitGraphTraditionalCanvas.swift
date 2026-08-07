@@ -159,6 +159,55 @@ struct CommitGraphTraditionalCanvas: View {
                 )
             }
 
+            for endpoint in layout.shallowBoundaryEndpoints {
+                guard visibleRows.contains(endpoint.row),
+                      let child = layout.row(hash: endpoint.childHash)
+                else {
+                    continue
+                }
+                let source = lanePoint(row: child.row, lane: child.lane)
+                let target = lanePoint(row: endpoint.row, lane: endpoint.lane)
+                var path = Path()
+                path.move(to: source)
+                let middleY = source.y + (target.y - source.y) * 0.5
+                path.addCurve(
+                    to: target,
+                    control1: CGPoint(x: source.x, y: middleY),
+                    control2: CGPoint(x: target.x, y: middleY)
+                )
+                layer.stroke(
+                    path,
+                    with: .color(GitMateTheme.warning),
+                    style: StrokeStyle(
+                        lineWidth: 2,
+                        lineCap: .round,
+                        lineJoin: .round,
+                        dash: [5, 4]
+                    )
+                )
+                let marker = CGRect(
+                    x: target.x - 4,
+                    y: target.y - 4,
+                    width: 8,
+                    height: 8
+                )
+                var diamond = Path()
+                diamond.move(to: CGPoint(x: marker.midX, y: marker.minY))
+                diamond.addLine(to: CGPoint(x: marker.maxX, y: marker.midY))
+                diamond.addLine(to: CGPoint(x: marker.midX, y: marker.maxY))
+                diamond.addLine(to: CGPoint(x: marker.minX, y: marker.midY))
+                diamond.closeSubpath()
+                layer.fill(
+                    diamond,
+                    with: .color(GitMateTheme.warning.opacity(0.2))
+                )
+                layer.stroke(
+                    diamond,
+                    with: .color(GitMateTheme.warning),
+                    lineWidth: 1.4
+                )
+            }
+
             for rowIndex in visibleRows {
                 guard layout.rows.indices.contains(rowIndex) else { continue }
                 let row = layout.rows[rowIndex]
@@ -184,6 +233,19 @@ struct CommitGraphTraditionalCanvas: View {
                     )
                 }
             }
+        }
+
+        for endpoint in layout.shallowBoundaryEndpoints
+        where visibleRows.contains(endpoint.row) {
+            let rect = rowRect(endpoint.row, width: Double(size.width))
+            guard rect.maxY >= 0, rect.minY <= size.height else { continue }
+            context.draw(
+                Text("浅克隆边界 · \(endpoint.missingParentHash)")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(GitMateTheme.warning),
+                at: CGPoint(x: laneWidth + 18, y: rect.midY),
+                anchor: .leading
+            )
         }
     }
 

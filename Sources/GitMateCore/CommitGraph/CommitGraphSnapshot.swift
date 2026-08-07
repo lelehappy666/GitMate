@@ -9,11 +9,18 @@ public struct CommitGraphReference: Codable, Equatable, Sendable {
     public let name: String
     public let targetHash: String
     public let kind: CommitGraphReferenceKind
+    public let symbolicTarget: String?
 
-    public init(name: String, targetHash: String, kind: CommitGraphReferenceKind) {
+    public init(
+        name: String,
+        targetHash: String,
+        kind: CommitGraphReferenceKind,
+        symbolicTarget: String? = nil
+    ) {
         self.name = name
         self.targetHash = targetHash
         self.kind = kind
+        self.symbolicTarget = symbolicTarget
     }
 }
 
@@ -37,7 +44,7 @@ public struct CommitGraphReferenceFingerprint: Codable, Equatable, Sendable {
 }
 
 public struct CommitGraphSnapshot: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 2
+    public static let currentSchemaVersion = 3
 
     public let schemaVersion: Int
     public let generationID: UUID
@@ -107,7 +114,7 @@ public struct CommitGraphSnapshot: Codable, Equatable, Sendable {
         )
         generatedAt = try container.decode(Date.self, forKey: .generatedAt)
 
-        if storedSchemaVersion <= 1 {
+        if storedSchemaVersion <= 2 {
             schemaVersion = Self.currentSchemaVersion
             generationID = try container.decodeIfPresent(
                 UUID.self,
@@ -163,12 +170,22 @@ public struct CommitGraphSnapshot: Codable, Equatable, Sendable {
         add(fingerprint.headHash ?? "")
         add(fingerprint.isShallow ? "1" : "0")
         for reference in fingerprint.references.sorted(by: {
-            ($0.name, $0.targetHash, $0.kind.rawValue)
-                < ($1.name, $1.targetHash, $1.kind.rawValue)
+            (
+                $0.name,
+                $0.targetHash,
+                $0.kind.rawValue,
+                $0.symbolicTarget ?? ""
+            ) < (
+                $1.name,
+                $1.targetHash,
+                $1.kind.rawValue,
+                $1.symbolicTarget ?? ""
+            )
         }) {
             add(reference.name)
             add(reference.targetHash)
             add(reference.kind.rawValue)
+            add(reference.symbolicTarget ?? "")
         }
         for commit in commits {
             add(commit.fullHash)
@@ -232,6 +249,25 @@ public enum CommitGraphIntegrityStatus: String, Codable, Sendable {
     case invalid
 }
 
+public struct CommitGraphTopologyOrderViolation: Codable, Equatable, Sendable {
+    public let childHash: String
+    public let childIndex: Int
+    public let parentHash: String
+    public let parentIndex: Int
+
+    public init(
+        childHash: String,
+        childIndex: Int,
+        parentHash: String,
+        parentIndex: Int
+    ) {
+        self.childHash = childHash
+        self.childIndex = childIndex
+        self.parentHash = parentHash
+        self.parentIndex = parentIndex
+    }
+}
+
 public struct CommitGraphIntegrityReport: Codable, Equatable, Sendable {
     public let status: CommitGraphIntegrityStatus
     public let expectedCommitCount: Int
@@ -243,6 +279,7 @@ public struct CommitGraphIntegrityReport: Codable, Equatable, Sendable {
     public let missingParentHashes: [String]
     public let missingReferenceTargets: [String]
     public let shallowBoundaryParentHashes: [String]
+    public let topologyOrderViolations: [CommitGraphTopologyOrderViolation]
     public let checkedAt: Date
 
     public init(
@@ -256,6 +293,7 @@ public struct CommitGraphIntegrityReport: Codable, Equatable, Sendable {
         missingParentHashes: [String],
         missingReferenceTargets: [String],
         shallowBoundaryParentHashes: [String],
+        topologyOrderViolations: [CommitGraphTopologyOrderViolation] = [],
         checkedAt: Date
     ) {
         self.status = status
@@ -268,6 +306,41 @@ public struct CommitGraphIntegrityReport: Codable, Equatable, Sendable {
         self.missingParentHashes = missingParentHashes
         self.missingReferenceTargets = missingReferenceTargets
         self.shallowBoundaryParentHashes = shallowBoundaryParentHashes
+        self.topologyOrderViolations = topologyOrderViolations
         self.checkedAt = checkedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case status
+        case expectedCommitCount
+        case actualCommitCount
+        case expectedRelationshipCount
+        case actualRelationshipCount
+        case duplicateCommitHashes
+        case duplicateEdgeIDs
+        case missingParentHashes
+        case missingReferenceTargets
+        case shallowBoundaryParentHashes
+        case topologyOrderViolations
+        case checkedAt
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        status = try container.decode(CommitGraphIntegrityStatus.self, forKey: .status)
+        expectedCommitCount = try container.decode(Int.self, forKey: .expectedCommitCount)
+        actualCommitCount = try container.decode(Int.self, forKey: .actualCommitCount)
+        expectedRelationshipCount = try container.decode(Int.self, forKey: .expectedRelationshipCount)
+        actualRelationshipCount = try container.decode(Int.self, forKey: .actualRelationshipCount)
+        duplicateCommitHashes = try container.decode([String].self, forKey: .duplicateCommitHashes)
+        duplicateEdgeIDs = try container.decode([String].self, forKey: .duplicateEdgeIDs)
+        missingParentHashes = try container.decode([String].self, forKey: .missingParentHashes)
+        missingReferenceTargets = try container.decode([String].self, forKey: .missingReferenceTargets)
+        shallowBoundaryParentHashes = try container.decode([String].self, forKey: .shallowBoundaryParentHashes)
+        topologyOrderViolations = try container.decodeIfPresent(
+            [CommitGraphTopologyOrderViolation].self,
+            forKey: .topologyOrderViolations
+        ) ?? []
+        checkedAt = try container.decode(Date.self, forKey: .checkedAt)
     }
 }

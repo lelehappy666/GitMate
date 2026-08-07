@@ -131,6 +131,38 @@ let commitGraphLayoutTests = [
                 "传统和画布布局必须复用同一份泳道结果"
             )
         }
+    },
+    TestCase("画布布局将浅克隆缺失父提交建模为边界端点") {
+        let snapshot = shallowBoundarySnapshot()
+
+        let result = CommitGraphLayout().layout(
+            topology: CommitGraphLaneTopology.build(snapshot: snapshot)
+        )
+
+        try expectEqual(
+            result.nodes.map(\.hash),
+            ["boundary", "tip"],
+            "画布节点只能包含真实提交，并且必须保持最早提交在上"
+        )
+        try expectEqual(
+            result.nodes.count,
+            snapshot.commitsNewestFirst.count,
+            "浅克隆边界不得计入提交数量"
+        )
+        try expectEqual(
+            result.shallowBoundaryEndpoints.map(\.missingParentHash),
+            ["missing-parent"],
+            "缺失父哈希必须以独立边界端点保留"
+        )
+        guard let boundary = result.node(hash: "boundary"),
+              let endpoint = result.shallowBoundaryEndpoints.first
+        else {
+            throw TestFailure(description: "浅克隆边界必须同时保留真实子提交和虚拟端点")
+        }
+        try expect(
+            endpoint.y < boundary.y,
+            "画布中的缺失父端点必须位于其最早可见子提交之上"
+        )
     }
 ]
 
@@ -163,6 +195,26 @@ private func layoutBranchingSnapshot() -> CommitGraphSnapshot {
         commitsNewestFirst: commits,
         expectedCommitCount: commits.count,
         shallowBoundaryParentHashes: [],
+        generatedAt: Date(timeIntervalSince1970: 1)
+    )
+}
+
+private func shallowBoundarySnapshot() -> CommitGraphSnapshot {
+    let commits = [
+        graphCommit(hash: "tip", parents: ["boundary"]),
+        graphCommit(hash: "boundary", parents: ["missing-parent"])
+    ]
+    return CommitGraphSnapshot(
+        repositoryPath: "/repo",
+        fingerprint: CommitGraphReferenceFingerprint(
+            references: [],
+            headName: "main",
+            headHash: "tip",
+            isShallow: true
+        ),
+        commitsNewestFirst: commits,
+        expectedCommitCount: commits.count,
+        shallowBoundaryParentHashes: ["missing-parent"],
         generatedAt: Date(timeIntervalSince1970: 1)
     )
 }

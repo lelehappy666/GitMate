@@ -90,6 +90,37 @@ let commitGraphRenderIndexTests = [
             "分组必须按投影后的真实矩形查询"
         )
     },
+    TestCase("可见查询只返回视口缓冲区内的版本区域") {
+        let visibleRegion = CommitGraphRegionMarker(
+            title: "v2.0",
+            colorHex: "#2F80ED",
+            rect: GraphRect(x: 100, y: 100, width: 300, height: 240)
+        )
+        let farRegion = CommitGraphRegionMarker(
+            title: "远处版本",
+            colorHex: "#27AE60",
+            rect: GraphRect(x: 20_000, y: 20_000, width: 300, height: 240)
+        )
+        let projection = CommitGraphSceneProjection(
+            nodes: [],
+            groups: [],
+            regions: [visibleRegion, farRegion],
+            edges: []
+        )
+        let index = CommitGraphRenderIndex(projection: projection)
+
+        let visible = index.query(
+            viewport: GraphViewport(),
+            screenSize: GraphSize(width: 800, height: 600),
+            padding: 0
+        )
+
+        try expectEqual(
+            visible.regions.map(\.id),
+            [visibleRegion.id],
+            "离屏区域不得进入画布绘制集合"
+        )
+    },
     TestCase("端点离屏但路径穿过视口的连线仍然可见") {
         let edge = renderIndexEdge(
             id: "left->right",

@@ -284,6 +284,26 @@ private func runGitSetup(
 }
 
 let localGitReaderTests = [
+    TestCase("提交图引用解析保留并规范化符号目标") {
+        let references = try GitOutputParser.parseCommitGraphReferences(
+            "refs/remotes/origin/HEAD\u{0}same-oid\u{0}refs/remotes/origin/main\u{0}\n"
+                + "refs/remotes/origin/main\u{0}same-oid\u{0}\u{0}\n"
+        )
+
+        try expectEqual(
+            references[0].symbolicTarget,
+            "refs/remotes/origin/main",
+            "origin/HEAD 必须保留 Git symref 目标"
+        )
+        try expectEqual(references[1].symbolicTarget, nil, "普通引用不得伪造符号目标")
+        let changed = CommitGraphReference(
+            name: references[0].name,
+            targetHash: references[0].targetHash,
+            kind: references[0].kind,
+            symbolicTarget: "refs/remotes/origin/master"
+        )
+        try expect(changed != references[0], "同 OID 的默认分支变更必须改变指纹")
+    },
     TestCase("提交解析保留作者头像关联字段和父提交") {
         let data = """
         a81c32f\u{1f}a81c32ffull\u{1f}修复同步索引\u{1f}lele\u{1f}lele@example.com\u{1f}2026-07-29T10:00:00Z\u{1f}8e1d04a 742fd81\u{1e}
@@ -776,12 +796,13 @@ let localGitReaderTests = [
                 ]),
                 expectedInvocation([
                     "-C", "/repo", "rev-list",
-                    "--branches", "--remotes", "--count"
+                    "--count", "--branches", "--remotes"
                 ]),
                 expectedInvocation([
                     "-C", "/repo", "log",
-                    "--branches", "--remotes", "--topo-order",
-                    "--decorate=short", CommandLocalGitReader.commitLogFormat
+                    "--topo-order", "--decorate=short",
+                    CommandLocalGitReader.commitLogFormat,
+                    "--branches", "--remotes"
                 ])
             ]
         )
@@ -849,12 +870,13 @@ let localGitReaderTests = [
                 ]),
                 expectedInvocation([
                     "-C", "/repo", "rev-list",
-                    "--branches", "--remotes", "--count"
+                    "--count", "--branches", "--remotes", "HEAD"
                 ]),
                 expectedInvocation([
                     "-C", "/repo", "log",
-                    "--branches", "--remotes", "--topo-order",
-                    "--decorate=short", CommandLocalGitReader.commitLogFormat
+                    "--topo-order", "--decorate=short",
+                    CommandLocalGitReader.commitLogFormat,
+                    "--branches", "--remotes", "HEAD"
                 ])
             ]
         )
@@ -874,6 +896,42 @@ let localGitReaderTests = [
         )
         try expectEqual(snapshot.expectedCommitCount, 3, "总数必须保留 Git 原始统计值")
         try executor.verifyComplete()
+    },
+    TestCase("真实 detached HEAD 的 reflog-only 提交进入完整快照") {
+        let fixture = try makeRealGitFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.repositoryURL) }
+        try runGitSetup(["checkout", "--quiet", "--detach"], repositoryURL: fixture.repositoryURL)
+        try Data("仅 detached HEAD 可达\n".utf8).write(
+            to: fixture.repositoryURL.appending(path: "DetachedOnly.txt")
+        )
+        try runGitSetup(["add", "DetachedOnly.txt"], repositoryURL: fixture.repositoryURL)
+        try runGitSetup(
+            ["commit", "--quiet", "-m", "detached 独立提交"],
+            repositoryURL: fixture.repositoryURL
+        )
+        let detachedHash = try runGitCommand([
+            "-C", fixture.repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let branchHashes = try runGitCommand([
+            "-C", fixture.repositoryURL.path,
+            "rev-list", "--branches", "--remotes"
+        ])
+        try expect(!branchHashes.contains(detachedHash), "夹具提交必须只由 detached HEAD 可达")
+
+        let reader = CommandLocalGitReader()
+        let fingerprint = try await reader.fingerprint(repositoryURL: fixture.repositoryURL)
+        let snapshot = try await reader.snapshot(
+            repositoryURL: fixture.repositoryURL,
+            fingerprint: fingerprint
+        )
+        let report = CommitGraphIntegrityValidator.validate(snapshot)
+
+        try expectEqual(fingerprint.headName, nil, "夹具必须位于 detached HEAD")
+        try expect(
+            snapshot.commitsNewestFirst.contains { $0.fullHash == detachedHash },
+            "不属于任何分支的 HEAD 提交必须进入快照"
+        )
+        try expectEqual(report.status, .valid, "detached HEAD 完整快照必须通过校验")
     },
     TestCase("浅克隆快照从元数据和原始提交读取边界父提交") {
         let repositoryURL = FileManager.default.temporaryDirectory
@@ -904,12 +962,13 @@ let localGitReaderTests = [
             expectedInvocations: [
                 expectedInvocation([
                     "-C", repositoryURL.path, "rev-list",
-                    "--branches", "--remotes", "--count"
+                    "--count", "--branches", "--remotes"
                 ]),
                 expectedInvocation([
                     "-C", repositoryURL.path, "log",
-                    "--branches", "--remotes", "--topo-order",
-                    "--decorate=short", CommandLocalGitReader.commitLogFormat
+                    "--topo-order", "--decorate=short",
+                    CommandLocalGitReader.commitLogFormat,
+                    "--branches", "--remotes"
                 ]),
                 expectedInvocation([
                     "-C", repositoryURL.path, "rev-parse",

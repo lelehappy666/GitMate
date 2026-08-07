@@ -3,15 +3,23 @@ import Foundation
 public struct CommitGraphVisibleScene: Equatable, Sendable {
     public let nodes: [CommitGraphVisibleNode]
     public let groups: [CommitGraphVisibleGroup]
+    public let regions: [CommitGraphRegionMarker]
+    public let shallowBoundaryEndpoints:
+        [CommitGraphVisibleShallowBoundaryEndpoint]
     public let edges: [CommitGraphVisibleEdge]
 
     public init(
         nodes: [CommitGraphVisibleNode],
         groups: [CommitGraphVisibleGroup],
+        regions: [CommitGraphRegionMarker] = [],
+        shallowBoundaryEndpoints:
+            [CommitGraphVisibleShallowBoundaryEndpoint] = [],
         edges: [CommitGraphVisibleEdge]
     ) {
         self.nodes = nodes
         self.groups = groups
+        self.regions = regions
+        self.shallowBoundaryEndpoints = shallowBoundaryEndpoints
         self.edges = edges
     }
 }
@@ -91,6 +99,9 @@ public enum CommitGraphRenderHit: Equatable, Sendable {
 public struct CommitGraphRenderIndex: Sendable {
     private var nodes: [CommitGraphVisibleNode]
     private var groups: [CommitGraphVisibleGroup]
+    private let regions: [CommitGraphRegionMarker]
+    private let shallowBoundaryEndpoints:
+        [CommitGraphVisibleShallowBoundaryEndpoint]
     private let edges: [CommitGraphVisibleEdge]
     private var lineStyle: CommitGraphLineStyle
     private let nodeIndexByHash: [String: Int]
@@ -103,11 +114,15 @@ public struct CommitGraphRenderIndex: Sendable {
     private var edgeCandidates: [Int: RenderEdgeCandidate]
     private var nodeGrid: RenderSpatialGrid
     private var groupGrid: RenderSpatialGrid
+    private var regionGrid: RenderSpatialGrid
+    private var shallowBoundaryGrid: RenderSpatialGrid
     private var edgeGrid: RenderSpatialGrid
 
     public init(projection: CommitGraphSceneProjection) {
         nodes = projection.nodes
         groups = projection.groups
+        regions = projection.regions
+        shallowBoundaryEndpoints = projection.shallowBoundaryEndpoints
         edges = projection.edges
         lineStyle = projection.lineStyle
         nodeIndexByHash = Dictionary(
@@ -174,11 +189,26 @@ public struct CommitGraphRenderIndex: Sendable {
         }
         nodeGrid = builtNodeGrid
 
+        var builtShallowBoundaryGrid = RenderSpatialGrid()
+        for (index, endpoint) in projection.shallowBoundaryEndpoints.enumerated() {
+            builtShallowBoundaryGrid.replace(
+                item: index,
+                rect: Self.shallowBoundaryRect(for: endpoint)
+            )
+        }
+        shallowBoundaryGrid = builtShallowBoundaryGrid
+
         var builtGroupGrid = RenderSpatialGrid()
         for (index, group) in projection.groups.enumerated() {
             builtGroupGrid.replace(item: index, rect: group.rect)
         }
         groupGrid = builtGroupGrid
+
+        var builtRegionGrid = RenderSpatialGrid()
+        for (index, region) in projection.regions.enumerated() {
+            builtRegionGrid.replace(item: index, rect: region.rect)
+        }
+        regionGrid = builtRegionGrid
     }
 
     public func query(
@@ -205,6 +235,8 @@ public struct CommitGraphRenderIndex: Sendable {
         )
         let nodeQuery = nodeGrid.candidates(in: bounds)
         let groupQuery = groupGrid.candidates(in: bounds)
+        let regionQuery = regionGrid.candidates(in: bounds)
+        let shallowBoundaryQuery = shallowBoundaryGrid.candidates(in: bounds)
         let edgeQuery = edgeGrid.candidates(in: bounds)
         let nodeIndices = nodeQuery.items
             .filter {
@@ -249,13 +281,26 @@ public struct CommitGraphRenderIndex: Sendable {
             scene: CommitGraphVisibleScene(
                 nodes: nodeIndices.map { nodes[$0] },
                 groups: groupIndices.map { groups[$0] },
+                regions: regionQuery.items.sorted()
+                    .filter { regions[$0].rect.intersects(bounds) }
+                    .map { regions[$0] },
+                shallowBoundaryEndpoints: shallowBoundaryQuery.items.sorted()
+                    .filter {
+                        Self.shallowBoundaryRect(
+                            for: shallowBoundaryEndpoints[$0]
+                        ).intersects(bounds)
+                    }
+                    .map { shallowBoundaryEndpoints[$0] },
                 edges: visibleEdges
             ),
             diagnostics: CommitGraphRenderQueryDiagnostics(
                 visitedBuckets: nodeQuery.visitedBuckets
                     + groupQuery.visitedBuckets
+                    + regionQuery.visitedBuckets
+                    + shallowBoundaryQuery.visitedBuckets
                     + edgeQuery.visitedBuckets,
-                nodeCandidates: nodeQuery.items.count,
+                nodeCandidates: nodeQuery.items.count
+                    + shallowBoundaryQuery.items.count,
                 groupCandidates: groupQuery.items.count,
                 edgeCandidates: edgeQuery.items.count,
                 generatedEdgeGeometries: generatedEdgeGeometries
@@ -465,6 +510,17 @@ public struct CommitGraphRenderIndex: Sendable {
             sourceRect: sourceRect,
             targetRect: targetRect,
             ports: edge.ports
+        )
+    }
+
+    private static func shallowBoundaryRect(
+        for endpoint: CommitGraphVisibleShallowBoundaryEndpoint
+    ) -> GraphRect {
+        GraphRect(
+            x: endpoint.position.x - 80,
+            y: endpoint.position.y - 18,
+            width: 160,
+            height: 36
         )
     }
 

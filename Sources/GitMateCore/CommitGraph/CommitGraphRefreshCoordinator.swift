@@ -24,6 +24,7 @@ public struct CommitGraphRefreshResult: Equatable, Sendable {
 
 public enum CommitGraphRefreshError: Error, Equatable, Sendable {
     case invalidSnapshot(CommitGraphIntegrityReport)
+    case referencesChangedDuringScan
 }
 
 public actor CommitGraphRefreshCoordinator {
@@ -57,9 +58,14 @@ public actor CommitGraphRefreshCoordinator {
     }
 
     public func cachedSnapshot(
-        repositoryID: Int64
+        repositoryID: Int64,
+        repositoryURL: URL
     ) async throws -> CommitGraphSnapshot? {
-        try await store.load(repositoryID: repositoryID)
+        try await Self.loadUsableCache(
+            repositoryID: repositoryID,
+            repositoryURL: repositoryURL,
+            store: store
+        )
     }
 
     public func refresh(
@@ -175,6 +181,13 @@ public actor CommitGraphRefreshCoordinator {
 
         do {
             try await saveTask.value
+        } catch let error as CommitGraphSnapshotStoreError {
+            if activeSaveByRepository[repositoryID]?.requestID == requestID {
+                activeSaveByRepository.removeValue(forKey: repositoryID)
+            }
+            guard case .unsupportedSchema = error else {
+                throw error
+            }
         } catch {
             if activeSaveByRepository[repositoryID]?.requestID == requestID {
                 activeSaveByRepository.removeValue(forKey: repositoryID)
@@ -198,11 +211,16 @@ public actor CommitGraphRefreshCoordinator {
         reader: any CommitGraphSnapshotReading,
         store: any CommitGraphSnapshotStoring
     ) async throws -> PreparedRefresh {
-        let cached = try await loadUsableCache(
-            repositoryID: repositoryID,
-            repositoryURL: repositoryURL,
-            store: store
-        )
+        let cached: CommitGraphSnapshot?
+        do {
+            cached = try await loadUsableCache(
+                repositoryID: repositoryID,
+                repositoryURL: repositoryURL,
+                store: store
+            )
+        } catch CommitGraphSnapshotStoreError.corruptedSnapshot {
+            cached = nil
+        }
         try Task.checkCancellation()
         let fingerprint = try await reader.fingerprint(
             repositoryURL: repositoryURL
@@ -226,35 +244,61 @@ public actor CommitGraphRefreshCoordinator {
             }
         }
 
-        var candidate = try await reader.snapshot(
-            repositoryURL: repositoryURL,
-            fingerprint: fingerprint
-        )
-        try Task.checkCancellation()
-        var report = CommitGraphIntegrityValidator.validate(candidate)
-        if report.status == .invalid {
-            candidate = try await reader.snapshot(
+        var scanFingerprint = fingerprint
+        for referenceAttempt in 0...1 {
+            var candidate = try await reader.snapshot(
                 repositoryURL: repositoryURL,
-                fingerprint: fingerprint
+                fingerprint: scanFingerprint
             )
             try Task.checkCancellation()
-            report = CommitGraphIntegrityValidator.validate(candidate)
-        }
-        guard report.status != .invalid else {
-            throw CommitGraphRefreshError.invalidSnapshot(report)
-        }
+            var endingFingerprint = try await reader.fingerprint(
+                repositoryURL: repositoryURL
+            )
+            try Task.checkCancellation()
+            if endingFingerprint != scanFingerprint {
+                guard referenceAttempt == 0 else {
+                    throw CommitGraphRefreshError.referencesChangedDuringScan
+                }
+                scanFingerprint = endingFingerprint
+                continue
+            }
 
-        try Task.checkCancellation()
-        return PreparedRefresh(
-            result: CommitGraphRefreshResult(
-                snapshot: candidate,
-                integrity: report,
-                didChange: cached != candidate,
-                usedCache: false,
-                refreshedAt: Date()
-            ),
-            requiresSave: true
-        )
+            var report = CommitGraphIntegrityValidator.validate(candidate)
+            if report.status == .invalid {
+                candidate = try await reader.snapshot(
+                    repositoryURL: repositoryURL,
+                    fingerprint: scanFingerprint
+                )
+                try Task.checkCancellation()
+                endingFingerprint = try await reader.fingerprint(
+                    repositoryURL: repositoryURL
+                )
+                try Task.checkCancellation()
+                if endingFingerprint != scanFingerprint {
+                    guard referenceAttempt == 0 else {
+                        throw CommitGraphRefreshError.referencesChangedDuringScan
+                    }
+                    scanFingerprint = endingFingerprint
+                    continue
+                }
+                report = CommitGraphIntegrityValidator.validate(candidate)
+            }
+            guard report.status != .invalid else {
+                throw CommitGraphRefreshError.invalidSnapshot(report)
+            }
+
+            return PreparedRefresh(
+                result: CommitGraphRefreshResult(
+                    snapshot: candidate,
+                    integrity: report,
+                    didChange: cached != candidate,
+                    usedCache: false,
+                    refreshedAt: Date()
+                ),
+                requiresSave: true
+            )
+        }
+        throw CommitGraphRefreshError.referencesChangedDuringScan
     }
 
     private nonisolated static func loadUsableCache(
@@ -273,7 +317,10 @@ public actor CommitGraphRefreshCoordinator {
                 return nil
             }
             return snapshot
-        } catch is CommitGraphSnapshotStoreError {
+        } catch let error as CommitGraphSnapshotStoreError {
+            guard case .unsupportedSchema = error else {
+                throw error
+            }
             return nil
         }
     }

@@ -23,7 +23,7 @@ struct CommitGraphTraditionalView: View {
             let laneWidth = CommitGraphTraditionalMetrics
                 .laneViewportWidth(width)
             let visibleRows = CommitGraphTraditionalViewport.visibleRows(
-                totalCount: layout.rows.count,
+                totalCount: layout.contentRowCount,
                 rowHeight: CommitGraphTraditionalMetrics.rowHeight,
                 verticalOffset: verticalOffset,
                 viewportHeight: height,
@@ -86,7 +86,7 @@ struct CommitGraphTraditionalView: View {
                     height: Double(newSize.height)
                 )
             }
-            .onChange(of: layout.rows.count) { _, _ in
+            .onChange(of: layout.contentRowCount) { _, _ in
                 clampOffsets(width: width, height: height)
                 applyFocusIfNeeded(viewportHeight: height)
             }
@@ -224,7 +224,7 @@ struct CommitGraphTraditionalView: View {
         viewportHeight: Double
     ) -> Double {
         let maximum = max(
-            Double(layout.rows.count)
+            Double(layout.contentRowCount)
                 * CommitGraphTraditionalMetrics.rowHeight - viewportHeight,
             0
         )

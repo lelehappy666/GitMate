@@ -215,12 +215,13 @@ public final class CommandLocalGitReader: LocalGitReading, CommitGraphSnapshotRe
         fingerprint: CommitGraphReferenceFingerprint
     ) async throws -> CommitGraphSnapshot {
         let repositoryPath = try validatedRepositoryPath(repositoryURL)
+        let revisionArguments = snapshotRevisionArguments(for: fingerprint)
         let expectedCommitCount = try GitOutputParser.parseCommitCount(
             decode(
                 await execute([
                     "-C", repositoryPath, "rev-list",
-                    "--branches", "--remotes", "--count"
-                ]),
+                    "--count"
+                ] + revisionArguments),
                 context: "提交图总数"
             )
         )
@@ -228,9 +229,8 @@ public final class CommandLocalGitReader: LocalGitReading, CommitGraphSnapshotRe
             decode(
                 await execute([
                     "-C", repositoryPath, "log",
-                    "--branches", "--remotes", "--topo-order",
-                    "--decorate=short", Self.commitLogFormat
-                ]),
+                    "--topo-order", "--decorate=short", Self.commitLogFormat
+                ] + revisionArguments),
                 context: "提交图完整日志"
             )
         )
@@ -274,6 +274,16 @@ public final class CommandLocalGitReader: LocalGitReading, CommitGraphSnapshotRe
             shallowBoundaryParentHashes: shallowBoundaryParentHashes,
             generatedAt: Date()
         )
+    }
+
+    private func snapshotRevisionArguments(
+        for fingerprint: CommitGraphReferenceFingerprint
+    ) -> [String] {
+        var revisions = ["--branches", "--remotes"]
+        if fingerprint.headName == nil, fingerprint.headHash != nil {
+            revisions.append("HEAD")
+        }
+        return revisions
     }
 
     private func readShallowParentHashes(

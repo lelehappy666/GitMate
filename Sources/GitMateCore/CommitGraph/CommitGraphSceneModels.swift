@@ -391,6 +391,7 @@ public enum CommitGraphGeneratedPath: Equatable, Sendable {
 public enum CommitGraphEndpointID: Equatable, Hashable, Sendable {
     case node(String)
     case group(UUID)
+    case shallowBoundary(String)
 }
 
 public struct CommitGraphVisibleNode: Equatable, Identifiable, Sendable {
@@ -436,6 +437,25 @@ public struct CommitGraphVisibleGroup: Equatable, Identifiable, Sendable {
     }
 }
 
+public struct CommitGraphVisibleShallowBoundaryEndpoint:
+    Equatable,
+    Identifiable,
+    Sendable
+{
+    public var id: String { endpoint.id }
+
+    public let endpoint: CommitGraphShallowBoundaryEndpoint
+    public let position: GraphPoint
+
+    public init(
+        endpoint: CommitGraphShallowBoundaryEndpoint,
+        position: GraphPoint
+    ) {
+        self.endpoint = endpoint
+        self.position = position
+    }
+}
+
 public struct CommitGraphVisibleEdge: Equatable, Identifiable, Sendable {
     public let id: String
     public let source: CommitGraphEndpointID
@@ -476,17 +496,25 @@ public struct CommitGraphVisibleEdge: Equatable, Identifiable, Sendable {
 public struct CommitGraphSceneProjection: Equatable, Sendable {
     public let nodes: [CommitGraphVisibleNode]
     public let groups: [CommitGraphVisibleGroup]
+    public let regions: [CommitGraphRegionMarker]
+    public let shallowBoundaryEndpoints:
+        [CommitGraphVisibleShallowBoundaryEndpoint]
     public let edges: [CommitGraphVisibleEdge]
     public let lineStyle: CommitGraphLineStyle
 
     public init(
         nodes: [CommitGraphVisibleNode],
         groups: [CommitGraphVisibleGroup],
+        regions: [CommitGraphRegionMarker] = [],
+        shallowBoundaryEndpoints:
+            [CommitGraphVisibleShallowBoundaryEndpoint] = [],
         edges: [CommitGraphVisibleEdge],
         lineStyle: CommitGraphLineStyle = .curve
     ) {
         self.nodes = nodes
         self.groups = groups
+        self.regions = regions
+        self.shallowBoundaryEndpoints = shallowBoundaryEndpoints
         self.edges = edges
         self.lineStyle = lineStyle
     }

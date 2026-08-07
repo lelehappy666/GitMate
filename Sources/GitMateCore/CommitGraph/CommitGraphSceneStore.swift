@@ -91,11 +91,24 @@ public actor JSONCommitGraphSceneStore: CommitGraphSceneStoring {
             at: rootDirectory,
             withIntermediateDirectories: true
         )
+        let destination = sceneURL(repositoryID: repositoryID)
+        if fileManager.fileExists(atPath: destination.path),
+           let existingData = try? Data(contentsOf: destination),
+           let existingSchemaVersion = try? JSONDecoder().decode(
+               SceneVersionEnvelope.self,
+               from: existingData
+           ).schemaVersion,
+           existingSchemaVersion > CommitGraphSceneState.currentSchemaVersion {
+            throw CommitGraphSceneStoreError.unsupportedSchema(
+                repositoryID: repositoryID,
+                schemaVersion: existingSchemaVersion
+            )
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(scene)
         try data.write(
-            to: sceneURL(repositoryID: repositoryID),
+            to: destination,
             options: .atomic
         )
     }

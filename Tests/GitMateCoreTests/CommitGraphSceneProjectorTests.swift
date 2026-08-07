@@ -140,6 +140,52 @@ let commitGraphSceneProjectorTests = [
             ports,
             "Group 拖动不得重新分配端口"
         )
+    },
+    TestCase("画布投影将浅克隆边界作为虚拟端点而非提交节点") {
+        let relation = CommitGraphShallowBoundaryRelation(
+            childHash: "boundary",
+            missingParentHash: "missing-parent",
+            parentIndex: 0,
+            sourceLane: 0,
+            targetLane: 0,
+            colorIndex: 0
+        )
+        let layout = CommitGraphLayoutResult(
+            nodes: [projectionNode(hash: "boundary", x: 150, y: 82)],
+            shallowBoundaryEndpoints: [
+                CommitGraphShallowBoundaryEndpoint(
+                    relation: relation,
+                    x: 150,
+                    y: 0
+                )
+            ]
+        )
+
+        let projection = CommitGraphSceneProjector.project(
+            layout: layout,
+            scene: .defaultState(layout: layout)
+        )
+
+        try expectEqual(
+            projection.nodes.map(\.id),
+            ["boundary"],
+            "缺失父提交不得进入普通节点列表"
+        )
+        try expectEqual(
+            projection.shallowBoundaryEndpoints.map {
+                $0.endpoint.missingParentHash
+            },
+            ["missing-parent"],
+            "画布必须将缺失父哈希投影为独立端点"
+        )
+        try expect(
+            projection.edges.contains {
+                $0.kind == .shallowBoundary
+                    && $0.source == .node("boundary")
+                    && $0.target == .shallowBoundary(relation.id)
+            },
+            "画布必须使用独立虚拟关系连接真实子提交和边界端点"
+        )
     }
 ]
 

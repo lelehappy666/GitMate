@@ -76,6 +76,70 @@ public struct CommitGraphNode: Identifiable, Equatable, Sendable {
 public enum CommitGraphEdgeKind: Equatable, Sendable {
     case parent
     case merge
+    case shallowBoundary
+}
+
+/// 浅克隆中无法读取的父提交。
+///
+/// 它仅表示真实子提交与缺失父哈希之间的边界关系，绝不作为
+/// `GitCommit` 或普通图节点参与提交计数、选择和分组。
+public struct CommitGraphShallowBoundaryRelation:
+    Identifiable,
+    Equatable,
+    Sendable
+{
+    public var id: String {
+        "\(childHash)->\(missingParentHash)#\(parentIndex)"
+    }
+
+    public let childHash: String
+    public let missingParentHash: String
+    public let parentIndex: Int
+    public let sourceLane: Int
+    public let targetLane: Int
+    public let colorIndex: Int
+
+    public init(
+        childHash: String,
+        missingParentHash: String,
+        parentIndex: Int,
+        sourceLane: Int,
+        targetLane: Int,
+        colorIndex: Int
+    ) {
+        self.childHash = childHash
+        self.missingParentHash = missingParentHash
+        self.parentIndex = parentIndex
+        self.sourceLane = sourceLane
+        self.targetLane = targetLane
+        self.colorIndex = colorIndex
+    }
+}
+
+public struct CommitGraphShallowBoundaryEndpoint:
+    Identifiable,
+    Equatable,
+    Sendable
+{
+    public var id: String { relation.id }
+
+    public let relation: CommitGraphShallowBoundaryRelation
+    public let x: Double
+    public let y: Double
+
+    public var childHash: String { relation.childHash }
+    public var missingParentHash: String { relation.missingParentHash }
+    public var colorIndex: Int { relation.colorIndex }
+
+    public init(
+        relation: CommitGraphShallowBoundaryRelation,
+        x: Double,
+        y: Double
+    ) {
+        self.relation = relation
+        self.x = x
+        self.y = y
+    }
 }
 
 public struct CommitGraphEdge: Identifiable, Equatable, Sendable {
@@ -103,6 +167,7 @@ public struct CommitGraphEdge: Identifiable, Equatable, Sendable {
 public struct CommitGraphLayoutResult: Equatable, Sendable {
     public let nodes: [CommitGraphNode]
     public let edges: [CommitGraphEdge]
+    public let shallowBoundaryEndpoints: [CommitGraphShallowBoundaryEndpoint]
     public let contentWidth: Double
     public let contentHeight: Double
     let spatialIndex: CommitGraphSpatialIndex
@@ -110,11 +175,13 @@ public struct CommitGraphLayoutResult: Equatable, Sendable {
     public init(
         nodes: [CommitGraphNode] = [],
         edges: [CommitGraphEdge] = [],
+        shallowBoundaryEndpoints: [CommitGraphShallowBoundaryEndpoint] = [],
         contentWidth: Double = 1_040,
         contentHeight: Double = 680
     ) {
         self.nodes = nodes
         self.edges = edges
+        self.shallowBoundaryEndpoints = shallowBoundaryEndpoints
         self.contentWidth = contentWidth
         self.contentHeight = contentHeight
         spatialIndex = CommitGraphSpatialIndex(

@@ -461,7 +461,7 @@ struct CommitGraphView: View {
             ZStack {
                 CommitGraphCanvas(
                     visibleScene: visibleScene,
-                    regions: viewModel.scene.regions,
+                    regions: visibleScene.regions,
                     viewport: viewModel.viewport,
                     levelOfDetail: levelOfDetail,
                     selectedHashes: viewModel.selectedHashes,
@@ -472,7 +472,7 @@ struct CommitGraphView: View {
 
                 CommitGraphInteractionSurface(
                     visibleScene: visibleScene,
-                    regions: viewModel.scene.regions,
+                    regions: visibleScene.regions,
                     viewport: viewModel.viewport,
                     marqueePurpose: marqueePurpose,
                     hitTestCanvas: { point in

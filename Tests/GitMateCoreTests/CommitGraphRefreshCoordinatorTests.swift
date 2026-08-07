@@ -101,6 +101,8 @@ let commitGraphRefreshCoordinatorTests = [
                     .invalid,
                     "错误必须携带第二次完整性报告"
                 )
+            case .referencesChangedDuringScan:
+                throw TestFailure(description: "引用未变化时不得返回引用漂移错误")
             }
         }
         let snapshotCalls = await reader.snapshotCallCount()
@@ -249,8 +251,214 @@ let commitGraphRefreshCoordinatorTests = [
         let saved = await store.currentSnapshot(repositoryID: 30)
         try expectEqual(secondResult.snapshot, snapshotB, "新刷新必须完成")
         try expectEqual(saved, snapshotB, "旧保存恢复后不得覆盖新快照")
+    },
+    TestCase("未来版本缓存不阻断有效内存快照安装") {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "GitMateFutureRefresh-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let futureSchema = CommitGraphSnapshot.currentSchemaVersion + 7
+        let originalData = try PropertyListEncoder().encode(
+            FutureSnapshotVersionEnvelope(schemaVersion: futureSchema)
+        )
+        let targetURL = directory.appending(path: "31.plist")
+        try originalData.write(to: targetURL)
+        let fresh = refreshSnapshot(hash: "fresh-memory")
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: CountingSnapshotReader(
+                fingerprint: fresh.fingerprint,
+                snapshots: [fresh]
+            ),
+            store: BinaryCommitGraphSnapshotStore(rootDirectory: directory)
+        )
+
+        let result = try await coordinator.refresh(
+            repositoryID: 31,
+            repositoryURL: URL(filePath: "/repo")
+        )
+        let preservedData = try Data(contentsOf: targetURL)
+
+        try expectEqual(result.snapshot, fresh, "有效扫描结果必须供页面安装")
+        try expectEqual(
+            preservedData,
+            originalData,
+            "跳过保存时未来版本字节必须保持不变"
+        )
+    },
+    TestCase("非版本冲突的快照保存错误必须传播") {
+        let fresh = refreshSnapshot(hash: "save-failure")
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: CountingSnapshotReader(
+                fingerprint: fresh.fingerprint,
+                snapshots: [fresh]
+            ),
+            store: FailingSaveSnapshotStore()
+        )
+
+        do {
+            _ = try await coordinator.refresh(
+                repositoryID: 32,
+                repositoryURL: URL(filePath: "/repo")
+            )
+            throw TestFailure(description: "普通保存错误不得被吞掉")
+        } catch let error as RefreshSaveTestError {
+            try expectEqual(error, .unavailable, "必须原样传播非 schema 错误")
+        }
+    },
+    TestCase("首屏缓存拒绝同一仓库编号下的旧路径快照") {
+        let stale = refreshSnapshot(hash: "old-path", path: "/old/repo")
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: CountingSnapshotReader(
+                fingerprint: stale.fingerprint,
+                snapshots: [stale]
+            ),
+            store: InMemorySnapshotStore(snapshot: stale)
+        )
+
+        let cached = try await coordinator.cachedSnapshot(
+            repositoryID: 1,
+            repositoryURL: URL(filePath: "/new/repo")
+        )
+
+        try expectEqual(cached, nil, "仓库编号重绑后不得展示旧路径快照")
+    },
+    TestCase("扫描期间引用变化会丢弃旧候选并有界重试") {
+        let first = refreshSnapshot(hash: "ref-a")
+        let second = refreshSnapshot(hash: "ref-b")
+        let reader = ChangingFingerprintSnapshotReader(
+            fingerprints: [
+                first.fingerprint,
+                second.fingerprint,
+                second.fingerprint
+            ],
+            snapshots: [first, second]
+        )
+        let store = InMemorySnapshotStore()
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: reader,
+            store: store
+        )
+
+        let result = try await coordinator.refresh(
+            repositoryID: 33,
+            repositoryURL: URL(filePath: "/repo")
+        )
+        let suppliedFingerprints = await reader.snapshotFingerprints()
+        let saved = await store.currentSnapshot(repositoryID: 33)
+
+        try expectEqual(result.snapshot, second, "最终结果必须对应稳定后的引用")
+        try expectEqual(
+            suppliedFingerprints,
+            [first.fingerprint, second.fingerprint],
+            "引用变化后只允许一次有界重试"
+        )
+        try expectEqual(saved, second, "旧引用候选不得落盘")
+    },
+    TestCase("扫描期间引用连续变化会停止重试且不保存候选") {
+        let first = refreshSnapshot(hash: "ref-a")
+        let second = refreshSnapshot(hash: "ref-b")
+        let third = refreshSnapshot(hash: "ref-c")
+        let reader = ChangingFingerprintSnapshotReader(
+            fingerprints: [
+                first.fingerprint,
+                second.fingerprint,
+                third.fingerprint
+            ],
+            snapshots: [first, second]
+        )
+        let store = InMemorySnapshotStore()
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: reader,
+            store: store
+        )
+
+        do {
+            _ = try await coordinator.refresh(
+                repositoryID: 34,
+                repositoryURL: URL(filePath: "/repo")
+            )
+            throw TestFailure(description: "连续漂移不得安装不稳定候选")
+        } catch let error as CommitGraphRefreshError {
+            try expectEqual(
+                error,
+                .referencesChangedDuringScan,
+                "第二次漂移必须返回稳定错误"
+            )
+        }
+        let saveCount = await store.saveCount()
+        let supplied = await reader.snapshotFingerprints()
+        try expectEqual(saveCount, 0, "不稳定候选不得落盘")
+        try expectEqual(
+            supplied,
+            [first.fingerprint, second.fingerprint],
+            "引用漂移最多只允许重扫一次"
+        )
     }
 ]
+
+private struct FutureSnapshotVersionEnvelope: Codable {
+    let schemaVersion: Int
+}
+
+private enum RefreshSaveTestError: Error, Equatable, Sendable {
+    case unavailable
+}
+
+private actor FailingSaveSnapshotStore: CommitGraphSnapshotStoring {
+    func load(repositoryID _: Int64) async throws -> CommitGraphSnapshot? {
+        nil
+    }
+
+    func save(
+        _ snapshot: CommitGraphSnapshot,
+        repositoryID: Int64
+    ) async throws {
+        throw RefreshSaveTestError.unavailable
+    }
+}
+
+private actor ChangingFingerprintSnapshotReader:
+    CommitGraphSnapshotReading
+{
+    private var fingerprints: [CommitGraphReferenceFingerprint]
+    private var snapshots: [CommitGraphSnapshot]
+    private var supplied: [CommitGraphReferenceFingerprint] = []
+
+    init(
+        fingerprints: [CommitGraphReferenceFingerprint],
+        snapshots: [CommitGraphSnapshot]
+    ) {
+        self.fingerprints = fingerprints
+        self.snapshots = snapshots
+    }
+
+    func fingerprint(
+        repositoryURL _: URL
+    ) async throws -> CommitGraphReferenceFingerprint {
+        guard !fingerprints.isEmpty else {
+            throw TestFailure(description: "没有可返回的指纹")
+        }
+        return fingerprints.removeFirst()
+    }
+
+    func snapshot(
+        repositoryURL _: URL,
+        fingerprint: CommitGraphReferenceFingerprint
+    ) async throws -> CommitGraphSnapshot {
+        supplied.append(fingerprint)
+        guard !snapshots.isEmpty else {
+            throw TestFailure(description: "没有可返回的快照")
+        }
+        return snapshots.removeFirst()
+    }
+
+    func snapshotFingerprints() -> [CommitGraphReferenceFingerprint] {
+        supplied
+    }
+}
 
 private actor CountingSnapshotReader: CommitGraphSnapshotReading {
     private let currentFingerprint: CommitGraphReferenceFingerprint

@@ -40,6 +40,7 @@ struct CommitGraphCanvas: View {
             drawRegions(context: &context, size: size)
             drawExpandedGroups(context: &context, size: size)
             drawVisibleEdges(context: &context, size: size)
+            drawShallowBoundaryEndpoints(context: &context, size: size)
             drawVisibleNodes(context: &context, size: size)
             drawCollapsedGroups(context: &context, size: size)
         }
@@ -251,7 +252,9 @@ struct CommitGraphCanvas: View {
                 }
             }
 
-            let color = CommitGraphPalette.color(edge.colorIndex)
+            let color = edge.kind == .shallowBoundary
+                ? GitMateTheme.warning
+                : CommitGraphPalette.color(edge.colorIndex)
             let isRelated = highlightedEdgeIDs.contains(edge.id)
             context.stroke(
                 path,
@@ -267,7 +270,9 @@ struct CommitGraphCanvas: View {
                     lineJoin: .round,
                     dash: edge.kind == .merge
                         ? [7 * viewport.scale, 4 * viewport.scale]
-                        : []
+                        : (edge.kind == .shallowBoundary
+                            ? [5 * viewport.scale, 4 * viewport.scale]
+                            : [])
                 )
             )
             if edge.aggregateCount > 1 && levelOfDetail != .overview {
@@ -276,6 +281,57 @@ struct CommitGraphCanvas: View {
                     path: generated,
                     color: color,
                     context: &context
+                )
+            }
+        }
+    }
+
+    private func drawShallowBoundaryEndpoints(
+        context: inout GraphicsContext,
+        size: CGSize
+    ) {
+        for visibleEndpoint in visibleScene.shallowBoundaryEndpoints {
+            let endpoint = visibleEndpoint.endpoint
+            let center = screenPoint(visibleEndpoint.position)
+            let markerSize = max(8 * viewport.scale, 5)
+            let marker = CGRect(
+                x: center.x - markerSize / 2,
+                y: center.y - markerSize / 2,
+                width: markerSize,
+                height: markerSize
+            )
+            guard isVisible(marker, in: size, padding: 80)
+            else {
+                continue
+            }
+            var diamond = Path()
+            diamond.move(to: CGPoint(x: marker.midX, y: marker.minY))
+            diamond.addLine(to: CGPoint(x: marker.maxX, y: marker.midY))
+            diamond.addLine(to: CGPoint(x: marker.midX, y: marker.maxY))
+            diamond.addLine(to: CGPoint(x: marker.minX, y: marker.midY))
+            diamond.closeSubpath()
+            context.fill(diamond, with: .color(GitMateTheme.warning.opacity(0.2)))
+            context.stroke(
+                diamond,
+                with: .color(GitMateTheme.warning),
+                lineWidth: max(1.4 * viewport.scale, 1)
+            )
+            if levelOfDetail != .overview {
+                context.draw(
+                    Text("浅克隆边界 · \(endpoint.missingParentHash)")
+                        .font(
+                            .system(
+                                size: max(9 * viewport.scale, 6),
+                                weight: .medium,
+                                design: .monospaced
+                            )
+                        )
+                        .foregroundStyle(GitMateTheme.warning),
+                    at: CGPoint(
+                        x: center.x,
+                        y: center.y - 20 * viewport.scale
+                    ),
+                    anchor: .center
                 )
             }
         }

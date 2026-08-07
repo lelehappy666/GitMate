@@ -188,6 +188,30 @@ let commitGraphSceneStoreTests = [
             )
         }
     },
+    TestCase("保存场景前再次保护未来版本文件") {
+        let directory = commitGraphSceneStoreTemporaryDirectory()
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let targetURL = directory.appending(path: "20.json")
+        let originalData = Data("{\"schemaVersion\":99}".utf8)
+        try originalData.write(to: targetURL)
+        let store = JSONCommitGraphSceneStore(rootDirectory: directory)
+
+        do {
+            try await store.save(CommitGraphSceneState(), repositoryID: 20)
+            throw TestFailure(description: "保存不得覆盖未来版本场景")
+        } catch let error as CommitGraphSceneStoreError {
+            try expectEqual(
+                error,
+                .unsupportedSchema(repositoryID: 20, schemaVersion: 99),
+                "保存门禁必须报告磁盘上的未来版本"
+            )
+        }
+        let preservedData = try Data(contentsOf: targetURL)
+        try expectEqual(preservedData, originalData, "未来版本字节必须保持不变")
+    },
     TestCase("版本区域随场景完整保存和恢复") {
         let directory = commitGraphSceneStoreTemporaryDirectory()
         let store = JSONCommitGraphSceneStore(rootDirectory: directory)
