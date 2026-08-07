@@ -163,6 +163,56 @@ let commitGraphLaneTopologyTests = [
         )
         try expectEqual(topology.maximumLane, 1, "收敛后不得无故增加泳道")
     },
+    TestCase("无依赖兄弟顺序不得改变共享父节点泳道和连线") {
+        let alphaFirst = CommitGraphLaneTopology.build(
+            snapshot: laneSharedParentSnapshot(
+                siblingHashes: ["alpha", "zeta"]
+            )
+        )
+        let zetaFirst = CommitGraphLaneTopology.build(
+            snapshot: laneSharedParentSnapshot(
+                siblingHashes: ["zeta", "alpha"]
+            )
+        )
+        let firstRows = alphaFirst.rowsNewestFirst
+            .map {
+                "\($0.commit.fullHash):\($0.lane):\($0.colorIndex)"
+            }
+            .sorted()
+        let secondRows = zetaFirst.rowsNewestFirst
+            .map {
+                "\($0.commit.fullHash):\($0.lane):\($0.colorIndex)"
+            }
+            .sorted()
+        let firstConnections = alphaFirst.rowsNewestFirst
+            .flatMap(\.connections)
+            .map {
+                "\($0.id):\($0.sourceLane)->\($0.targetLane):\($0.colorIndex)"
+            }
+            .sorted()
+        let secondConnections = zetaFirst.rowsNewestFirst
+            .flatMap(\.connections)
+            .map {
+                "\($0.id):\($0.sourceLane)->\($0.targetLane):\($0.colorIndex)"
+            }
+            .sorted()
+
+        try expectEqual(
+            firstRows,
+            secondRows,
+            "只交换无依赖兄弟顺序时 hash 到 lane/color 必须完全一致"
+        )
+        try expectEqual(
+            firstConnections,
+            secondConnections,
+            "共享父节点的所有连线端点必须与兄弟遍历顺序无关"
+        )
+        try expectEqual(
+            alphaFirst.row(hash: "shared-root")?.lane,
+            1,
+            "共享父节点必须由稳定优先级更高的 alpha 路径延续"
+        )
+    },
     TestCase("50000 个线性提交使用线性数量的行和边") {
         let commitCount = 50_000
         let commits = (0..<commitCount).reversed().map { index in
@@ -266,6 +316,37 @@ private func laneReferenceOrderingSnapshot(
             laneCommit(hash: "root")
         ],
         references: references,
+        headName: "main",
+        headHash: "main"
+    )
+}
+
+private func laneSharedParentSnapshot(
+    siblingHashes: [String]
+) -> CommitGraphSnapshot {
+    laneSnapshot(
+        commits: [laneCommit(hash: "main")]
+            + siblingHashes.map {
+                laneCommit(hash: $0, parents: ["shared-root"])
+            }
+            + [laneCommit(hash: "shared-root")],
+        references: [
+            CommitGraphReference(
+                name: "refs/heads/main",
+                targetHash: "main",
+                kind: .localBranch
+            ),
+            CommitGraphReference(
+                name: "refs/heads/alpha",
+                targetHash: "alpha",
+                kind: .localBranch
+            ),
+            CommitGraphReference(
+                name: "refs/heads/zeta",
+                targetHash: "zeta",
+                kind: .localBranch
+            )
+        ],
         headName: "main",
         headHash: "main"
     )

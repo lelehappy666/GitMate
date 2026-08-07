@@ -141,78 +141,95 @@ public struct CommitGraphLaneTopology: Equatable, Sendable {
         var allocator = CommitGraphLaneAllocator(
             firstUnreservedLane: startingHashes.count + 1
         )
-        var laneByPendingHash: [String: Int] = [:]
-        var identityByPendingHash: [String: String] = [:]
+        var pendingByHash: [String: CommitGraphPendingLane] = [:]
 
-        var rows: [CommitGraphLaneRow] = []
-        rows.reserveCapacity(commits.count)
+        var rowDrafts: [CommitGraphLaneRowDraft] = []
+        rowDrafts.reserveCapacity(commits.count)
         var maximumLane = allocator.maximumAllocatedLane
 
         for commit in commits {
             let isCoreCommit = coreHashes.contains(commit.fullHash)
-            let assignedLane = laneByPendingHash.removeValue(
+            let assigned = pendingByHash.removeValue(
                 forKey: commit.fullHash
             )
             let lane = isCoreCommit
                 ? 0
-                : (assignedLane
+                : (assigned?.lane
                     ?? startingLaneByHash[commit.fullHash]
                     ?? allocator.allocate())
             let identity = isCoreCommit
                 ? defaultIdentity
-                : (identityByPendingHash.removeValue(
-                    forKey: commit.fullHash
-                ) ?? referenceIdentityByHash[commit.fullHash]
+                : (assigned?.identity
+                    ?? referenceIdentityByHash[commit.fullHash]
                     ?? branchIdentity(for: commit))
+            let currentCandidate = CommitGraphPendingLane(
+                lane: lane,
+                identity: identity,
+                sourceHash: assigned?.sourceHash ?? commit.fullHash
+            )
             let colorIndex = stableColorIndex(identity)
             maximumLane = max(maximumLane, lane)
             var keepsCurrentLaneActive = false
-            var connections: [CommitGraphLaneConnection] = []
-            connections.reserveCapacity(commit.parentHashes.count)
+            var connectionDrafts: [CommitGraphLaneConnectionDraft] = []
+            connectionDrafts.reserveCapacity(commit.parentHashes.count)
 
             for (parentIndex, parentHash) in commit.parentHashes.enumerated() {
                 let parentIsKnown = knownHashes.contains(parentHash)
-                let targetLane: Int
-                let targetIdentity: String
+                let target: CommitGraphPendingLane
 
                 if coreHashes.contains(parentHash) {
-                    targetLane = 0
-                    targetIdentity = defaultIdentity
-                } else if let existingLane = laneByPendingHash[parentHash] {
-                    targetLane = existingLane
-                    targetIdentity = identityByPendingHash[parentHash]
-                        ?? parentHash
+                    target = CommitGraphPendingLane(
+                        lane: 0,
+                        identity: defaultIdentity,
+                        sourceHash: defaultTarget
+                    )
                 } else if parentIndex == 0 {
-                    targetLane = lane
-                    targetIdentity = identity
+                    if let existing = pendingByHash[parentHash] {
+                        if currentCandidate.isPreferred(to: existing) {
+                            target = currentCandidate
+                            pendingByHash[parentHash] = currentCandidate
+                            if existing.lane > 0,
+                               existing.lane != currentCandidate.lane {
+                                allocator.release(existing.lane)
+                            }
+                        } else {
+                            target = existing
+                        }
+                    } else {
+                        target = currentCandidate
+                        if parentIsKnown {
+                            pendingByHash[parentHash] = currentCandidate
+                        }
+                    }
                 } else {
-                    targetLane = allocator.allocate()
-                    targetIdentity = referenceIdentityByHash[parentHash]
-                        ?? parentHash
+                    if let existing = pendingByHash[parentHash] {
+                        target = existing
+                    } else {
+                        target = CommitGraphPendingLane(
+                            lane: allocator.allocate(),
+                            identity: referenceIdentityByHash[parentHash]
+                                ?? parentHash,
+                            sourceHash: parentHash
+                        )
+                        if parentIsKnown {
+                            pendingByHash[parentHash] = target
+                        }
+                    }
                 }
 
-                if parentIsKnown, laneByPendingHash[parentHash] == nil {
-                    laneByPendingHash[parentHash] = targetLane
-                    identityByPendingHash[parentHash] = targetIdentity
-                } else if !parentIsKnown, targetLane > 0,
-                          targetLane != lane {
-                    allocator.release(targetLane)
+                if !parentIsKnown, target.lane > 0,
+                   target.lane != lane {
+                    allocator.release(target.lane)
                 }
-                if parentIsKnown, targetLane == lane {
+                if parentIsKnown, target.lane == lane {
                     keepsCurrentLaneActive = true
                 }
-                maximumLane = max(maximumLane, targetLane)
-                connections.append(
-                    CommitGraphLaneConnection(
-                        childHash: commit.fullHash,
+                maximumLane = max(maximumLane, target.lane)
+                connectionDrafts.append(
+                    CommitGraphLaneConnectionDraft(
                         parentHash: parentHash,
                         parentIndex: parentIndex,
-                        sourceLane: lane,
-                        targetLane: targetLane,
-                        kind: parentIndex == 0 ? .parent : .merge,
-                        colorIndex: parentIndex == 0
-                            ? colorIndex
-                            : stableColorIndex(targetIdentity)
+                        fallbackTarget: target
                     )
                 )
             }
@@ -220,13 +237,50 @@ public struct CommitGraphLaneTopology: Equatable, Sendable {
             if lane > 0, !keepsCurrentLaneActive {
                 allocator.release(lane)
             }
-            rows.append(
-                CommitGraphLaneRow(
+            rowDrafts.append(
+                CommitGraphLaneRowDraft(
                     commit: commit,
                     lane: lane,
                     colorIndex: colorIndex,
-                    connections: connections
+                    connections: connectionDrafts
                 )
+            )
+        }
+
+        let laneByHash = Dictionary(
+            uniqueKeysWithValues: rowDrafts.map {
+                ($0.commit.fullHash, $0.lane)
+            }
+        )
+        let colorByHash = Dictionary(
+            uniqueKeysWithValues: rowDrafts.map {
+                ($0.commit.fullHash, $0.colorIndex)
+            }
+        )
+        let rows = rowDrafts.map { row in
+            CommitGraphLaneRow(
+                commit: row.commit,
+                lane: row.lane,
+                colorIndex: row.colorIndex,
+                connections: row.connections.map { connection in
+                    let targetLane = laneByHash[connection.parentHash]
+                        ?? connection.fallbackTarget.lane
+                    let targetColor = colorByHash[connection.parentHash]
+                        ?? stableColorIndex(
+                            connection.fallbackTarget.identity
+                        )
+                    return CommitGraphLaneConnection(
+                        childHash: row.commit.fullHash,
+                        parentHash: connection.parentHash,
+                        parentIndex: connection.parentIndex,
+                        sourceLane: row.lane,
+                        targetLane: targetLane,
+                        kind: connection.parentIndex == 0 ? .parent : .merge,
+                        colorIndex: connection.parentIndex == 0
+                            ? row.colorIndex
+                            : targetColor
+                    )
+                }
             )
         }
 
@@ -355,6 +409,38 @@ public struct CommitGraphLaneTopology: Equatable, Sendable {
         }
         return Int(hash % 6)
     }
+}
+
+private struct CommitGraphPendingLane {
+    let lane: Int
+    let identity: String
+    let sourceHash: String
+
+    func isPreferred(to other: CommitGraphPendingLane) -> Bool {
+        if lane == 0 || other.lane == 0 {
+            return lane == 0 && other.lane != 0
+        }
+        if identity != other.identity {
+            return identity < other.identity
+        }
+        if sourceHash != other.sourceHash {
+            return sourceHash < other.sourceHash
+        }
+        return lane < other.lane
+    }
+}
+
+private struct CommitGraphLaneConnectionDraft {
+    let parentHash: String
+    let parentIndex: Int
+    let fallbackTarget: CommitGraphPendingLane
+}
+
+private struct CommitGraphLaneRowDraft {
+    let commit: GitCommit
+    let lane: Int
+    let colorIndex: Int
+    let connections: [CommitGraphLaneConnectionDraft]
 }
 
 private struct CommitGraphLaneAllocator {
