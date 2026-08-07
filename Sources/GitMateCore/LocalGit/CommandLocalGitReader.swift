@@ -1,6 +1,6 @@
 import Foundation
 
-public final class CommandLocalGitReader: LocalGitReading, @unchecked Sendable {
+public final class CommandLocalGitReader: LocalGitReading, CommitGraphSnapshotReading, @unchecked Sendable {
     public static let commitLogFormat =
         "--format=%h%x00%H%x00%s%x00%an%x00%ae%x00%aI%x00%P%x00%D%x00"
     private static let detailFormat =
@@ -162,6 +162,105 @@ public final class CommandLocalGitReader: LocalGitReading, @unchecked Sendable {
         return CommitGraphPage(
             commits: result.commits,
             nextCursor: result.nextCursor
+        )
+    }
+
+    public func fingerprint(
+        repositoryURL: URL
+    ) async throws -> CommitGraphReferenceFingerprint {
+        let repositoryPath = try validatedRepositoryPath(repositoryURL)
+        let references = try GitOutputParser.parseCommitGraphReferences(
+            decode(
+                await execute([
+                    "-C", repositoryPath, "for-each-ref",
+                    "--format=%(refname)%00%(objectname)%00%(symref)%00",
+                    "refs/heads", "refs/remotes"
+                ]),
+                context: "提交图引用"
+            )
+        )
+        let rawHeadName = try decode(
+            try await execute([
+                "-C", repositoryPath, "rev-parse", "--abbrev-ref", "HEAD"
+            ]),
+            context: "HEAD 名称"
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let headHash = try decode(
+            try await execute([
+                "-C", repositoryPath, "rev-parse", "HEAD"
+            ]),
+            context: "HEAD 哈希"
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let isShallow = try GitOutputParser.parseGitBoolean(
+            decode(
+                await execute([
+                    "-C", repositoryPath, "rev-parse", "--is-shallow-repository"
+                ]),
+                context: "浅克隆状态"
+            )
+        )
+
+        return CommitGraphReferenceFingerprint(
+            references: references,
+            headName: rawHeadName == "HEAD" || rawHeadName.isEmpty
+                ? nil
+                : rawHeadName,
+            headHash: headHash.isEmpty ? nil : headHash,
+            isShallow: isShallow
+        )
+    }
+
+    public func snapshot(
+        repositoryURL: URL,
+        fingerprint: CommitGraphReferenceFingerprint
+    ) async throws -> CommitGraphSnapshot {
+        let repositoryPath = try validatedRepositoryPath(repositoryURL)
+        let expectedCommitCount = try GitOutputParser.parseCommitCount(
+            decode(
+                await execute([
+                    "-C", repositoryPath, "rev-list",
+                    "--branches", "--remotes", "--count"
+                ]),
+                context: "提交图总数"
+            )
+        )
+        let parsedCommits = try GitOutputParser.parseCommits(
+            decode(
+                await execute([
+                    "-C", repositoryPath, "log",
+                    "--branches", "--remotes", "--topo-order",
+                    "--decorate=short", Self.commitLogFormat
+                ]),
+                context: "提交图完整日志"
+            )
+        )
+        var seenHashes: Set<String> = []
+        let commitsNewestFirst = parsedCommits.filter {
+            seenHashes.insert($0.fullHash).inserted
+        }
+        let shallowBoundaryParentHashes: Set<String>
+        if fingerprint.isShallow {
+            shallowBoundaryParentHashes = try GitOutputParser
+                .parseShallowBoundaryParentHashes(
+                    decode(
+                        await execute([
+                            "-C", repositoryPath, "rev-list", "--boundary",
+                            "--branches", "--remotes"
+                        ]),
+                        context: "浅克隆边界"
+                    )
+                )
+        } else {
+            shallowBoundaryParentHashes = []
+        }
+
+        return CommitGraphSnapshot(
+            repositoryPath: repositoryPath,
+            fingerprint: fingerprint,
+            commitsNewestFirst: commitsNewestFirst,
+            expectedCommitCount: expectedCommitCount,
+            shallowBoundaryParentHashes: shallowBoundaryParentHashes,
+            generatedAt: Date()
         )
     }
 

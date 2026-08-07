@@ -9,6 +9,15 @@ private let newestToOldestTwoCommitFixture =
     "child02\u{0}child02full\u{0}子提交\u{0}lele\u{0}lele@example.com\u{0}2026-07-29T11:00:00Z\u{0}root001full\u{0}\u{0}"
     + "root001\u{0}root001full\u{0}根提交\u{0}lele\u{0}lele@example.com\u{0}2026-07-29T10:00:00Z\u{0}\u{0}\u{0}"
 
+private let commitGraphReferenceFixture =
+    "refs/heads/main\u{0}child02full\u{0}\u{0}\n"
+    + "refs/remotes/origin/main\u{0}child02full\u{0}\u{0}\n"
+
+private let duplicatedNewestToOldestCommitFixture =
+    "child02\u{0}child02full\u{0}子提交\u{0}lele\u{0}lele@example.com\u{0}2026-07-29T11:00:00Z\u{0}root001full\u{0}\u{0}"
+    + "child02\u{0}child02full\u{0}重复子提交\u{0}lele\u{0}lele@example.com\u{0}2026-07-29T11:00:00Z\u{0}root001full\u{0}\u{0}"
+    + "root001\u{0}root001full\u{0}根提交\u{0}lele\u{0}lele@example.com\u{0}2026-07-29T10:00:00Z\u{0}\u{0}\u{0}"
+
 private let commitLogRecord =
     "a81c32f\u{0}a81c32ffull\u{0}修复同步索引\u{0}lele\u{0}lele@example.com\u{0}2026-07-29T10:00:00Z\u{0}8e1d04a 742fd81\u{0}HEAD -> main, tag: v1.0\u{0}"
 
@@ -648,6 +657,190 @@ let localGitReaderTests = [
                 CommandLocalGitReader.commitLogFormat
             ]],
             "最近提交不得先统计总数或读取最早端窗口"
+        )
+        try executor.verifyComplete()
+    },
+    TestCase("提交图快照读取全部本地远程分支并保持最新优先") {
+        let repositoryURL = URL(fileURLWithPath: "/repo")
+        let executor = FakeCommandExecutor(
+            results: [
+                .success([.standardOutput(commitGraphReferenceFixture)]),
+                .success([.standardOutput("main\n")]),
+                .success([.standardOutput("child02full\n")]),
+                .success([.standardOutput("false\n")]),
+                .success([.standardOutput("2\n")]),
+                .success([.standardOutput(newestToOldestTwoCommitFixture)])
+            ],
+            expectedInvocations: [
+                expectedInvocation([
+                    "-C", "/repo", "for-each-ref",
+                    "--format=%(refname)%00%(objectname)%00%(symref)%00",
+                    "refs/heads", "refs/remotes"
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "rev-parse", "--abbrev-ref", "HEAD"
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "rev-parse", "HEAD"
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "rev-parse", "--is-shallow-repository"
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "rev-list",
+                    "--branches", "--remotes", "--count"
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "log",
+                    "--branches", "--remotes", "--topo-order",
+                    "--decorate=short", CommandLocalGitReader.commitLogFormat
+                ])
+            ]
+        )
+        let reader = CommandLocalGitReader(executor: executor)
+
+        let fingerprint = try await reader.fingerprint(repositoryURL: repositoryURL)
+        let snapshot = try await reader.snapshot(
+            repositoryURL: repositoryURL,
+            fingerprint: fingerprint
+        )
+
+        try expectEqual(
+            fingerprint.references,
+            [
+                CommitGraphReference(
+                    name: "refs/heads/main",
+                    targetHash: "child02full",
+                    kind: .localBranch
+                ),
+                CommitGraphReference(
+                    name: "refs/remotes/origin/main",
+                    targetHash: "child02full",
+                    kind: .remoteBranch
+                )
+            ],
+            "指纹必须记录全部本地和远程分支"
+        )
+        try expectEqual(fingerprint.headName, "main", "分支 HEAD 必须保留名称")
+        try expectEqual(fingerprint.headHash, "child02full", "HEAD 必须保留完整哈希")
+        try expect(!fingerprint.isShallow, "非浅克隆必须保持 false")
+        try expectEqual(
+            snapshot.commitsNewestFirst.map(\.shortHash),
+            ["child02", "root001"],
+            "快照必须保持 Git 日志的最新优先顺序"
+        )
+        try expectEqual(snapshot.expectedCommitCount, 2, "必须保存 Git 总数")
+        try expectEqual(snapshot.shallowBoundaryParentHashes, [], "非浅克隆不得增加边界父提交")
+        try executor.verifyComplete()
+    },
+    TestCase("提交图快照将 detached HEAD 归一为空并去重日志提交") {
+        let repositoryURL = URL(fileURLWithPath: "/repo")
+        let executor = FakeCommandExecutor(
+            results: [
+                .success([.standardOutput("refs/heads/main\u{0}child02full\u{0}\u{0}\n")]),
+                .success([.standardOutput("HEAD\n")]),
+                .success([.standardOutput("child02full\n")]),
+                .success([.standardOutput("false\n")]),
+                .success([.standardOutput("3\n")]),
+                .success([.standardOutput(duplicatedNewestToOldestCommitFixture)])
+            ],
+            expectedInvocations: [
+                expectedInvocation([
+                    "-C", "/repo", "for-each-ref",
+                    "--format=%(refname)%00%(objectname)%00%(symref)%00",
+                    "refs/heads", "refs/remotes"
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "rev-parse", "--abbrev-ref", "HEAD"
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "rev-parse", "HEAD"
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "rev-parse", "--is-shallow-repository"
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "rev-list",
+                    "--branches", "--remotes", "--count"
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "log",
+                    "--branches", "--remotes", "--topo-order",
+                    "--decorate=short", CommandLocalGitReader.commitLogFormat
+                ])
+            ]
+        )
+        let reader = CommandLocalGitReader(executor: executor)
+
+        let fingerprint = try await reader.fingerprint(repositoryURL: repositoryURL)
+        let snapshot = try await reader.snapshot(
+            repositoryURL: repositoryURL,
+            fingerprint: fingerprint
+        )
+
+        try expect(fingerprint.headName == nil, "Detached HEAD 不得伪装为分支名称")
+        try expectEqual(
+            snapshot.commitsNewestFirst.map(\.fullHash),
+            ["child02full", "root001full"],
+            "相同完整哈希只能保留第一条最新记录"
+        )
+        try expectEqual(snapshot.expectedCommitCount, 3, "总数必须保留 Git 原始统计值")
+        try executor.verifyComplete()
+    },
+    TestCase("浅克隆快照读取边界父提交") {
+        let repositoryURL = URL(fileURLWithPath: "/repo")
+        let executor = FakeCommandExecutor(
+            results: [
+                .success([.standardOutput("refs/heads/main\u{0}child02full\u{0}\u{0}\n")]),
+                .success([.standardOutput("main\n")]),
+                .success([.standardOutput("child02full\n")]),
+                .success([.standardOutput("true\n")]),
+                .success([.standardOutput("1\n")]),
+                .success([.standardOutput(newestToOldestTwoCommitFixture)]),
+                .success([.standardOutput("-root001full\n")])
+            ],
+            expectedInvocations: [
+                expectedInvocation([
+                    "-C", "/repo", "for-each-ref",
+                    "--format=%(refname)%00%(objectname)%00%(symref)%00",
+                    "refs/heads", "refs/remotes"
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "rev-parse", "--abbrev-ref", "HEAD"
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "rev-parse", "HEAD"
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "rev-parse", "--is-shallow-repository"
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "rev-list",
+                    "--branches", "--remotes", "--count"
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "log",
+                    "--branches", "--remotes", "--topo-order",
+                    "--decorate=short", CommandLocalGitReader.commitLogFormat
+                ]),
+                expectedInvocation([
+                    "-C", "/repo", "rev-list", "--boundary",
+                    "--branches", "--remotes"
+                ])
+            ]
+        )
+        let reader = CommandLocalGitReader(executor: executor)
+
+        let fingerprint = try await reader.fingerprint(repositoryURL: repositoryURL)
+        let snapshot = try await reader.snapshot(
+            repositoryURL: repositoryURL,
+            fingerprint: fingerprint
+        )
+
+        try expectEqual(
+            snapshot.shallowBoundaryParentHashes,
+            ["root001full"],
+            "浅克隆必须保存边界父提交哈希"
         )
         try executor.verifyComplete()
     },

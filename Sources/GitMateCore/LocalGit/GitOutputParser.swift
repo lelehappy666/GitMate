@@ -1,6 +1,67 @@
 import Foundation
 
 public enum GitOutputParser {
+    public static func parseCommitGraphReferences(
+        _ output: String
+    ) throws -> [CommitGraphReference] {
+        try output
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { rawLine in
+                var fields = rawLine.split(
+                    separator: "\u{0}",
+                    omittingEmptySubsequences: false
+                ).map(String.init)
+                if fields.last?.isEmpty == true {
+                    fields.removeLast()
+                }
+                guard fields.count == 3,
+                      !fields[0].isEmpty,
+                      !fields[1].isEmpty
+                else {
+                    throw GitOutputParsingError.malformedCommit(String(rawLine))
+                }
+
+                let kind: CommitGraphReferenceKind
+                if fields[0].hasPrefix("refs/heads/") {
+                    kind = .localBranch
+                } else if fields[0].hasPrefix("refs/remotes/") {
+                    kind = .remoteBranch
+                } else {
+                    throw GitOutputParsingError.malformedCommit(String(rawLine))
+                }
+                return CommitGraphReference(
+                    name: fields[0],
+                    targetHash: fields[1],
+                    kind: kind
+                )
+            }
+    }
+
+    public static func parseGitBoolean(_ output: String) throws -> Bool {
+        switch output.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "true":
+            true
+        case "false":
+            false
+        default:
+            throw GitOutputParsingError.malformedCommit(output)
+        }
+    }
+
+    public static func parseShallowBoundaryParentHashes(
+        _ output: String
+    ) throws -> Set<String> {
+        Set(
+            output.split(separator: "\n", omittingEmptySubsequences: true)
+                .compactMap { line in
+                    guard line.first == "-", line.count > 1 else {
+                        return nil
+                    }
+                    return String(line.dropFirst())
+                }
+        )
+    }
+
     public static func parseCommitCount(_ output: String) throws -> Int {
         let value = output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let count = Int(value), count >= 0 else {
