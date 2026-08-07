@@ -647,6 +647,70 @@ let commitGraphRenderIndexTests = [
             "展开分组内容区不得误命中拖动标题"
         )
     },
+    TestCase("空间命中层级与画布绘制顺序一致") {
+        let collapsedBackID = UUID(
+            uuidString: "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD"
+        )!
+        let collapsedFrontID = UUID(
+            uuidString: "EEEEEEEE-EEEE-EEEE-EEEE-EEEEEEEEEEEE"
+        )!
+        let expandedID = UUID(
+            uuidString: "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"
+        )!
+        let collapsedRect = GraphRect(
+            x: 80,
+            y: 150,
+            width: 250,
+            height: 100
+        )
+        let projection = CommitGraphSceneProjection(
+            nodes: [
+                renderVisibleNode(hash: "behind-collapsed", x: 200, y: 200),
+                renderVisibleNode(hash: "above-expanded", x: 500, y: 170)
+            ],
+            groups: [
+                CommitGraphVisibleGroup(
+                    id: collapsedBackID,
+                    title: "后层折叠组",
+                    rect: collapsedRect,
+                    memberCount: 2,
+                    isCollapsed: true
+                ),
+                CommitGraphVisibleGroup(
+                    id: collapsedFrontID,
+                    title: "前层折叠组",
+                    rect: collapsedRect,
+                    memberCount: 2,
+                    isCollapsed: true
+                ),
+                CommitGraphVisibleGroup(
+                    id: expandedID,
+                    title: "展开组",
+                    rect: GraphRect(
+                        x: 400,
+                        y: 150,
+                        width: 240,
+                        height: 220
+                    ),
+                    memberCount: 2,
+                    isCollapsed: false
+                )
+            ],
+            edges: []
+        )
+        let index = CommitGraphRenderIndex(projection: projection)
+
+        try expectEqual(
+            index.hitTest(canvasPoint: GraphPoint(x: 200, y: 200)),
+            .group(id: collapsedFrontID, isCollapsed: true),
+            "折叠 Group 必须覆盖 node，两个折叠 Group 重叠时必须命中后绘制的一个"
+        )
+        try expectEqual(
+            index.hitTest(canvasPoint: GraphPoint(x: 500, y: 170)),
+            .node("above-expanded"),
+            "node 必须覆盖展开 Group 的标题区"
+        )
+    },
     TestCase("选中关系通过预索引只返回相邻边") {
         let projection = CommitGraphSceneProjection(
             nodes: [

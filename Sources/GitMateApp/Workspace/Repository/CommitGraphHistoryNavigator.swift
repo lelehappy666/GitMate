@@ -51,11 +51,32 @@ struct CommitGraphHistoryNavigator: View {
                         viewportRange.end,
                         height: size.height
                     )
+                    let trackMinimumY: CGFloat = 5
+                    let trackMaximumY = max(
+                        size.height - 5,
+                        trackMinimumY
+                    )
+                    let availableHeight = max(
+                        trackMaximumY - trackMinimumY,
+                        0
+                    )
+                    let thumbHeight = min(
+                        max(thumbEnd - thumbStart, 12),
+                        availableHeight
+                    )
+                    let maximumThumbY = max(
+                        trackMaximumY - thumbHeight,
+                        trackMinimumY
+                    )
+                    let thumbY = min(
+                        max(thumbStart, trackMinimumY),
+                        maximumThumbY
+                    )
                     let thumbRect = CGRect(
                         x: centerX - 7,
-                        y: thumbStart,
+                        y: thumbY,
                         width: 14,
-                        height: max(thumbEnd - thumbStart, 12)
+                        height: thumbHeight
                     )
                     context.fill(
                         Path(

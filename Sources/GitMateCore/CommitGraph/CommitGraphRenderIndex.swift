@@ -272,6 +272,18 @@ public struct CommitGraphRenderIndex: Sendable {
             width: 1,
             height: 1
         )
+        let groupCandidates = groupGrid.candidates(in: queryRect).items
+            .sorted(by: >)
+        // Canvas 的顺序是展开 Group -> node -> 折叠 Group，
+        // 因此命中必须按反向层级执行，且同层按投影
+        // 索引倒序，保证重叠时点到用户看到的最上层。
+        for index in groupCandidates where groups[index].isCollapsed {
+            let group = groups[index]
+            if group.rect.contains(point) {
+                return .group(id: group.id, isCollapsed: true)
+            }
+        }
+
         let nodeCandidates = nodeGrid.candidates(in: queryRect).items
             .sorted(by: >)
         for index in nodeCandidates
@@ -281,18 +293,15 @@ public struct CommitGraphRenderIndex: Sendable {
             return .node(nodes[index].node.hash)
         }
 
-        let groupCandidates = groupGrid.candidates(in: queryRect).items
-            .sorted(by: >)
-        for index in groupCandidates {
+        for index in groupCandidates where !groups[index].isCollapsed {
             let group = groups[index]
             guard group.rect.contains(point) else { continue }
-            let isInDraggableArea = group.isCollapsed
-                || point.y <= group.rect.minimumY
-                    + CommitGraphSceneGeometry.groupHeaderHeight
+            let isInDraggableArea = point.y <= group.rect.minimumY
+                + CommitGraphSceneGeometry.groupHeaderHeight
             if isInDraggableArea {
                 return .group(
                     id: group.id,
-                    isCollapsed: group.isCollapsed
+                    isCollapsed: false
                 )
             }
         }
