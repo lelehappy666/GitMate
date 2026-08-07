@@ -31,7 +31,8 @@ struct CommitGraphCanvas: View {
     let levelOfDetail: CommitGraphLevelOfDetail
     let selectedHashes: Set<String>
     let selectedHash: String?
-    let relatedHashes: Set<String>
+    let highlightedEdgeIDs: Set<String>
+    let highlightedNodeHashes: Set<String>
 
     var body: some View {
         Canvas { context, size in
@@ -251,7 +252,7 @@ struct CommitGraphCanvas: View {
             }
 
             let color = CommitGraphPalette.color(edge.colorIndex)
-            let isRelated = isRelatedEdge(edge)
+            let isRelated = highlightedEdgeIDs.contains(edge.id)
             context.stroke(
                 path,
                 with: .color(color.opacity(isRelated ? 1 : 0.72)),
@@ -336,7 +337,9 @@ struct CommitGraphCanvas: View {
                 rect: rect,
                 isSelected: selectedHashes.contains(visibleNode.node.hash)
                     || visibleNode.node.hash == selectedHash,
-                isRelated: relatedHashes.contains(visibleNode.node.hash),
+                isRelated: highlightedNodeHashes.contains(
+                    visibleNode.node.hash
+                ),
                 context: &context
             )
         }
@@ -350,11 +353,26 @@ struct CommitGraphCanvas: View {
         context: inout GraphicsContext
     ) {
         let scale = CGFloat(viewport.scale)
+        let branchColor = CommitGraphPalette.color(node.colorIndex)
+        if levelOfDetail == .overview {
+            let dot = CGRect(
+                x: rect.midX - 5 * scale,
+                y: rect.midY - 5 * scale,
+                width: 10 * scale,
+                height: 10 * scale
+            )
+            context.fill(
+                Path(ellipseIn: dot),
+                with: .color(
+                    isSelected ? GitMateTheme.accent : branchColor
+                )
+            )
+            return
+        }
         let card = Path(
             roundedRect: rect,
             cornerRadius: max(11 * scale, 5)
         )
-        let branchColor = CommitGraphPalette.color(node.colorIndex)
         context.fill(card, with: .color(.white))
         context.stroke(
             card,
@@ -368,20 +386,6 @@ struct CommitGraphCanvas: View {
                 1
             )
         )
-
-        if levelOfDetail == .overview {
-            let dot = CGRect(
-                x: rect.midX - 5 * scale,
-                y: rect.midY - 5 * scale,
-                width: 10 * scale,
-                height: 10 * scale
-            )
-            context.fill(
-                Path(ellipseIn: dot),
-                with: .color(branchColor)
-            )
-            return
-        }
 
         var clipped = context
         clipped.clip(to: card)
@@ -665,18 +669,6 @@ struct CommitGraphCanvas: View {
                 ).size().width
             )
         )
-    }
-
-    private func isRelatedEdge(_ edge: CommitGraphVisibleEdge) -> Bool {
-        guard let selectedHash else { return false }
-        if edge.source == .node(selectedHash)
-            || edge.target == .node(selectedHash) {
-            return true
-        }
-        return edge.originalEdgeIDs.contains {
-            $0.hasPrefix("\(selectedHash)->")
-                || $0.contains("->\(selectedHash)#")
-        }
     }
 
     private func nodeRect(_ center: GraphPoint) -> GraphRect {

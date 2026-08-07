@@ -454,9 +454,9 @@ struct CommitGraphView: View {
             let levelOfDetail = CommitGraphLevelOfDetail.forScale(
                 viewModel.viewport.scale
             )
-            let relatedHashes = relatedHashes(
-                in: visibleScene,
-                selectedHash: viewModel.selectedHash
+            let navigatorHeight = min(geometry.size.height * 0.64, 480)
+            let markerBins = viewModel.historyMarkerBins(
+                pixelHeight: max(Double(navigatorHeight) - 76, 1)
             )
             ZStack {
                 CommitGraphCanvas(
@@ -466,7 +466,8 @@ struct CommitGraphView: View {
                     levelOfDetail: levelOfDetail,
                     selectedHashes: viewModel.selectedHashes,
                     selectedHash: viewModel.selectedHash,
-                    relatedHashes: relatedHashes
+                    highlightedEdgeIDs: viewModel.highlightedEdgeIDs,
+                    highlightedNodeHashes: viewModel.highlightedNodeHashes
                 )
 
                 CommitGraphInteractionSurface(
@@ -474,6 +475,9 @@ struct CommitGraphView: View {
                     regions: viewModel.scene.regions,
                     viewport: viewModel.viewport,
                     marqueePurpose: marqueePurpose,
+                    hitTestCanvas: { point in
+                        viewModel.hitTest(canvasPoint: point)
+                    },
                     onViewportChanges: { changes in
                         viewModel.applyViewportChanges(changes)
                         loadOlderIfNeeded()
@@ -518,7 +522,6 @@ struct CommitGraphView: View {
                         viewModel.fitAll(in: screenSize)
                     },
                     onInteractionEnded: {
-                        viewModel.refreshHistoryNavigationMarkers()
                         Task {
                             await viewModel.persistSceneImmediately()
                         }
@@ -566,7 +569,10 @@ struct CommitGraphView: View {
                         if viewModel.historyCommitCount > 0 {
                             CommitGraphHistoryNavigator(
                                 count: viewModel.historyCommitCount,
-                                markers: viewModel.historyMarkers,
+                                markerBins: markerBins,
+                                viewportRange: viewModel.historyViewportRange(
+                                    screenHeight: screenSize.height
+                                ),
                                 currentRow: viewModel.historyRow(
                                     hash: viewModel.selectedHash
                                 ),
@@ -577,7 +583,7 @@ struct CommitGraphView: View {
                                     )
                                 }
                             )
-                            .frame(height: min(geometry.size.height * 0.64, 480))
+                            .frame(height: navigatorHeight)
                         }
                     }
                 }
@@ -585,6 +591,10 @@ struct CommitGraphView: View {
             }
             .onAppear {
                 canvasSize = screenSize
+                if let hash = viewModel.focusedHash {
+                    viewModel.focusCommit(hash: hash, in: screenSize)
+                    viewModel.consumeFocusedHash(hash)
+                }
             }
             .onChange(of: geometry.size) { _, newSize in
                 canvasSize = GraphSize(
@@ -785,32 +795,11 @@ struct CommitGraphView: View {
             return
         }
         viewModel.selectForNavigation(hash: hash)
-        viewModel.focusCommit(hash: hash, in: screenSize)
+        viewModel.setHistoryViewportProgress(
+            progress,
+            screenHeight: screenSize.height
+        )
         viewModel.consumeFocusedHash(hash)
-    }
-
-    private func relatedHashes(
-        in scene: CommitGraphVisibleScene,
-        selectedHash: String?
-    ) -> Set<String> {
-        guard let selectedHash else { return [] }
-        var result: Set<String> = [selectedHash]
-        for edge in scene.edges {
-            let isRelated = edge.source == .node(selectedHash)
-                || edge.target == .node(selectedHash)
-                || edge.originalEdgeIDs.contains {
-                    $0.hasPrefix("\(selectedHash)->")
-                        || $0.contains("->\(selectedHash)#")
-                }
-            guard isRelated else { continue }
-            if case let .node(hash) = edge.source {
-                result.insert(hash)
-            }
-            if case let .node(hash) = edge.target {
-                result.insert(hash)
-            }
-        }
-        return result
     }
 
     private func branchName(from decoration: String) -> String? {

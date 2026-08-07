@@ -22,6 +22,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
     let regions: [CommitGraphRegionMarker]
     let viewport: GraphViewport
     let marqueePurpose: CommitGraphMarqueePurpose
+    let hitTestCanvas: (GraphPoint) -> CommitGraphRenderHit?
     let onViewportChanges: ([GraphViewportChange]) -> Void
     let onPointerChanges: ([CommitGraphPointerChange]) -> Void
     let onNodeClick:
@@ -55,6 +56,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         view.regions = regions
         view.viewport = viewport
         view.marqueePurpose = marqueePurpose
+        view.hitTestCanvas = hitTestCanvas
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor.clear.cgColor
         view.setAccessibilityElement(false)
@@ -77,6 +79,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         nsView.regions = regions
         nsView.viewport = viewport
         nsView.marqueePurpose = marqueePurpose
+        nsView.hitTestCanvas = hitTestCanvas
         if nsView.isMarqueeActive {
             nsView.refreshMarquee()
         }
@@ -250,6 +253,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         var regions: [CommitGraphRegionMarker] = []
         var viewport = GraphViewport()
         var marqueePurpose = CommitGraphMarqueePurpose.createGroup
+        var hitTestCanvas: (GraphPoint) -> CommitGraphRenderHit? = { _ in nil }
         private var dragTarget: DragTarget = .canvas
         private var didDrag = false
         private var accumulatedDistance = 0.0
@@ -618,28 +622,12 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                 screenPoint: screenPoint,
                 viewport: viewport
             )
-            for visibleNode in visibleScene.nodes.reversed() {
-                let halfWidth =
-                    CommitGraphViewportProjector.nodeWidth / 2
-                let halfHeight =
-                    CommitGraphViewportProjector.nodeHeight / 2
-                if point.x >= visibleNode.position.x - halfWidth,
-                   point.x <= visibleNode.position.x + halfWidth,
-                   point.y >= visibleNode.position.y - halfHeight,
-                   point.y <= visibleNode.position.y + halfHeight {
-                    return .node(visibleNode.node.hash)
-                }
-            }
-            for group in visibleScene.groups.reversed() {
-                let rect = group.rect
-                let isInRect = point.x >= rect.minimumX
-                    && point.x <= rect.maximumX
-                    && point.y >= rect.minimumY
-                    && point.y <= rect.maximumY
-                let isInDraggableArea = group.isCollapsed
-                    || point.y <= rect.minimumY + 38
-                if isInRect && isInDraggableArea {
-                    return .group(group.id)
+            if let hit = hitTestCanvas(point) {
+                switch hit {
+                case let .node(hash):
+                    return .node(hash)
+                case let .group(id, _):
+                    return .group(id)
                 }
             }
             for region in regions.reversed() {
@@ -671,19 +659,8 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                 screenPoint: screenPoint,
                 viewport: viewport
             )
-            for group in visibleScene.groups.reversed() {
-                let rect = group.rect
-                let isInHeader = point.x >= rect.minimumX
-                    && point.x <= rect.maximumX
-                    && point.y >= rect.minimumY
-                    && point.y <= (
-                        group.isCollapsed
-                            ? rect.maximumY
-                            : rect.minimumY + 38
-                    )
-                if isInHeader {
-                    return .group(group.id)
-                }
+            if case let .group(id, _) = hitTestCanvas(point) {
+                return .group(id)
             }
             for region in regions.reversed() {
                 let rect = region.rect

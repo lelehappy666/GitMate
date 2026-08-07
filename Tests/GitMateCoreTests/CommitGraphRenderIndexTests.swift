@@ -611,6 +611,80 @@ let commitGraphRenderIndexTests = [
         print(
             "  性能证据：50000 边切线型处理 \(switched.processedEdgeCount) 边，局部查询生成 \(after.diagnostics.generatedEdgeGeometries) 条几何"
         )
+    },
+    TestCase("指针命中仅查询空间网格候选") {
+        let groupID = UUID(
+            uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"
+        )!
+        let projection = CommitGraphSceneProjection(
+            nodes: [renderVisibleNode(hash: "node", x: 240, y: 220)],
+            groups: [
+                CommitGraphVisibleGroup(
+                    id: groupID,
+                    title: "分组",
+                    rect: GraphRect(x: 500, y: 120, width: 280, height: 220),
+                    memberCount: 2,
+                    isCollapsed: false
+                )
+            ],
+            edges: []
+        )
+        let index = CommitGraphRenderIndex(projection: projection)
+
+        try expectEqual(
+            index.hitTest(canvasPoint: GraphPoint(x: 240, y: 220)),
+            .node("node"),
+            "节点应通过局部网格命中"
+        )
+        try expectEqual(
+            index.hitTest(canvasPoint: GraphPoint(x: 520, y: 140)),
+            .group(id: groupID, isCollapsed: false),
+            "分组标题应通过局部网格命中"
+        )
+        try expectEqual(
+            index.hitTest(canvasPoint: GraphPoint(x: 520, y: 260)),
+            nil,
+            "展开分组内容区不得误命中拖动标题"
+        )
+    },
+    TestCase("选中关系通过预索引只返回相邻边") {
+        let projection = CommitGraphSceneProjection(
+            nodes: [
+                renderVisibleNode(hash: "selected", x: 200, y: 200),
+                renderVisibleNode(hash: "parent", x: 200, y: 80),
+                renderVisibleNode(hash: "child", x: 200, y: 320),
+                renderVisibleNode(hash: "other", x: 600, y: 200)
+            ],
+            groups: [],
+            edges: [
+                renderIndexEdge(
+                    id: "selected->parent#0",
+                    source: "selected",
+                    target: "parent"
+                ),
+                renderIndexEdge(
+                    id: "child->selected#0",
+                    source: "child",
+                    target: "selected"
+                ),
+                renderIndexEdge(
+                    id: "other->parent#0",
+                    source: "other",
+                    target: "parent"
+                )
+            ]
+        )
+        let index = CommitGraphRenderIndex(projection: projection)
+        try expectEqual(
+            index.highlightedEdgeIDs(for: "selected"),
+            Set(["selected->parent#0", "child->selected#0"]),
+            "只能强化选中提交的直接父子和 Merge 边"
+        )
+        try expectEqual(
+            index.highlightedNodeHashes(for: "selected"),
+            Set(["selected", "parent", "child"]),
+            "只能强化直接相邻节点"
+        )
     }
 ]
 

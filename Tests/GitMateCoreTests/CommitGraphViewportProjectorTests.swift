@@ -24,6 +24,56 @@ let commitGraphViewportProjectorTests = [
             "导航位置必须可稳定还原到提交行"
         )
     },
+    TestCase("历史导航可映射画布视口并保留水平与缩放") {
+        let viewport = GraphViewport(
+            offsetX: 88,
+            offsetY: -200,
+            scale: 2
+        )
+        try expectEqual(
+            CommitGraphHistoryNavigation.viewportRange(
+                viewport: viewport,
+                screenHeight: 400,
+                minimumY: 0,
+                maximumY: 1_000
+            ),
+            CommitGraphHistoryViewportRange(start: 0.1, end: 0.3),
+            "缩略块必须表示当前画布纵向可见范围"
+        )
+
+        let centered = CommitGraphHistoryNavigation.viewportCentered(
+            at: 0.75,
+            viewport: viewport,
+            screenHeight: 400,
+            minimumY: 0,
+            maximumY: 1_000
+        )
+        try expectEqual(centered.offsetX, 88, "导航不得改变水平位置")
+        try expectEqual(centered.scale, 2, "导航不得改变缩放")
+        try expectEqual(centered.offsetY, -1_300, "导航必须将目标位置置中")
+    },
+    TestCase("历史标记按像素桶预聚合") {
+        let markers = (0..<50_000).map { row in
+            CommitGraphHistoryMarker(
+                id: "m-\(row)",
+                title: "\(row)",
+                hash: "h-\(row)",
+                row: row,
+                kind: .tag
+            )
+        }
+        let bins = CommitGraphHistoryNavigation.binnedMarkers(
+            markers,
+            count: 50_000,
+            pixelHeight: 320
+        )
+        try expect(bins.count <= 320, "标记绘制数不得超过导航条像素高度")
+        try expectEqual(
+            bins.reduce(0) { $0 + $1.count },
+            50_000,
+            "聚合不得丢失标记"
+        )
+    },
     TestCase("画布只返回视口与缓冲区内的提交节点") {
         let nodes = CommitGraphViewportProjector.visibleNodes(
             layout: largeLayoutFixture,

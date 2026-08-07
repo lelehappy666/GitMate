@@ -5,7 +5,8 @@ import SwiftUI
 /// 每个提交或标记创建 SwiftUI 元素。
 struct CommitGraphHistoryNavigator: View {
     let count: Int
-    let markers: [CommitGraphHistoryMarker]
+    let markerBins: [CommitGraphHistoryMarkerBin]
+    let viewportRange: CommitGraphHistoryViewportRange
     let currentRow: Int?
     let navigate: (Double) -> Void
 
@@ -17,7 +18,7 @@ struct CommitGraphHistoryNavigator: View {
                 .font(.system(size: 10.5, weight: .bold, design: .rounded))
                 .foregroundStyle(GitMateTheme.textPrimary)
 
-            Text("最新")
+            Text("最早")
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(GitMateTheme.textSecondary)
 
@@ -42,9 +43,39 @@ struct CommitGraphHistoryNavigator: View {
                         style: StrokeStyle(lineWidth: 3, lineCap: .round)
                     )
 
-                    for marker in markers {
-                        let y = markerY(
-                            marker.row,
+                    let thumbStart = trackY(
+                        viewportRange.start,
+                        height: size.height
+                    )
+                    let thumbEnd = trackY(
+                        viewportRange.end,
+                        height: size.height
+                    )
+                    let thumbRect = CGRect(
+                        x: centerX - 7,
+                        y: thumbStart,
+                        width: 14,
+                        height: max(thumbEnd - thumbStart, 12)
+                    )
+                    context.fill(
+                        Path(
+                            roundedRect: thumbRect,
+                            cornerRadius: 7
+                        ),
+                        with: .color(GitMateTheme.accent.opacity(0.17))
+                    )
+                    context.stroke(
+                        Path(
+                            roundedRect: thumbRect,
+                            cornerRadius: 7
+                        ),
+                        with: .color(GitMateTheme.accent.opacity(0.8)),
+                        lineWidth: 1.3
+                    )
+
+                    for marker in markerBins {
+                        let y = trackY(
+                            marker.progress,
                             height: size.height
                         )
                         let color = markerColor(marker)
@@ -85,10 +116,12 @@ struct CommitGraphHistoryNavigator: View {
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
-                            previewProgress = progress(
+                            let value = progress(
                                 y: value.location.y,
                                 height: geometry.size.height
                             )
+                            previewProgress = value
+                            navigate(value)
                         }
                         .onEnded { value in
                             let value = progress(
@@ -119,7 +152,7 @@ struct CommitGraphHistoryNavigator: View {
                 }
             }
 
-            Text("最早")
+            Text("最新")
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(GitMateTheme.textSecondary)
         }
@@ -136,10 +169,8 @@ struct CommitGraphHistoryNavigator: View {
         .accessibilityIdentifier("workspace.commitGraph.historyNavigator")
     }
 
-    private func markerY(_ row: Int, height: CGFloat) -> CGFloat {
-        5 + CGFloat(
-            CommitGraphHistoryNavigation.progress(row: row, count: count)
-        ) * max(height - 10, 0)
+    private func trackY(_ progress: Double, height: CGFloat) -> CGFloat {
+        5 + CGFloat(progress) * max(height - 10, 0)
     }
 
     private func progress(y: CGFloat, height: CGFloat) -> Double {
@@ -147,7 +178,7 @@ struct CommitGraphHistoryNavigator: View {
         return min(max(Double((y - 5) / (height - 10)), 0), 1)
     }
 
-    private func markerColor(_ marker: CommitGraphHistoryMarker) -> Color {
+    private func markerColor(_ marker: CommitGraphHistoryMarkerBin) -> Color {
         switch marker.kind {
         case .head:
             GitMateTheme.danger

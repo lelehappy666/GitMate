@@ -83,6 +83,11 @@ public struct CommitGraphRenderQueryResult: Equatable, Sendable {
     }
 }
 
+public enum CommitGraphRenderHit: Equatable, Sendable {
+    case node(String)
+    case group(id: UUID, isCollapsed: Bool)
+}
+
 public struct CommitGraphRenderIndex: Sendable {
     private var nodes: [CommitGraphVisibleNode]
     private var groups: [CommitGraphVisibleGroup]
@@ -92,6 +97,8 @@ public struct CommitGraphRenderIndex: Sendable {
     private let groupIndexByID: [UUID: Int]
     private let groupIndexByMemberHash: [String: Int]
     private let incidentEdgeIndices: [CommitGraphEndpointID: [Int]]
+    private let edgeIndicesByCommitHash: [String: [Int]]
+    private let commitHashesByEdgeIndex: [Int: Set<String>]
     private var endpointRects: [CommitGraphEndpointID: GraphRect]
     private var edgeCandidates: [Int: RenderEdgeCandidate]
     private var nodeGrid: RenderSpatialGrid
@@ -122,11 +129,18 @@ public struct CommitGraphRenderIndex: Sendable {
         )
 
         var adjacency: [CommitGraphEndpointID: [Int]] = [:]
+        var edgesByCommitHash: [String: [Int]] = [:]
+        var hashesByEdgeIndex: [Int: Set<String>] = [:]
         var candidates: [Int: RenderEdgeCandidate] = [:]
         var builtEdgeGrid = RenderSpatialGrid()
         for (index, edge) in projection.edges.enumerated() {
             adjacency[edge.source, default: []].append(index)
             adjacency[edge.target, default: []].append(index)
+            let commitHashes = Self.commitHashes(for: edge)
+            hashesByEdgeIndex[index] = commitHashes
+            for hash in commitHashes {
+                edgesByCommitHash[hash, default: []].append(index)
+            }
             guard let candidate = Self.candidate(
                 for: edge,
                 endpointRects: endpointRects
@@ -142,6 +156,10 @@ public struct CommitGraphRenderIndex: Sendable {
         incidentEdgeIndices = adjacency.mapValues {
             Array(Set($0)).sorted()
         }
+        edgeIndicesByCommitHash = edgesByCommitHash.mapValues {
+            Array(Set($0)).sorted()
+        }
+        commitHashesByEdgeIndex = hashesByEdgeIndex
         edgeCandidates = candidates
         edgeGrid = builtEdgeGrid
 
@@ -243,6 +261,54 @@ public struct CommitGraphRenderIndex: Sendable {
                 generatedEdgeGeometries: generatedEdgeGeometries
             )
         )
+    }
+
+    /// 仅查询指针所在空间网格桶，不回退遍历可见或完整投影。
+    public func hitTest(canvasPoint point: GraphPoint) -> CommitGraphRenderHit? {
+        guard point.x.isFinite, point.y.isFinite else { return nil }
+        let queryRect = GraphRect(
+            x: point.x - 0.5,
+            y: point.y - 0.5,
+            width: 1,
+            height: 1
+        )
+        let nodeCandidates = nodeGrid.candidates(in: queryRect).items
+            .sorted(by: >)
+        for index in nodeCandidates
+            where CommitGraphSceneGeometry.nodeRect(
+                center: nodes[index].position
+            ).contains(point) {
+            return .node(nodes[index].node.hash)
+        }
+
+        let groupCandidates = groupGrid.candidates(in: queryRect).items
+            .sorted(by: >)
+        for index in groupCandidates {
+            let group = groups[index]
+            guard group.rect.contains(point) else { continue }
+            let isInDraggableArea = group.isCollapsed
+                || point.y <= group.rect.minimumY
+                    + CommitGraphSceneGeometry.groupHeaderHeight
+            if isInDraggableArea {
+                return .group(
+                    id: group.id,
+                    isCollapsed: group.isCollapsed
+                )
+            }
+        }
+        return nil
+    }
+
+    public func highlightedEdgeIDs(for hash: String) -> Set<String> {
+        Set((edgeIndicesByCommitHash[hash] ?? []).map { edges[$0].id })
+    }
+
+    public func highlightedNodeHashes(for hash: String) -> Set<String> {
+        var result: Set<String> = [hash]
+        for index in edgeIndicesByCommitHash[hash] ?? [] {
+            result.formUnion(commitHashesByEdgeIndex[index] ?? [])
+        }
+        return result
     }
 
     public mutating func setLineStyle(
@@ -391,6 +457,25 @@ public struct CommitGraphRenderIndex: Sendable {
             targetRect: targetRect,
             ports: edge.ports
         )
+    }
+
+    private static func commitHashes(
+        for edge: CommitGraphVisibleEdge
+    ) -> Set<String> {
+        var result = Set<String>()
+        if case let .node(hash) = edge.source { result.insert(hash) }
+        if case let .node(hash) = edge.target { result.insert(hash) }
+        for edgeID in edge.originalEdgeIDs {
+            guard let arrow = edgeID.range(of: "->") else { continue }
+            let child = String(edgeID[..<arrow.lowerBound])
+            let parentStart = arrow.upperBound
+            let parentEnd = edgeID[parentStart...].firstIndex(of: "#")
+                ?? edgeID.endIndex
+            let parent = String(edgeID[parentStart..<parentEnd])
+            if !child.isEmpty { result.insert(child) }
+            if !parent.isEmpty { result.insert(parent) }
+        }
+        return result
     }
 
     private static func geometry(

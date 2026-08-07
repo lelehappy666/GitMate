@@ -220,6 +220,11 @@ private enum CommitGraphScenePersistenceState: Sendable {
     case readOnlyFutureSchema
 }
 
+private struct CommitGraphHistoryBinCacheKey: Hashable {
+    let pixelHeight: Int
+    let revision: UInt64
+}
+
 @MainActor
 @Observable
 public final class CommitGraphViewModel {
@@ -250,7 +255,12 @@ public final class CommitGraphViewModel {
     public private(set) var selectedCommit: GitCommitDetail?
     public private(set) var selectedDiff: GitDiff?
     public private(set) var isSelectedDiffTruncated = false
-    public private(set) var selectedHash: String?
+    public private(set) var selectedHash: String? {
+        didSet {
+            guard selectedHash != oldValue else { return }
+            rebuildSelectionHighlight()
+        }
+    }
     public private(set) var isLoading = false
     public private(set) var isLoadingMore = false
     public private(set) var nextCursor: String?
@@ -264,6 +274,9 @@ public final class CommitGraphViewModel {
     public private(set) var refreshState: CommitGraphRefreshState = .idle
     public private(set) var focusedHash: String?
     public private(set) var historyMarkers: [CommitGraphHistoryMarker] = []
+    public private(set) var historyMarkerRevision: UInt64 = 0
+    public private(set) var highlightedEdgeIDs: Set<String> = []
+    public private(set) var highlightedNodeHashes: Set<String> = []
 
     @ObservationIgnored
     private let reader: any LocalGitReading
@@ -324,6 +337,13 @@ public final class CommitGraphViewModel {
 
     @ObservationIgnored
     private var renderIndex: CommitGraphRenderIndex?
+
+    @ObservationIgnored
+    private var historyMarkerBinCache:
+        [CommitGraphHistoryBinCacheKey: [CommitGraphHistoryMarkerBin]] = [:]
+
+    @ObservationIgnored
+    private var historyMarkersNeedRebuild = false
 
     @ObservationIgnored
     private var refreshRequestID: UInt64 = 0
@@ -633,19 +653,68 @@ public final class CommitGraphViewModel {
 
     public func historyRow(hash: String?) -> Int? {
         guard let hash else { return nil }
-        return traditionalLayout.row(hash: hash)?.row
+        return layout.node(hash: hash)?.row
     }
 
     public func hashAtHistoryProgress(_ progress: Double) -> String? {
-        guard !traditionalLayout.rows.isEmpty else { return nil }
+        guard !layout.nodes.isEmpty else { return nil }
         let row = CommitGraphHistoryNavigation.row(
             progress: progress,
-            count: traditionalLayout.rows.count
+            count: layout.nodes.count
         )
-        guard traditionalLayout.rows.indices.contains(row) else {
+        guard layout.nodes.indices.contains(row) else {
             return nil
         }
-        return traditionalLayout.rows[row].commit.fullHash
+        return layout.nodes[row].hash
+    }
+
+    public func historyMarkerBins(
+        pixelHeight: Double
+    ) -> [CommitGraphHistoryMarkerBin] {
+        let height = max(Int(pixelHeight.rounded()), 1)
+        let key = CommitGraphHistoryBinCacheKey(
+            pixelHeight: height,
+            revision: historyMarkerRevision
+        )
+        if let cached = historyMarkerBinCache[key] { return cached }
+        let bins = CommitGraphHistoryNavigation.binnedMarkers(
+            historyMarkers,
+            count: historyCommitCount,
+            pixelHeight: height
+        )
+        historyMarkerBinCache[key] = bins
+        return bins
+    }
+
+    public func historyViewportRange(
+        screenHeight: Double
+    ) -> CommitGraphHistoryViewportRange {
+        CommitGraphHistoryNavigation.viewportRange(
+            viewport: viewport,
+            screenHeight: screenHeight,
+            minimumY: 0,
+            maximumY: max(layout.contentHeight, 1)
+        )
+    }
+
+    public func setHistoryViewportProgress(
+        _ progress: Double,
+        screenHeight: Double
+    ) {
+        viewport = CommitGraphHistoryNavigation.viewportCentered(
+            at: progress,
+            viewport: viewport,
+            screenHeight: screenHeight,
+            minimumY: 0,
+            maximumY: max(layout.contentHeight, 1)
+        )
+        synchronizeCanvasViewportIfNeeded()
+    }
+
+    public func hitTest(
+        canvasPoint: GraphPoint
+    ) -> CommitGraphRenderHit? {
+        renderIndex?.hitTest(canvasPoint: canvasPoint)
     }
 
     @discardableResult
@@ -654,11 +723,22 @@ public final class CommitGraphViewModel {
             in: .whitespacesAndNewlines
         )
         guard !normalized.isEmpty else { return false }
+        let matchingReferenceTargets = Set(
+            currentSnapshot?.fingerprint.references.compactMap { reference in
+                reference.name.localizedCaseInsensitiveContains(normalized)
+                    ? reference.targetHash
+                    : nil
+            } ?? []
+        )
         let match = commits.first { commit in
             commit.fullHash.localizedCaseInsensitiveContains(normalized)
                 || commit.shortHash.localizedCaseInsensitiveContains(normalized)
                 || commit.subject.localizedCaseInsensitiveContains(normalized)
                 || commit.authorName.localizedCaseInsensitiveContains(normalized)
+                || commit.decorations.contains {
+                    $0.localizedCaseInsensitiveContains(normalized)
+                }
+                || matchingReferenceTargets.contains(commit.fullHash)
         }
         guard let match else { return false }
         selectForNavigation(hash: match.fullHash)
@@ -824,6 +904,7 @@ public final class CommitGraphViewModel {
         var updatedScene = scene
         var movedNodeHashes: Set<String> = []
         var movedGroupIDs: Set<UUID> = []
+        var didMoveHistoryGeometry = false
         for change in changes {
             switch change {
             case let .pan(translation):
@@ -835,6 +916,7 @@ public final class CommitGraphViewModel {
                     scene: updatedScene
                 )
                 movedNodeHashes.insert(hash)
+                didMoveHistoryGeometry = true
             case let .moveGroup(id, translation):
                 updatedScene = CommitGraphGrouping.movingGroup(
                     id: id,
@@ -842,18 +924,21 @@ public final class CommitGraphViewModel {
                     scene: updatedScene
                 )
                 movedGroupIDs.insert(id)
+                didMoveHistoryGeometry = true
             case let .moveRegion(id, translation):
                 updatedScene = sceneByMovingRegion(
                     id: id,
                     by: translation,
                     scene: updatedScene
                 )
+                didMoveHistoryGeometry = true
             case let .resizeRegion(id, translation):
                 updatedScene = sceneByResizingRegion(
                     id: id,
                     by: translation,
                     scene: updatedScene
                 )
+                didMoveHistoryGeometry = true
             }
         }
         if updatedScene.viewMode == .canvas {
@@ -861,6 +946,8 @@ public final class CommitGraphViewModel {
         }
         guard updatedScene != scene else { return }
         scene = updatedScene
+        historyMarkersNeedRebuild = historyMarkersNeedRebuild
+            || didMoveHistoryGeometry
         updateRenderIndex(
             movedNodeHashes: movedNodeHashes,
             movedGroupIDs: movedGroupIDs
@@ -1192,6 +1279,7 @@ public final class CommitGraphViewModel {
         )
         guard updated != scene else { return }
         scene = updated
+        historyMarkersNeedRebuild = true
         recordSceneMutation()
         scheduleSceneSave()
     }
@@ -1204,6 +1292,7 @@ public final class CommitGraphViewModel {
         )
         guard updated != scene else { return }
         scene = updated
+        historyMarkersNeedRebuild = true
         recordSceneMutation()
         scheduleSceneSave()
     }
@@ -1249,6 +1338,9 @@ public final class CommitGraphViewModel {
 
     public func persistSceneImmediately() async {
         synchronizeCanvasViewportIfNeeded()
+        if historyMarkersNeedRebuild {
+            rebuildHistoryNavigationMarkers()
+        }
         sceneSaveTask?.cancel()
         sceneSaveTask = nil
         guard scenePersistenceState == .writable else { return }
@@ -1526,6 +1618,7 @@ public final class CommitGraphViewModel {
         integrityReport = base.integrityReport
         projection = derived.projection
         renderIndex = derived.renderIndex
+        rebuildSelectionHighlight()
         nextCursor = nil
         isLoadingMore = false
         selectedHashes.formIntersection(availableHashes)
@@ -1680,6 +1773,7 @@ public final class CommitGraphViewModel {
         )
         guard updated != scene else { return }
         scene = updated
+        historyMarkersNeedRebuild = true
         updateRenderIndex(
             movedNodeHashes: [],
             movedGroupIDs: [id]
@@ -1703,6 +1797,7 @@ public final class CommitGraphViewModel {
         )
         guard updated != scene else { return }
         scene = updated
+        historyMarkersNeedRebuild = true
         updateRenderIndex(
             movedNodeHashes: [hash],
             movedGroupIDs: []
@@ -1803,6 +1898,7 @@ public final class CommitGraphViewModel {
             scene: scene
         )
         renderIndex = CommitGraphRenderIndex(projection: projection)
+        rebuildSelectionHighlight()
         rebuildHistoryNavigationMarkers()
         if incrementingPathRevision {
             pathRevision &+= 1
@@ -1833,6 +1929,23 @@ public final class CommitGraphViewModel {
             traditionalLayout: traditionalLayout,
             canvasLayout: layout,
             scene: scene
+        )
+        historyMarkerBinCache.removeAll(keepingCapacity: true)
+        historyMarkerRevision &+= 1
+        historyMarkersNeedRebuild = false
+    }
+
+    private func rebuildSelectionHighlight() {
+        guard let selectedHash, let renderIndex else {
+            highlightedEdgeIDs.removeAll(keepingCapacity: true)
+            highlightedNodeHashes.removeAll(keepingCapacity: true)
+            return
+        }
+        highlightedEdgeIDs = renderIndex.highlightedEdgeIDs(
+            for: selectedHash
+        )
+        highlightedNodeHashes = renderIndex.highlightedNodeHashes(
+            for: selectedHash
         )
     }
 
