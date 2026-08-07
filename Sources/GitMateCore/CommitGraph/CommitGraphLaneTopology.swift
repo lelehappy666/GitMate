@@ -109,27 +109,40 @@ public struct CommitGraphLaneTopology: Equatable, Sendable {
             fingerprint: snapshot.fingerprint,
             targetHash: defaultTarget
         )
+        let referenceIdentityByHash = referenceIdentities(
+            fingerprint: snapshot.fingerprint,
+            knownHashes: knownHashes
+        )
+        let hashesWithKnownChildren = Set(
+            commits.flatMap { commit in
+                commit.parentHashes.filter { knownHashes.contains($0) }
+            }
+        )
+        let startingHashes = commits
+            .map(\.fullHash)
+            .filter {
+                !coreHashes.contains($0)
+                    && !hashesWithKnownChildren.contains($0)
+            }
+            .sorted {
+                let firstIdentity = referenceIdentityByHash[$0] ?? $0
+                let secondIdentity = referenceIdentityByHash[$1] ?? $1
+                if firstIdentity != secondIdentity {
+                    return firstIdentity < secondIdentity
+                }
+                return $0 < $1
+            }
+        let startingLaneByHash = Dictionary(
+            uniqueKeysWithValues: startingHashes.enumerated().map {
+                ($0.element, $0.offset + 1)
+            }
+        )
 
-        var allocator = CommitGraphLaneAllocator()
+        var allocator = CommitGraphLaneAllocator(
+            firstUnreservedLane: startingHashes.count + 1
+        )
         var laneByPendingHash: [String: Int] = [:]
         var identityByPendingHash: [String: String] = [:]
-        let sortedReferences = snapshot.fingerprint.references.sorted {
-            if $0.name != $1.name { return $0.name < $1.name }
-            if $0.kind.rawValue != $1.kind.rawValue {
-                return $0.kind.rawValue < $1.kind.rawValue
-            }
-            return $0.targetHash < $1.targetHash
-        }
-        for reference in sortedReferences {
-            guard knownHashes.contains(reference.targetHash),
-                  !coreHashes.contains(reference.targetHash),
-                  laneByPendingHash[reference.targetHash] == nil
-            else {
-                continue
-            }
-            laneByPendingHash[reference.targetHash] = allocator.allocate()
-            identityByPendingHash[reference.targetHash] = reference.name
-        }
 
         var rows: [CommitGraphLaneRow] = []
         rows.reserveCapacity(commits.count)
@@ -142,12 +155,15 @@ public struct CommitGraphLaneTopology: Equatable, Sendable {
             )
             let lane = isCoreCommit
                 ? 0
-                : (assignedLane ?? allocator.allocate())
+                : (assignedLane
+                    ?? startingLaneByHash[commit.fullHash]
+                    ?? allocator.allocate())
             let identity = isCoreCommit
                 ? defaultIdentity
                 : (identityByPendingHash.removeValue(
                     forKey: commit.fullHash
-                ) ?? branchIdentity(for: commit))
+                ) ?? referenceIdentityByHash[commit.fullHash]
+                    ?? branchIdentity(for: commit))
             let colorIndex = stableColorIndex(identity)
             maximumLane = max(maximumLane, lane)
             var keepsCurrentLaneActive = false
@@ -171,7 +187,8 @@ public struct CommitGraphLaneTopology: Equatable, Sendable {
                     targetIdentity = identity
                 } else {
                     targetLane = allocator.allocate()
-                    targetIdentity = parentHash
+                    targetIdentity = referenceIdentityByHash[parentHash]
+                        ?? parentHash
                 }
 
                 if parentIsKnown, laneByPendingHash[parentHash] == nil {
@@ -293,6 +310,22 @@ public struct CommitGraphLaneTopology: Equatable, Sendable {
             .first ?? targetHash
     }
 
+    private static func referenceIdentities(
+        fingerprint: CommitGraphReferenceFingerprint,
+        knownHashes: Set<String>
+    ) -> [String: String] {
+        var identities: [String: String] = [:]
+        for reference in fingerprint.references
+            where knownHashes.contains(reference.targetHash) {
+            if let current = identities[reference.targetHash] {
+                identities[reference.targetHash] = min(current, reference.name)
+            } else {
+                identities[reference.targetHash] = reference.name
+            }
+        }
+        return identities
+    }
+
     private static func firstParentChain(
         from targetHash: String,
         commitsByHash: [String: GitCommit]
@@ -327,9 +360,14 @@ public struct CommitGraphLaneTopology: Equatable, Sendable {
 private struct CommitGraphLaneAllocator {
     private var freeLanes: [Int] = []
     private var freeLaneSet: Set<Int> = []
-    private var nextLane = 1
+    private var nextLane: Int
 
-    private(set) var maximumAllocatedLane = 0
+    private(set) var maximumAllocatedLane: Int
+
+    init(firstUnreservedLane: Int = 1) {
+        nextLane = max(firstUnreservedLane, 1)
+        maximumAllocatedLane = nextLane - 1
+    }
 
     mutating func allocate() -> Int {
         let lane: Int

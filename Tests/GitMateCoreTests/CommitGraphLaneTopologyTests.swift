@@ -65,6 +65,104 @@ let commitGraphLaneTopologyTests = [
             "名称较后的非默认分支必须获得后续泳道"
         )
     },
+    TestCase("同一线性第一父链的大量引用不得膨胀泳道") {
+        let featureCount = 100
+        let featureCommits = (0..<featureCount).reversed().map { index in
+            laneCommit(
+                hash: "feature-\(index)",
+                parents: index == 0 ? [] : ["feature-\(index - 1)"]
+            )
+        }
+        let featureReferences = (0..<featureCount).map { index in
+            CommitGraphReference(
+                name: index.isMultiple(of: 2)
+                    ? "refs/heads/feature-\(index)"
+                    : "refs/remotes/origin/feature-\(index)",
+                targetHash: "feature-\(index)",
+                kind: index.isMultiple(of: 2) ? .localBranch : .remoteBranch
+            )
+        }
+        let snapshot = laneSnapshot(
+            commits: [laneCommit(hash: "main")] + featureCommits,
+            references: [
+                CommitGraphReference(
+                    name: "refs/heads/main",
+                    targetHash: "main",
+                    kind: .localBranch
+                )
+            ] + featureReferences,
+            headName: "main",
+            headHash: "main"
+        )
+
+        let topology = CommitGraphLaneTopology.build(snapshot: snapshot)
+        let featureLanes = Set(
+            topology.rowsNewestFirst
+                .filter { $0.commit.fullHash.hasPrefix("feature-") }
+                .map(\.lane)
+        )
+
+        try expectEqual(
+            featureLanes,
+            Set([1]),
+            "同一第一父链的本地与远程引用必须共用泳道"
+        )
+        try expectEqual(
+            topology.maximumLane,
+            1,
+            "引用数量不得代替真实活动分支数"
+        )
+    },
+    TestCase("分支收敛释放的最小泳道可供后续 Merge 复用") {
+        let snapshot = laneSnapshot(
+            commits: [
+                laneCommit(hash: "core-tip", parents: ["core-merge"]),
+                laneCommit(hash: "feature-tip", parents: ["core-root"]),
+                laneCommit(
+                    hash: "core-merge",
+                    parents: ["core-root", "merge-side"]
+                ),
+                laneCommit(hash: "merge-side", parents: ["core-root"]),
+                laneCommit(hash: "core-root")
+            ],
+            references: [
+                CommitGraphReference(
+                    name: "refs/heads/main",
+                    targetHash: "core-tip",
+                    kind: .localBranch
+                ),
+                CommitGraphReference(
+                    name: "refs/heads/feature/early",
+                    targetHash: "feature-tip",
+                    kind: .localBranch
+                )
+            ],
+            headName: "main",
+            headHash: "core-tip"
+        )
+
+        let topology = CommitGraphLaneTopology.build(snapshot: snapshot)
+        let mergeConnection = topology.row(hash: "core-merge")?
+            .connections
+            .first { $0.kind == .merge }
+
+        try expectEqual(
+            topology.row(hash: "feature-tip")?.lane,
+            1,
+            "早期功能分支必须使用首个相邻泳道"
+        )
+        try expectEqual(
+            mergeConnection?.targetLane,
+            1,
+            "功能分支收敛后的最小空闲泳道必须被后续 Merge 复用"
+        )
+        try expectEqual(
+            topology.row(hash: "merge-side")?.lane,
+            1,
+            "Merge 额外父路径必须沿复用泳道延续"
+        )
+        try expectEqual(topology.maximumLane, 1, "收敛后不得无故增加泳道")
+    },
     TestCase("50000 个线性提交使用线性数量的行和边") {
         let commitCount = 50_000
         let commits = (0..<commitCount).reversed().map { index in
