@@ -74,6 +74,30 @@ let commitGraphSnapshotStoreTests = [
             )
         }
     },
+    TestCase("读取提交图快照的文件系统错误原样传播") {
+        let directory = commitGraphSnapshotStoreTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        try Data("readable".utf8).write(to: directory.appending(path: "70.plist"))
+        let store = BinaryCommitGraphSnapshotStore(
+            rootDirectory: directory,
+            dataReader: { _ in throw CommitGraphSnapshotStoreReadTestError.unavailable }
+        )
+
+        do {
+            _ = try await store.load(repositoryID: 70)
+            throw TestFailure(description: "文件系统错误必须原样传播")
+        } catch let error as CommitGraphSnapshotStoreReadTestError {
+            try expectEqual(
+                error,
+                .unavailable,
+                "文件系统读取错误不得被误判为损坏快照"
+            )
+        }
+    },
     TestCase("不支持的提交图快照版本返回稳定错误") {
         let directory = commitGraphSnapshotStoreTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -181,4 +205,8 @@ private func commitGraphSnapshotStoreTemporaryDirectory() -> URL {
             path: UUID().uuidString,
             directoryHint: .isDirectory
         )
+}
+
+private enum CommitGraphSnapshotStoreReadTestError: Error, Equatable, Sendable {
+    case unavailable
 }

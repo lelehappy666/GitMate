@@ -17,6 +17,7 @@ public enum CommitGraphSnapshotStoreError: Error, Equatable, Sendable {
 public actor BinaryCommitGraphSnapshotStore: CommitGraphSnapshotStoring {
     private let rootDirectory: URL
     private let fileManager: FileManager
+    private let dataReader: @Sendable (URL) throws -> Data
 
     public init(
         rootDirectory: URL = FileManager.default.urls(
@@ -26,10 +27,14 @@ public actor BinaryCommitGraphSnapshotStore: CommitGraphSnapshotStoring {
             path: "GitMate/CommitGraphSnapshots",
             directoryHint: .isDirectory
         ),
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        dataReader: @escaping @Sendable (URL) throws -> Data = {
+            try Data(contentsOf: $0)
+        }
     ) {
         self.rootDirectory = rootDirectory
         self.fileManager = fileManager
+        self.dataReader = dataReader
     }
 
     public func load(
@@ -40,11 +45,13 @@ public actor BinaryCommitGraphSnapshotStore: CommitGraphSnapshotStoring {
             return nil
         }
 
+        let data = try dataReader(url)
+
         let snapshot: CommitGraphSnapshot
         do {
             snapshot = try PropertyListDecoder().decode(
                 CommitGraphSnapshot.self,
-                from: Data(contentsOf: url)
+                from: data
             )
         } catch {
             throw CommitGraphSnapshotStoreError.corruptedSnapshot(
