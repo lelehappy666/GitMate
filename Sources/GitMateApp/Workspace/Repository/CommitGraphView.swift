@@ -29,6 +29,7 @@ struct CommitGraphView: View {
     @State private var deletingRegionID: UUID?
     @State private var showsGroupSuggestions = false
     @State private var groupNoticeMessage: String?
+    @State private var searchText = ""
     @State private var canvasSize = GraphSize(
         width: 1_040,
         height: 680
@@ -194,6 +195,32 @@ struct CommitGraphView: View {
 
     private var graphToolbar: some View {
         HStack(spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(GitMateTheme.textSecondary)
+                TextField("搜索提交、作者或哈希", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .onSubmit(performSearch)
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(GitMateTheme.textSecondary)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(width: 230, height: 30)
+            .background(GitMateTheme.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(GitMateTheme.border, lineWidth: 1)
+            }
+            .accessibilityIdentifier("workspace.commitGraph.search")
+
             Picker(
                 "布局",
                 selection: Binding(
@@ -211,6 +238,26 @@ struct CommitGraphView: View {
             .accessibilityIdentifier("workspace.commitGraph.viewMode")
 
             integrityBadge
+
+            refreshStateBadge
+
+            Button {
+                Task {
+                    await viewModel.refresh(source: .toolbar)
+                }
+            } label: {
+                if viewModel.refreshState.isRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 14, height: 14)
+                } else {
+                    Label("刷新", systemImage: "arrow.clockwise")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(viewModel.refreshState.isRefreshing)
+            .accessibilityIdentifier("workspace.commitGraph.refresh")
 
             Text("\(viewModel.traditionalLayout.rows.count) 个提交")
                 .font(.system(size: 11.5, weight: .semibold))
@@ -401,18 +448,29 @@ struct CommitGraphView: View {
                 width: Double(geometry.size.width),
                 height: Double(geometry.size.height)
             )
+            let visibleScene = viewModel.visibleScene(
+                screenSize: screenSize
+            )
+            let levelOfDetail = CommitGraphLevelOfDetail.forScale(
+                viewModel.viewport.scale
+            )
+            let relatedHashes = relatedHashes(
+                in: visibleScene,
+                selectedHash: viewModel.selectedHash
+            )
             ZStack {
                 CommitGraphCanvas(
-                    projection: viewModel.projection,
+                    visibleScene: visibleScene,
                     regions: viewModel.scene.regions,
                     viewport: viewModel.viewport,
-                    lineStyle: viewModel.scene.lineStyle,
+                    levelOfDetail: levelOfDetail,
                     selectedHashes: viewModel.selectedHashes,
-                    selectedHash: viewModel.selectedHash
+                    selectedHash: viewModel.selectedHash,
+                    relatedHashes: relatedHashes
                 )
 
                 CommitGraphInteractionSurface(
-                    projection: viewModel.projection,
+                    visibleScene: visibleScene,
                     regions: viewModel.scene.regions,
                     viewport: viewModel.viewport,
                     marqueePurpose: marqueePurpose,
@@ -460,6 +518,7 @@ struct CommitGraphView: View {
                         viewModel.fitAll(in: screenSize)
                     },
                     onInteractionEnded: {
+                        viewModel.refreshHistoryNavigationMarkers()
                         Task {
                             await viewModel.persistSceneImmediately()
                         }
@@ -469,7 +528,11 @@ struct CommitGraphView: View {
                 .accessibilityHint("左键拖拽平移，右键拖拽框选分组，滚轮或捏合缩放")
                 .accessibilityIdentifier("workspace.commitGraph.canvas")
 
-                accessibilityNodes(screenSize: screenSize)
+                if levelOfDetail != .overview {
+                    accessibilityNodes(
+                        visibleNodes: visibleScene.nodes
+                    )
+                }
 
                 if viewModel.isLoading && viewModel.layout.nodes.isEmpty {
                     loadingState
@@ -480,7 +543,7 @@ struct CommitGraphView: View {
 
                 VStack {
                     HStack {
-                        branchLegend(screenSize: screenSize)
+                        branchLegend(visibleNodes: visibleScene.nodes)
                         Spacer()
                     }
                     Spacer()
@@ -500,6 +563,22 @@ struct CommitGraphView: View {
                                 }
                         }
                         Spacer()
+                        if viewModel.historyCommitCount > 0 {
+                            CommitGraphHistoryNavigator(
+                                count: viewModel.historyCommitCount,
+                                markers: viewModel.historyMarkers,
+                                currentRow: viewModel.historyRow(
+                                    hash: viewModel.selectedHash
+                                ),
+                                navigate: { progress in
+                                    navigateHistory(
+                                        progress: progress,
+                                        screenSize: screenSize
+                                    )
+                                }
+                            )
+                            .frame(height: min(geometry.size.height * 0.64, 480))
+                        }
                     }
                 }
                 .padding(14)
@@ -513,6 +592,13 @@ struct CommitGraphView: View {
                     height: Double(newSize.height)
                 )
             }
+            .onChange(of: viewModel.focusedHash) { _, hash in
+                guard let hash,
+                      viewModel.scene.viewMode == .canvas
+                else { return }
+                viewModel.focusCommit(hash: hash, in: screenSize)
+                viewModel.consumeFocusedHash(hash)
+            }
             .onExitCommand {
                 cancelMarqueeMode()
             }
@@ -520,16 +606,8 @@ struct CommitGraphView: View {
     }
 
     private func accessibilityNodes(
-        screenSize: GraphSize
+        visibleNodes: [CommitGraphVisibleNode]
     ) -> some View {
-        let visibleNodes = viewModel.projection.nodes.filter {
-            isVisible(
-                position: $0.position,
-                screenSize: screenSize,
-                padding: 180
-            )
-        }
-
         return ForEach(visibleNodes) { visibleNode in
             let node = visibleNode.node
             let point = CommitGraphViewportProjector.screenPoint(
@@ -575,10 +653,10 @@ struct CommitGraphView: View {
     }
 
     private func branchLegend(
-        screenSize: GraphSize
+        visibleNodes: [CommitGraphVisibleNode]
     ) -> some View {
         let entries = visibleBranchLegendEntries(
-            screenSize: screenSize
+            visibleNodes: visibleNodes
         )
         return HStack(spacing: 7) {
             ForEach(Array(entries.prefix(3))) { entry in
@@ -641,16 +719,11 @@ struct CommitGraphView: View {
     }
 
     private func visibleBranchLegendEntries(
-        screenSize: GraphSize
+        visibleNodes: [CommitGraphVisibleNode]
     ) -> [BranchLegendEntry] {
         var seen = Set<String>()
         var result: [BranchLegendEntry] = []
-        for visibleNode in viewModel.projection.nodes
-            where isVisible(
-                position: visibleNode.position,
-                screenSize: screenSize,
-                padding: 0
-            ) {
+        for visibleNode in visibleNodes {
             for decoration in visibleNode.node.decorations {
                 guard let name = branchName(from: decoration),
                       seen.insert(name).inserted
@@ -663,6 +736,78 @@ struct CommitGraphView: View {
                         colorIndex: visibleNode.node.colorIndex
                     )
                 )
+            }
+        }
+        return result
+    }
+
+    @ViewBuilder
+    private var refreshStateBadge: some View {
+        switch viewModel.refreshState {
+        case .idle:
+            Label("未刷新", systemImage: "clock")
+                .foregroundStyle(GitMateTheme.textSecondary)
+        case let .refreshing(usingCachedSnapshot):
+            Label(
+                usingCachedSnapshot ? "刷新中·已显示缓存" : "刷新中",
+                systemImage: "arrow.triangle.2.circlepath"
+            )
+            .foregroundStyle(GitMateTheme.accent)
+        case .current:
+            Label("已是最新", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(GitMateTheme.success)
+        case .stale:
+            Label("显示上次结果", systemImage: "clock.badge.exclamationmark")
+                .foregroundStyle(GitMateTheme.warning)
+        case .failed:
+            Label("刷新失败", systemImage: "xmark.octagon.fill")
+                .foregroundStyle(GitMateTheme.danger)
+        }
+    }
+
+    private func performSearch() {
+        guard viewModel.navigateToFirstMatch(searchText) else {
+            groupNoticeMessage = "没有找到匹配的提交。"
+            return
+        }
+        guard viewModel.scene.viewMode == .canvas,
+              let hash = viewModel.focusedHash
+        else { return }
+        viewModel.focusCommit(hash: hash, in: canvasSize)
+        viewModel.consumeFocusedHash(hash)
+    }
+
+    private func navigateHistory(
+        progress: Double,
+        screenSize: GraphSize
+    ) {
+        guard let hash = viewModel.hashAtHistoryProgress(progress) else {
+            return
+        }
+        viewModel.selectForNavigation(hash: hash)
+        viewModel.focusCommit(hash: hash, in: screenSize)
+        viewModel.consumeFocusedHash(hash)
+    }
+
+    private func relatedHashes(
+        in scene: CommitGraphVisibleScene,
+        selectedHash: String?
+    ) -> Set<String> {
+        guard let selectedHash else { return [] }
+        var result: Set<String> = [selectedHash]
+        for edge in scene.edges {
+            let isRelated = edge.source == .node(selectedHash)
+                || edge.target == .node(selectedHash)
+                || edge.originalEdgeIDs.contains {
+                    $0.hasPrefix("\(selectedHash)->")
+                        || $0.contains("->\(selectedHash)#")
+                }
+            guard isRelated else { continue }
+            if case let .node(hash) = edge.source {
+                result.insert(hash)
+            }
+            if case let .node(hash) = edge.target {
+                result.insert(hash)
             }
         }
         return result

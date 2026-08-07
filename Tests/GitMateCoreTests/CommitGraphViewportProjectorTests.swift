@@ -1,6 +1,29 @@
 import GitMateCore
 
 let commitGraphViewportProjectorTests = [
+    TestCase("历史导航位置按提交行映射到零到一") {
+        try expectEqual(
+            CommitGraphHistoryNavigation.progress(row: 0, count: 50_000),
+            0,
+            "首行必须位于导航条顶部"
+        )
+        try expectEqual(
+            CommitGraphHistoryNavigation.progress(
+                row: 49_999,
+                count: 50_000
+            ),
+            1,
+            "末行必须位于导航条底部"
+        )
+        try expectEqual(
+            CommitGraphHistoryNavigation.row(
+                progress: 0.5,
+                count: 50_000
+            ),
+            25_000,
+            "导航位置必须可稳定还原到提交行"
+        )
+    },
     TestCase("画布只返回视口与缓冲区内的提交节点") {
         let nodes = CommitGraphViewportProjector.visibleNodes(
             layout: largeLayoutFixture,

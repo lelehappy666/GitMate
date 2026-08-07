@@ -263,6 +263,7 @@ public final class CommitGraphViewModel {
     public private(set) var integrityReport: CommitGraphIntegrityReport?
     public private(set) var refreshState: CommitGraphRefreshState = .idle
     public private(set) var focusedHash: String?
+    public private(set) var historyMarkers: [CommitGraphHistoryMarker] = []
 
     @ObservationIgnored
     private let reader: any LocalGitReading
@@ -624,6 +625,79 @@ public final class CommitGraphViewModel {
             screenSize: screenSize,
             padding: 180
         ) ?? CommitGraphVisibleScene(nodes: [], groups: [], edges: [])
+    }
+
+    public var historyCommitCount: Int {
+        traditionalLayout.rows.count
+    }
+
+    public func historyRow(hash: String?) -> Int? {
+        guard let hash else { return nil }
+        return traditionalLayout.row(hash: hash)?.row
+    }
+
+    public func hashAtHistoryProgress(_ progress: Double) -> String? {
+        guard !traditionalLayout.rows.isEmpty else { return nil }
+        let row = CommitGraphHistoryNavigation.row(
+            progress: progress,
+            count: traditionalLayout.rows.count
+        )
+        guard traditionalLayout.rows.indices.contains(row) else {
+            return nil
+        }
+        return traditionalLayout.rows[row].commit.fullHash
+    }
+
+    @discardableResult
+    public func navigateToFirstMatch(_ query: String) -> Bool {
+        let normalized = query.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard !normalized.isEmpty else { return false }
+        let match = commits.first { commit in
+            commit.fullHash.localizedCaseInsensitiveContains(normalized)
+                || commit.shortHash.localizedCaseInsensitiveContains(normalized)
+                || commit.subject.localizedCaseInsensitiveContains(normalized)
+                || commit.authorName.localizedCaseInsensitiveContains(normalized)
+        }
+        guard let match else { return false }
+        selectForNavigation(hash: match.fullHash)
+        return true
+    }
+
+    public func focusCommit(
+        hash: String,
+        in screenSize: GraphSize
+    ) {
+        guard layout.node(hash: hash) != nil else { return }
+        let position: GraphPoint
+        if let group = scene.groups.first(
+            where: { $0.memberHashes.contains(hash) }
+        ) {
+            if group.isCollapsed {
+                let rect = CommitGraphSceneGeometry
+                    .collapsedGroupRect(group)
+                position = GraphPoint(
+                    x: rect.midpointX,
+                    y: rect.midpointY
+                )
+            } else {
+                position = group.absolutePosition(for: hash)
+                    ?? currentPosition(for: hash)
+                    ?? .zero
+            }
+        } else {
+            position = currentPosition(for: hash) ?? .zero
+        }
+        viewport.offsetX = screenSize.width * 0.5
+            - position.x * viewport.scale
+        viewport.offsetY = screenSize.height * 0.42
+            - position.y * viewport.scale
+        synchronizeCanvasViewportIfNeeded()
+    }
+
+    public func refreshHistoryNavigationMarkers() {
+        rebuildHistoryNavigationMarkers()
     }
 
     public func load() async {
@@ -1083,6 +1157,7 @@ public final class CommitGraphViewModel {
             rect: rect
         )
         scene.regions.append(region)
+        rebuildHistoryNavigationMarkers()
         recordSceneMutation()
         scheduleSceneSave()
         return region.id
@@ -1104,6 +1179,7 @@ public final class CommitGraphViewModel {
         if let rect {
             scene.regions[index].rect = rect
         }
+        rebuildHistoryNavigationMarkers()
         recordSceneMutation()
         scheduleSceneSave()
     }
@@ -1135,6 +1211,7 @@ public final class CommitGraphViewModel {
     public func deleteRegion(id: UUID) {
         guard scene.regions.contains(where: { $0.id == id }) else { return }
         scene.regions.removeAll { $0.id == id }
+        rebuildHistoryNavigationMarkers()
         recordSceneMutation()
         scheduleSceneSave()
     }
@@ -1444,6 +1521,7 @@ public final class CommitGraphViewModel {
         traditionalLayout = base.traditionalLayout
         scene = derived.scene
         rebuildTraditionalGroupBadgeIndex()
+        rebuildHistoryNavigationMarkers()
         viewport = derived.scene.canvasViewport
         integrityReport = base.integrityReport
         projection = derived.projection
@@ -1725,6 +1803,7 @@ public final class CommitGraphViewModel {
             scene: scene
         )
         renderIndex = CommitGraphRenderIndex(projection: projection)
+        rebuildHistoryNavigationMarkers()
         if incrementingPathRevision {
             pathRevision &+= 1
         }
@@ -1747,6 +1826,14 @@ public final class CommitGraphViewModel {
         }
         traditionalGroupBadgeByHash = rebuilt
         traditionalGroupRevision &+= 1
+    }
+
+    private func rebuildHistoryNavigationMarkers() {
+        historyMarkers = CommitGraphHistoryNavigation.markers(
+            traditionalLayout: traditionalLayout,
+            canvasLayout: layout,
+            scene: scene
+        )
     }
 
     private func recordSceneMutation() {

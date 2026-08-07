@@ -25,12 +25,13 @@ enum CommitGraphPalette {
 }
 
 struct CommitGraphCanvas: View {
-    let projection: CommitGraphSceneProjection
+    let visibleScene: CommitGraphVisibleScene
     let regions: [CommitGraphRegionMarker]
     let viewport: GraphViewport
-    let lineStyle: CommitGraphLineStyle
+    let levelOfDetail: CommitGraphLevelOfDetail
     let selectedHashes: Set<String>
     let selectedHash: String?
+    let relatedHashes: Set<String>
 
     var body: some View {
         Canvas { context, size in
@@ -153,7 +154,7 @@ struct CommitGraphCanvas: View {
         context: inout GraphicsContext,
         size: CGSize
     ) {
-        for group in projection.groups where !group.isCollapsed {
+        for group in visibleScene.groups where !group.isCollapsed {
             let rect = screenRect(group.rect)
             guard isVisible(rect, in: size) else { continue }
             let color = CommitGraphPalette.color(groupID: group.id)
@@ -194,31 +195,35 @@ struct CommitGraphCanvas: View {
                 ),
                 height: headerRect.height
             )
-            drawFittedText(
-                group.title,
-                in: titleRect,
-                font: .systemFont(
-                    ofSize: max(11.5 * viewport.scale, 7),
-                    weight: .semibold
-                ),
-                color: NSColor.labelColor,
-                context: &context
-            )
-            context.draw(
-                Text("\(group.memberCount) 个提交 · 双击折叠")
-                    .font(
-                        .system(
-                            size: max(9.5 * viewport.scale, 6),
-                            weight: .medium
-                        )
+            if levelOfDetail != .overview {
+                drawFittedText(
+                    group.title,
+                    in: titleRect,
+                    font: .systemFont(
+                        ofSize: max(11.5 * viewport.scale, 7),
+                        weight: .semibold
+                    ),
+                    color: NSColor.labelColor,
+                    context: &context
+                )
+                if levelOfDetail == .full {
+                    context.draw(
+                        Text("\(group.memberCount) 个提交 · 双击折叠")
+                            .font(
+                                .system(
+                                    size: max(9.5 * viewport.scale, 6),
+                                    weight: .medium
+                                )
+                            )
+                            .foregroundStyle(color),
+                        at: CGPoint(
+                            x: headerRect.maxX - 12 * viewport.scale,
+                            y: headerRect.midY
+                        ),
+                        anchor: .trailing
                     )
-                    .foregroundStyle(color),
-                at: CGPoint(
-                    x: headerRect.maxX - 12 * viewport.scale,
-                    y: headerRect.midY
-                ),
-                anchor: .trailing
-            )
+                }
+            }
         }
     }
 
@@ -226,48 +231,8 @@ struct CommitGraphCanvas: View {
         context: inout GraphicsContext,
         size: CGSize
     ) {
-        for edge in projection.edges {
-            guard let sourceRect = endpointRect(edge.source),
-                  let targetRect = endpointRect(edge.target)
-            else {
-                continue
-            }
-            let extent = screenRect(
-                GraphRect(
-                    x: min(sourceRect.minimumX, targetRect.minimumX),
-                    y: min(sourceRect.minimumY, targetRect.minimumY),
-                    width: max(
-                        sourceRect.maximumX,
-                        targetRect.maximumX
-                    ) - min(sourceRect.minimumX, targetRect.minimumX),
-                    height: max(
-                        sourceRect.maximumY,
-                        targetRect.maximumY
-                    ) - min(sourceRect.minimumY, targetRect.minimumY)
-                )
-            )
-            guard isVisible(extent, in: size, padding: 260) else {
-                continue
-            }
-
-            let generated: CommitGraphGeneratedPath
-            switch lineStyle {
-            case .curve:
-                generated = CommitGraphPathGeometry.curve(
-                    startRect: sourceRect,
-                    startAnchor: edge.ports.source,
-                    endRect: targetRect,
-                    endAnchor: edge.ports.target
-                )
-            case .orthogonal:
-                generated = CommitGraphPathGeometry.orthogonal(
-                    startRect: sourceRect,
-                    startAnchor: edge.ports.source,
-                    endRect: targetRect,
-                    endAnchor: edge.ports.target,
-                    stubLength: 28
-                )
-            }
+        for edge in visibleScene.edges {
+            guard let generated = edge.path else { continue }
             var path = Path()
             switch generated {
             case let .curve(start, control1, control2, end):
@@ -286,12 +251,14 @@ struct CommitGraphCanvas: View {
             }
 
             let color = CommitGraphPalette.color(edge.colorIndex)
+            let isRelated = isRelatedEdge(edge)
             context.stroke(
                 path,
-                with: .color(color.opacity(0.88)),
+                with: .color(color.opacity(isRelated ? 1 : 0.72)),
                 style: StrokeStyle(
                     lineWidth: max(
                         (edge.kind == .merge ? 2.3 : 2)
+                            * (isRelated ? 1.65 : 1)
                             * viewport.scale,
                         1
                     ),
@@ -302,7 +269,7 @@ struct CommitGraphCanvas: View {
                         : []
                 )
             )
-            if edge.aggregateCount > 1 {
+            if edge.aggregateCount > 1 && levelOfDetail != .overview {
                 drawAggregateCount(
                     edge.aggregateCount,
                     path: generated,
@@ -361,7 +328,7 @@ struct CommitGraphCanvas: View {
         context: inout GraphicsContext,
         size: CGSize
     ) {
-        for visibleNode in projection.nodes {
+        for visibleNode in visibleScene.nodes {
             let rect = screenRect(nodeRect(visibleNode.position))
             guard isVisible(rect, in: size) else { continue }
             drawNode(
@@ -369,6 +336,7 @@ struct CommitGraphCanvas: View {
                 rect: rect,
                 isSelected: selectedHashes.contains(visibleNode.node.hash)
                     || visibleNode.node.hash == selectedHash,
+                isRelated: relatedHashes.contains(visibleNode.node.hash),
                 context: &context
             )
         }
@@ -378,6 +346,7 @@ struct CommitGraphCanvas: View {
         _ node: CommitGraphNode,
         rect: CGRect,
         isSelected: Bool,
+        isRelated: Bool,
         context: inout GraphicsContext
     ) {
         let scale = CGFloat(viewport.scale)
@@ -389,14 +358,35 @@ struct CommitGraphCanvas: View {
         context.fill(card, with: .color(.white))
         context.stroke(
             card,
-            with: .color(isSelected ? GitMateTheme.accent : branchColor),
-            lineWidth: max((isSelected ? 2.5 : 1.35) * scale, 1)
+            with: .color(
+                isSelected
+                    ? GitMateTheme.accent
+                    : (isRelated ? branchColor : branchColor.opacity(0.88))
+            ),
+            lineWidth: max(
+                (isSelected ? 2.7 : (isRelated ? 2 : 1.35)) * scale,
+                1
+            )
         )
+
+        if levelOfDetail == .overview {
+            let dot = CGRect(
+                x: rect.midX - 5 * scale,
+                y: rect.midY - 5 * scale,
+                width: 10 * scale,
+                height: 10 * scale
+            )
+            context.fill(
+                Path(ellipseIn: dot),
+                with: .color(branchColor)
+            )
+            return
+        }
 
         var clipped = context
         clipped.clip(to: card)
 
-        let avatarSize = 32 * scale
+        let avatarSize = levelOfDetail == .full ? 32 * scale : 22 * scale
         let avatarRect = CGRect(
             x: rect.minX + 11 * scale,
             y: rect.minY + 10 * scale,
@@ -435,7 +425,9 @@ struct CommitGraphCanvas: View {
             context: &clipped
         )
 
-        let decoration = node.decorations.first
+        let decoration = levelOfDetail == .full
+            ? node.decorations.first
+            : nil
         let decorationWidth = decoration.map {
             min(
                 max(
@@ -484,16 +476,18 @@ struct CommitGraphCanvas: View {
             width: max(hashX - subjectRect.minX - 10 * scale, 1),
             height: 18 * scale
         )
-        drawFittedText(
-            node.authorName,
-            in: authorRect,
-            font: .systemFont(
-                ofSize: max(10.5 * scale, 6),
-                weight: .medium
-            ),
-            color: NSColor.secondaryLabelColor,
-            context: &clipped
-        )
+        if levelOfDetail == .full {
+            drawFittedText(
+                node.authorName,
+                in: authorRect,
+                font: .systemFont(
+                    ofSize: max(10.5 * scale, 6),
+                    weight: .medium
+                ),
+                color: NSColor.secondaryLabelColor,
+                context: &clipped
+            )
+        }
         clipped.draw(
             Text(node.shortHash)
                 .font(
@@ -513,7 +507,7 @@ struct CommitGraphCanvas: View {
         context: inout GraphicsContext,
         size: CGSize
     ) {
-        for group in projection.groups where group.isCollapsed {
+        for group in visibleScene.groups where group.isCollapsed {
             let rect = screenRect(group.rect)
             guard isVisible(rect, in: size) else { continue }
             let color = CommitGraphPalette.color(groupID: group.id)
@@ -548,6 +542,7 @@ struct CommitGraphCanvas: View {
                 at: CGPoint(x: iconRect.midX, y: iconRect.midY),
                 anchor: .center
             )
+            guard levelOfDetail != .overview else { continue }
             let titleRect = CGRect(
                 x: iconRect.maxX + 10 * scale,
                 y: rect.minY + 11 * scale,
@@ -567,7 +562,8 @@ struct CommitGraphCanvas: View {
                 color: NSColor.labelColor,
                 context: &clipped
             )
-            clipped.draw(
+            if levelOfDetail == .full {
+                clipped.draw(
                 Text("\(group.memberCount) 个提交 · 双击展开")
                     .font(
                         .system(
@@ -582,6 +578,7 @@ struct CommitGraphCanvas: View {
                 ),
                 anchor: .leading
             )
+            }
         }
     }
 
@@ -670,16 +667,15 @@ struct CommitGraphCanvas: View {
         )
     }
 
-    private func endpointRect(
-        _ endpoint: CommitGraphEndpointID
-    ) -> GraphRect? {
-        switch endpoint {
-        case let .node(hash):
-            return projection.nodes.first {
-                $0.node.hash == hash
-            }.map { nodeRect($0.position) }
-        case let .group(id):
-            return projection.groups.first { $0.id == id }?.rect
+    private func isRelatedEdge(_ edge: CommitGraphVisibleEdge) -> Bool {
+        guard let selectedHash else { return false }
+        if edge.source == .node(selectedHash)
+            || edge.target == .node(selectedHash) {
+            return true
+        }
+        return edge.originalEdgeIDs.contains {
+            $0.hasPrefix("\(selectedHash)->")
+                || $0.contains("->\(selectedHash)#")
         }
     }
 

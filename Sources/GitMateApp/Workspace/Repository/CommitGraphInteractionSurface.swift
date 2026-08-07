@@ -18,7 +18,7 @@ enum CommitGraphContextAction: Equatable {
 }
 
 struct CommitGraphInteractionSurface: NSViewRepresentable {
-    let projection: CommitGraphSceneProjection
+    let visibleScene: CommitGraphVisibleScene
     let regions: [CommitGraphRegionMarker]
     let viewport: GraphViewport
     let marqueePurpose: CommitGraphMarqueePurpose
@@ -51,7 +51,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
     func makeNSView(context: Context) -> InteractionView {
         let view = InteractionView()
         view.coordinator = context.coordinator
-        view.projection = projection
+        view.visibleScene = visibleScene
         view.regions = regions
         view.viewport = viewport
         view.marqueePurpose = marqueePurpose
@@ -73,7 +73,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             onDoubleClickBlank: onDoubleClickBlank,
             onInteractionEnded: onInteractionEnded
         )
-        nsView.projection = projection
+        nsView.visibleScene = visibleScene
         nsView.regions = regions
         nsView.viewport = viewport
         nsView.marqueePurpose = marqueePurpose
@@ -242,7 +242,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         }
 
         weak var coordinator: Coordinator?
-        var projection = CommitGraphSceneProjection(
+        var visibleScene = CommitGraphVisibleScene(
             nodes: [],
             groups: [],
             edges: []
@@ -367,7 +367,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                 )
             case let .group(id):
                 guard event.clickCount >= 2,
-                      let group = projection.groups.first(
+                      let group = visibleScene.groups.first(
                         where: { $0.id == id }
                       )
                 else {
@@ -468,7 +468,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                 : 0.08
             let zoomDelta = min(
                 max(
-                    Double(event.scrollingDeltaY) * sensitivity,
+                    -Double(event.scrollingDeltaY) * sensitivity,
                     -0.35
                 ),
                 0.35
@@ -525,7 +525,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             selectionPath.stroke()
 
             if marqueePurpose != .createRegion {
-                for node in projection.nodes
+                for node in visibleScene.nodes
                     where marqueeSelectedHashes.contains(node.node.hash) {
                     let rect = screenRect(for: node)
                     let path = NSBezierPath(
@@ -567,8 +567,8 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             if marqueePurpose == .createRegion {
                 marqueeSelectedHashes.removeAll(keepingCapacity: true)
             } else {
-                marqueeSelectedHashes = Set(
-                    projection.nodes.compactMap { visibleNode in
+                let visibleHashes = Set(
+                    visibleScene.nodes.compactMap { visibleNode in
                         intersects(
                             canvasRect,
                             nodeAt: visibleNode.position
@@ -577,6 +577,9 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                             : nil
                     }
                 )
+                // 边缘自动滚动时可见候选会换页；保留已经经过的
+                // 节点，避免被视口裁剪掉后从框选结果中消失。
+                marqueeSelectedHashes.formUnion(visibleHashes)
             }
             let anchorScreenPoint =
                 CommitGraphViewportProjector.screenPoint(
@@ -615,7 +618,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                 screenPoint: screenPoint,
                 viewport: viewport
             )
-            for visibleNode in projection.nodes.reversed() {
+            for visibleNode in visibleScene.nodes.reversed() {
                 let halfWidth =
                     CommitGraphViewportProjector.nodeWidth / 2
                 let halfHeight =
@@ -627,7 +630,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                     return .node(visibleNode.node.hash)
                 }
             }
-            for group in projection.groups.reversed() {
+            for group in visibleScene.groups.reversed() {
                 let rect = group.rect
                 let isInRect = point.x >= rect.minimumX
                     && point.x <= rect.maximumX
@@ -668,7 +671,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                 screenPoint: screenPoint,
                 viewport: viewport
             )
-            for group in projection.groups.reversed() {
+            for group in visibleScene.groups.reversed() {
                 let rect = group.rect
                 let isInHeader = point.x >= rect.minimumX
                     && point.x <= rect.maximumX
