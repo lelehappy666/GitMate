@@ -159,7 +159,11 @@ let commitGraphSnapshotStoreTests = [
         )
     },
     TestCase("快照安装身份不遍历提交正文") {
+        let generationID = UUID(
+            uuidString: "11111111-2222-3333-4444-555555555555"
+        )!
         let first = CommitGraphSnapshot(
+            generationID: generationID,
             repositoryPath: "/repo",
             fingerprint: CommitGraphReferenceFingerprint(
                 references: [],
@@ -182,6 +186,7 @@ let commitGraphSnapshotStoreTests = [
             generatedAt: Date(timeIntervalSince1970: 42)
         )
         let changedInterior = CommitGraphSnapshot(
+            generationID: generationID,
             repositoryPath: first.repositoryPath,
             fingerprint: first.fingerprint,
             commitsNewestFirst: [
@@ -199,6 +204,9 @@ let commitGraphSnapshotStoreTests = [
             generatedAt: first.generatedAt
         )
         let newerGeneration = CommitGraphSnapshot(
+            generationID: UUID(
+                uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+            )!,
             repositoryPath: first.repositoryPath,
             fingerprint: first.fingerprint,
             commitsNewestFirst: first.commitsNewestFirst,
@@ -216,6 +224,143 @@ let commitGraphSnapshotStoreTests = [
             CommitGraphSnapshotIdentity(first)
                 != CommitGraphSnapshotIdentity(newerGeneration),
             "新生成的快照必须拥有不同安装身份"
+        )
+    },
+    TestCase("快照代次标识编码解码和重复缓存读取保持不变") {
+        let directory = commitGraphSnapshotStoreTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let generationID = UUID(
+            uuidString: "12345678-1234-5678-9ABC-DEF012345678"
+        )!
+        let snapshot = CommitGraphSnapshot(
+            generationID: generationID,
+            repositoryPath: "/repo",
+            fingerprint: CommitGraphReferenceFingerprint(
+                references: [],
+                headName: "main",
+                headHash: "root",
+                isShallow: false
+            ),
+            commitsNewestFirst: [
+                commitGraphSnapshotIdentityCommit(
+                    hash: "root",
+                    subject: "初始提交"
+                )
+            ],
+            expectedCommitCount: 1,
+            shallowBoundaryParentHashes: [],
+            generatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let store = BinaryCommitGraphSnapshotStore(rootDirectory: directory)
+
+        try await store.save(snapshot, repositoryID: 81)
+        let firstLoad = try await store.load(repositoryID: 81)
+        let secondLoad = try await store.load(repositoryID: 81)
+
+        try expectEqual(firstLoad?.generationID, generationID, "编码解码必须保留代次标识")
+        try expectEqual(secondLoad?.generationID, generationID, "重复命中同一缓存必须复用代次标识")
+    },
+    TestCase("相同时间边界和计数的新快照仍由代次标识区分") {
+        let commonDate = Date(timeIntervalSince1970: 200)
+        let commonFingerprint = CommitGraphReferenceFingerprint(
+            references: [
+                CommitGraphReference(
+                    name: "refs/heads/main",
+                    targetHash: "head",
+                    kind: .localBranch
+                )
+            ],
+            headName: "main",
+            headHash: "head",
+            isShallow: false
+        )
+        let first = CommitGraphSnapshot(
+            repositoryPath: "/repo",
+            fingerprint: commonFingerprint,
+            commitsNewestFirst: [
+                commitGraphSnapshotIdentityCommit(hash: "head", subject: "头"),
+                commitGraphSnapshotIdentityCommit(hash: "middle-a", subject: "中间 A"),
+                commitGraphSnapshotIdentityCommit(hash: "root", subject: "根")
+            ],
+            expectedCommitCount: 3,
+            shallowBoundaryParentHashes: [],
+            generatedAt: commonDate
+        )
+        let second = CommitGraphSnapshot(
+            repositoryPath: "/repo",
+            fingerprint: CommitGraphReferenceFingerprint(
+                references: commonFingerprint.references + [
+                    CommitGraphReference(
+                        name: "refs/remotes/origin/feature",
+                        targetHash: "middle-b",
+                        kind: .remoteBranch
+                    )
+                ],
+                headName: commonFingerprint.headName,
+                headHash: commonFingerprint.headHash,
+                isShallow: commonFingerprint.isShallow
+            ),
+            commitsNewestFirst: [
+                commitGraphSnapshotIdentityCommit(hash: "head", subject: "头"),
+                commitGraphSnapshotIdentityCommit(hash: "middle-b", subject: "中间 B"),
+                commitGraphSnapshotIdentityCommit(hash: "root", subject: "根")
+            ],
+            expectedCommitCount: 3,
+            shallowBoundaryParentHashes: [],
+            generatedAt: commonDate
+        )
+
+        try expect(
+            first.generationID != second.generationID,
+            "每个新建的完整快照必须自动生成独立代次标识"
+        )
+        try expect(
+            CommitGraphSnapshotIdentity(first) != CommitGraphSnapshotIdentity(second),
+            "即使旧轻量字段全部相同，新读取也必须由 generationID 区分"
+        )
+    },
+    TestCase("旧版快照迁移后获得稳定代次标识") {
+        let directory = commitGraphSnapshotStoreTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let legacy = LegacyCommitGraphSnapshotV1(
+            schemaVersion: 1,
+            repositoryPath: "/legacy",
+            fingerprint: CommitGraphReferenceFingerprint(
+                references: [],
+                headName: "main",
+                headHash: "root",
+                isShallow: false
+            ),
+            commitsNewestFirst: [
+                commitGraphSnapshotIdentityCommit(hash: "root", subject: "旧提交")
+            ],
+            expectedCommitCount: 1,
+            shallowBoundaryParentHashes: [],
+            generatedAt: Date(timeIntervalSince1970: 300)
+        )
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        try encoder.encode(legacy).write(
+            to: directory.appending(path: "82.plist")
+        )
+        let store = BinaryCommitGraphSnapshotStore(rootDirectory: directory)
+
+        let firstLoad = try await store.load(repositoryID: 82)
+        let secondLoad = try await store.load(repositoryID: 82)
+
+        try expectEqual(
+            firstLoad?.schemaVersion,
+            CommitGraphSnapshot.currentSchemaVersion,
+            "旧版缓存必须迁移到当前 schema"
+        )
+        try expectEqual(
+            firstLoad?.generationID,
+            secondLoad?.generationID,
+            "未写 generationID 的旧缓存每次读取也必须得到稳定标识"
         )
     }
 ]
@@ -269,6 +414,16 @@ private func commitGraphSnapshotStoreTemporaryDirectory() -> URL {
 
 private enum CommitGraphSnapshotStoreReadTestError: Error, Equatable, Sendable {
     case unavailable
+}
+
+private struct LegacyCommitGraphSnapshotV1: Codable {
+    let schemaVersion: Int
+    let repositoryPath: String
+    let fingerprint: CommitGraphReferenceFingerprint
+    let commitsNewestFirst: [GitCommit]
+    let expectedCommitCount: Int
+    let shallowBoundaryParentHashes: Set<String>
+    let generatedAt: Date
 }
 
 private func commitGraphSnapshotIdentityCommit(

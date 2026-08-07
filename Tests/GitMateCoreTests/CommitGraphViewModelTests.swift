@@ -1097,6 +1097,7 @@ let commitGraphViewModelTests = [
             deriver: deriver
         )
         await viewModel.loadCachedSnapshot()
+        let baseCountBeforeRefresh = await deriver.baseInvocationCount()
         viewModel.replaceSelection(with: ["hash-a", "hash-b"])
         let groupID = try viewModel.createManualGroup(title: "核心历史")
         viewModel.setViewMode(.canvas)
@@ -1132,6 +1133,18 @@ let commitGraphViewModelTests = [
 
         await deriver.releaseBlockedRequest()
         await refreshTask.value
+
+        let baseCountAfterRefresh = await deriver.baseInvocationCount()
+        let sceneCountAfterRefresh = await deriver.sceneInvocationCount()
+        try expectEqual(
+            baseCountAfterRefresh,
+            baseCountBeforeRefresh + 1,
+            "同一刷新中的多轮场景修订不得重复计算拓扑和双布局"
+        )
+        try expect(
+            sceneCountAfterRefresh >= 3,
+            "场景修订后应复用同一 Git base 重做轻量场景派生"
+        )
 
         try expectEqual(
             viewModel.scene.nodePositions["hash-c"],
@@ -1345,6 +1358,49 @@ let commitGraphViewModelTests = [
         guard case .failed = corruptViewModel.refreshState else {
             throw TestFailure(description: "首次缓存损坏且无显示快照时必须进入失败状态")
         }
+    },
+    TestCase("安装阶段直接复用后台预构建的可用提交集合") { @MainActor in
+        let oldSnapshot = commitGraphSnapshot(
+            generationID: UUID(
+                uuidString: "10000000-0000-0000-0000-000000000001"
+            )!,
+            commits: [commitGraphCommit(hash: "hash-a")],
+            headHash: "hash-a"
+        )
+        let newSnapshot = commitGraphSnapshot(
+            generationID: UUID(
+                uuidString: "10000000-0000-0000-0000-000000000002"
+            )!,
+            commits: [commitGraphCommit(hash: "hash-a")],
+            headHash: "hash-a"
+        )
+        let deriver = AvailableHashesProbeDeriver(
+            overriddenInvocation: 2,
+            availableHashes: []
+        )
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 917,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: CommitGraphRefreshCoordinator(
+                reader: StaticCommitGraphSnapshotReader(snapshot: newSnapshot),
+                store: ScriptedSnapshotStore(
+                    steps: [.snapshot(oldSnapshot), .missing]
+                )
+            ),
+            deriver: deriver
+        )
+        await viewModel.loadCachedSnapshot()
+        viewModel.selectForNavigation(hash: "hash-a")
+
+        await viewModel.refresh(source: .toolbar)
+
+        try expectEqual(
+            viewModel.selectedHash,
+            nil,
+            "安装必须使用后台 base 提供的 Set，而不是在主线程扫描 commits 重建"
+        )
     }
 ]
 
@@ -1624,7 +1680,8 @@ private actor SelectivelyGatedCommitGraphDeriver:
 {
     private let blockedRequestID: Int
     private let base = DefaultCommitGraphViewModelDeriver()
-    private var requestCount = 0
+    private var baseCount = 0
+    private var sceneCount = 0
     private var didReachBlockedRequest = false
     private var blockedContinuation: CheckedContinuation<Void, Never>?
     private var blockedWaiters: [CheckedContinuation<Void, Never>] = []
@@ -1633,11 +1690,18 @@ private actor SelectivelyGatedCommitGraphDeriver:
         self.blockedRequestID = blockedRequestID
     }
 
-    func derive(
-        _ request: CommitGraphViewModelDerivationRequest
-    ) async throws -> CommitGraphViewModelDerivedState {
-        requestCount += 1
-        let requestID = requestCount
+    func deriveGitBase(
+        _ request: CommitGraphGitDerivationRequest
+    ) async throws -> CommitGraphGitDerivedBase {
+        baseCount += 1
+        return try await base.deriveGitBase(request)
+    }
+
+    func deriveScene(
+        _ request: CommitGraphSceneDerivationRequest
+    ) async throws -> CommitGraphSceneDerivedState {
+        sceneCount += 1
+        let requestID = sceneCount
         if requestID == blockedRequestID {
             await withCheckedContinuation { continuation in
                 blockedContinuation = continuation
@@ -1648,7 +1712,7 @@ private actor SelectivelyGatedCommitGraphDeriver:
                 blockedWaiters.removeAll()
             }
         }
-        return try await base.derive(request)
+        return try await base.deriveScene(request)
     }
 
     func waitUntilBlocked() async {
@@ -1662,6 +1726,10 @@ private actor SelectivelyGatedCommitGraphDeriver:
         blockedContinuation?.resume()
         blockedContinuation = nil
     }
+
+    func baseInvocationCount() -> Int { baseCount }
+
+    func sceneInvocationCount() -> Int { sceneCount }
 }
 
 private actor CancellationAwareCommitGraphDeriver:
@@ -1674,9 +1742,9 @@ private actor CancellationAwareCommitGraphDeriver:
     private var firstCompletedFullChain = false
     private var startWaiters: [CheckedContinuation<Void, Never>] = []
 
-    func derive(
-        _ request: CommitGraphViewModelDerivationRequest
-    ) async throws -> CommitGraphViewModelDerivedState {
+    func deriveGitBase(
+        _ request: CommitGraphGitDerivationRequest
+    ) async throws -> CommitGraphGitDerivedBase {
         invocationCount += 1
         let invocation = invocationCount
         if invocation == 1 {
@@ -1690,11 +1758,17 @@ private actor CancellationAwareCommitGraphDeriver:
                 throw CancellationError()
             }
         }
-        let result = try await base.derive(request)
+        let result = try await base.deriveGitBase(request)
         if invocation == 1 {
             firstCompletedFullChain = true
         }
         return result
+    }
+
+    func deriveScene(
+        _ request: CommitGraphSceneDerivationRequest
+    ) async throws -> CommitGraphSceneDerivedState {
+        try await base.deriveScene(request)
     }
 
     func waitUntilFirstDerivationStarts() async {
@@ -1707,6 +1781,44 @@ private actor CancellationAwareCommitGraphDeriver:
     func wasFirstCancelled() -> Bool { firstCancelled }
 
     func didFirstCompleteFullChain() -> Bool { firstCompletedFullChain }
+}
+
+private actor AvailableHashesProbeDeriver:
+    CommitGraphViewModelDeriving
+{
+    private let base = DefaultCommitGraphViewModelDeriver()
+    private let overriddenInvocation: Int
+    private let availableHashes: Set<String>
+    private var invocationCount = 0
+
+    init(
+        overriddenInvocation: Int,
+        availableHashes: Set<String>
+    ) {
+        self.overriddenInvocation = overriddenInvocation
+        self.availableHashes = availableHashes
+    }
+
+    func deriveGitBase(
+        _ request: CommitGraphGitDerivationRequest
+    ) async throws -> CommitGraphGitDerivedBase {
+        invocationCount += 1
+        let derived = try await base.deriveGitBase(request)
+        guard invocationCount == overriddenInvocation else { return derived }
+        return CommitGraphGitDerivedBase(
+            integrityReport: derived.integrityReport,
+            canvasLayout: derived.canvasLayout,
+            traditionalLayout: derived.traditionalLayout,
+            defaultPositions: derived.defaultPositions,
+            availableHashes: availableHashes
+        )
+    }
+
+    func deriveScene(
+        _ request: CommitGraphSceneDerivationRequest
+    ) async throws -> CommitGraphSceneDerivedState {
+        try await base.deriveScene(request)
+    }
 }
 
 private actor GatedDelegatingSceneStore: CommitGraphSceneStoring {
@@ -1840,10 +1952,12 @@ private func commitGraphCommit(
 }
 
 private func commitGraphSnapshot(
+    generationID: UUID = UUID(),
     commits: [GitCommit],
     headHash: String
 ) -> CommitGraphSnapshot {
     CommitGraphSnapshot(
+        generationID: generationID,
         repositoryPath: commitGraphRepositoryURL.standardizedFileURL.path,
         fingerprint: commitGraphFingerprint(headHash: headHash),
         commitsNewestFirst: commits,

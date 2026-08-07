@@ -20,44 +20,70 @@ public enum CommitGraphRefreshState: Equatable, Sendable {
     }
 }
 
-public struct CommitGraphViewModelDerivationRequest: Sendable {
+public struct CommitGraphGitDerivationRequest: Sendable {
     public let snapshot: CommitGraphSnapshot
-    public let previousSnapshot: CommitGraphSnapshot?
-    public let scene: CommitGraphSceneState
     public let integrityReport: CommitGraphIntegrityReport?
 
     public init(
         snapshot: CommitGraphSnapshot,
-        previousSnapshot: CommitGraphSnapshot?,
-        scene: CommitGraphSceneState,
         integrityReport: CommitGraphIntegrityReport? = nil
     ) {
         self.snapshot = snapshot
-        self.previousSnapshot = previousSnapshot
-        self.scene = scene
         self.integrityReport = integrityReport
     }
 }
 
-public struct CommitGraphViewModelDerivedState: Sendable {
+public struct CommitGraphGitDerivedBase: Sendable {
     public let integrityReport: CommitGraphIntegrityReport
     public let canvasLayout: CommitGraphLayoutResult
     public let traditionalLayout: CommitGraphTraditionalLayoutResult
-    public let scene: CommitGraphSceneState
-    public let projection: CommitGraphSceneProjection
-    public let renderIndex: CommitGraphRenderIndex
+    public let defaultPositions: [String: GraphPoint]
+    public let availableHashes: Set<String>
 
     public init(
         integrityReport: CommitGraphIntegrityReport,
         canvasLayout: CommitGraphLayoutResult,
         traditionalLayout: CommitGraphTraditionalLayoutResult,
-        scene: CommitGraphSceneState,
-        projection: CommitGraphSceneProjection,
-        renderIndex: CommitGraphRenderIndex
+        defaultPositions: [String: GraphPoint],
+        availableHashes: Set<String>
     ) {
         self.integrityReport = integrityReport
         self.canvasLayout = canvasLayout
         self.traditionalLayout = traditionalLayout
+        self.defaultPositions = defaultPositions
+        self.availableHashes = availableHashes
+    }
+}
+
+public struct CommitGraphSceneDerivationRequest: Sendable {
+    public let snapshot: CommitGraphSnapshot
+    public let previousSnapshot: CommitGraphSnapshot?
+    public let scene: CommitGraphSceneState
+    public let base: CommitGraphGitDerivedBase
+
+    public init(
+        snapshot: CommitGraphSnapshot,
+        previousSnapshot: CommitGraphSnapshot?,
+        scene: CommitGraphSceneState,
+        base: CommitGraphGitDerivedBase
+    ) {
+        self.snapshot = snapshot
+        self.previousSnapshot = previousSnapshot
+        self.scene = scene
+        self.base = base
+    }
+}
+
+public struct CommitGraphSceneDerivedState: Sendable {
+    public let scene: CommitGraphSceneState
+    public let projection: CommitGraphSceneProjection
+    public let renderIndex: CommitGraphRenderIndex
+
+    public init(
+        scene: CommitGraphSceneState,
+        projection: CommitGraphSceneProjection,
+        renderIndex: CommitGraphRenderIndex
+    ) {
         self.scene = scene
         self.projection = projection
         self.renderIndex = renderIndex
@@ -65,9 +91,13 @@ public struct CommitGraphViewModelDerivedState: Sendable {
 }
 
 public protocol CommitGraphViewModelDeriving: Sendable {
-    func derive(
-        _ request: CommitGraphViewModelDerivationRequest
-    ) async throws -> CommitGraphViewModelDerivedState
+    func deriveGitBase(
+        _ request: CommitGraphGitDerivationRequest
+    ) async throws -> CommitGraphGitDerivedBase
+
+    func deriveScene(
+        _ request: CommitGraphSceneDerivationRequest
+    ) async throws -> CommitGraphSceneDerivedState
 }
 
 public struct DefaultCommitGraphViewModelDeriver:
@@ -86,9 +116,9 @@ public struct DefaultCommitGraphViewModelDeriver:
         self.traditionalLayout = traditionalLayout
     }
 
-    public func derive(
-        _ request: CommitGraphViewModelDerivationRequest
-    ) async throws -> CommitGraphViewModelDerivedState {
+    public func deriveGitBase(
+        _ request: CommitGraphGitDerivationRequest
+    ) async throws -> CommitGraphGitDerivedBase {
         let graphLayout = graphLayout
         let traditionalLayout = traditionalLayout
         let task = Task.detached(priority: .userInitiated) {
@@ -97,24 +127,15 @@ public struct DefaultCommitGraphViewModelDeriver:
                 ?? CommitGraphIntegrityValidator.validate(request.snapshot)
             try Task.checkCancellation()
             guard integrity.status != .invalid else {
-                let projection = CommitGraphSceneProjection(
-                    nodes: [],
-                    groups: [],
-                    edges: [],
-                    lineStyle: request.scene.lineStyle
-                )
-                return CommitGraphViewModelDerivedState(
+                return CommitGraphGitDerivedBase(
                     integrityReport: integrity,
                     canvasLayout: CommitGraphLayoutResult(),
                     traditionalLayout: CommitGraphTraditionalLayoutResult(
                         rows: [],
                         maximumLane: 0
                     ),
-                    scene: request.scene,
-                    projection: projection,
-                    renderIndex: CommitGraphRenderIndex(
-                        projection: projection
-                    )
+                    defaultPositions: [:],
+                    availableHashes: []
                 )
             }
 
@@ -131,15 +152,39 @@ public struct DefaultCommitGraphViewModelDeriver:
                     ($0.hash, GraphPoint(x: $0.x, y: $0.y))
                 }
             )
+            let availableHashes = Set(
+                request.snapshot.commitsNewestFirst.map(\.fullHash)
+            )
+            try Task.checkCancellation()
+            return CommitGraphGitDerivedBase(
+                integrityReport: integrity,
+                canvasLayout: canvas,
+                traditionalLayout: traditional,
+                defaultPositions: defaultPositions,
+                availableHashes: availableHashes
+            )
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    public func deriveScene(
+        _ request: CommitGraphSceneDerivationRequest
+    ) async throws -> CommitGraphSceneDerivedState {
+        let task = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
             var reconciled = CommitGraphSceneReconciler.reconcile(
                 scene: request.scene,
                 oldSnapshot: request.previousSnapshot ?? request.snapshot,
                 newSnapshot: request.snapshot,
-                defaultPositions: defaultPositions
+                defaultPositions: request.base.defaultPositions
             )
             try Task.checkCancellation()
             let provisionalProjection = CommitGraphSceneProjector.project(
-                layout: canvas,
+                layout: request.base.canvasLayout,
                 scene: reconciled
             )
             for edge in provisionalProjection.edges
@@ -149,16 +194,13 @@ public struct DefaultCommitGraphViewModelDeriver:
             }
             try Task.checkCancellation()
             let projection = CommitGraphSceneProjector.project(
-                layout: canvas,
+                layout: request.base.canvasLayout,
                 scene: reconciled
             )
             try Task.checkCancellation()
             let renderIndex = CommitGraphRenderIndex(projection: projection)
             try Task.checkCancellation()
-            return CommitGraphViewModelDerivedState(
-                integrityReport: integrity,
-                canvasLayout: canvas,
-                traditionalLayout: traditional,
+            return CommitGraphSceneDerivedState(
                 scene: reconciled,
                 projection: projection,
                 renderIndex: renderIndex
@@ -290,8 +332,12 @@ public final class CommitGraphViewModel {
         .restoring
 
     @ObservationIgnored
-    private var derivationTask:
-        Task<CommitGraphViewModelDerivedState, Error>?
+    private var baseDerivationTask:
+        Task<CommitGraphGitDerivedBase, Error>?
+
+    @ObservationIgnored
+    private var sceneDerivationTask:
+        Task<CommitGraphSceneDerivedState, Error>?
 
     public init(
         reader: any LocalGitReading,
@@ -343,20 +389,26 @@ public final class CommitGraphViewModel {
                     : .stale(message: "本地缓存缺失，继续显示上次正确结果。")
                 return
             }
-            guard let derived = try await deriveLatestScene(
+            guard let base = try await deriveGitBase(
                 snapshot: snapshot,
                 integrityReport: nil,
                 requestID: requestID
             ) else { return }
-            guard derived.state.integrityReport.status != .invalid else {
-                integrityReport = derived.state.integrityReport
+            guard base.integrityReport.status != .invalid else {
+                integrityReport = base.integrityReport
                 refreshState = currentSnapshot == nil
                     ? .failed(message: "本地提交图缓存已损坏。")
                     : .stale(message: "本地缓存损坏，继续显示上次正确结果。")
                 return
             }
+            guard let derived = try await deriveLatestScene(
+                snapshot: snapshot,
+                base: base,
+                requestID: requestID
+            ) else { return }
             guard installDerivedState(
                 snapshot,
+                base: base,
                 derived: derived.state,
                 expectedSceneRevision: derived.sceneRevision,
                 requestID: requestID
@@ -397,13 +449,19 @@ public final class CommitGraphViewModel {
             guard isCurrentRefreshRequest(requestID) else { return }
             let resultIdentity = CommitGraphSnapshotIdentity(result.snapshot)
             if installedSnapshotIdentity != resultIdentity {
-                guard let derived = try await deriveLatestScene(
+                guard let base = try await deriveGitBase(
                     snapshot: result.snapshot,
                     integrityReport: result.integrity,
                     requestID: requestID
                 ) else { return }
+                guard let derived = try await deriveLatestScene(
+                    snapshot: result.snapshot,
+                    base: base,
+                    requestID: requestID
+                ) else { return }
                 guard installDerivedState(
                     result.snapshot,
+                    base: base,
                     derived: derived.state,
                     expectedSceneRevision: derived.sceneRevision,
                     requestID: requestID
@@ -1101,13 +1159,15 @@ public final class CommitGraphViewModel {
     }
 
     private struct RevisionMatchedDerivedState: Sendable {
-        let state: CommitGraphViewModelDerivedState
+        let state: CommitGraphSceneDerivedState
         let sceneRevision: UInt64
     }
 
     private func beginRefreshRequest() -> UInt64 {
-        derivationTask?.cancel()
-        derivationTask = nil
+        baseDerivationTask?.cancel()
+        sceneDerivationTask?.cancel()
+        baseDerivationTask = nil
+        sceneDerivationTask = nil
         refreshRequestID &+= 1
         return refreshRequestID
     }
@@ -1118,7 +1178,8 @@ public final class CommitGraphViewModel {
 
     private func finishRefreshRequest(_ requestID: UInt64) {
         guard isCurrentRefreshRequest(requestID) else { return }
-        derivationTask = nil
+        baseDerivationTask = nil
+        sceneDerivationTask = nil
         isLoading = false
         isLoadingMore = false
     }
@@ -1184,36 +1245,71 @@ public final class CommitGraphViewModel {
         return true
     }
 
-    private func deriveLatestScene(
+    private func deriveGitBase(
         snapshot: CommitGraphSnapshot,
         integrityReport: CommitGraphIntegrityReport?,
+        requestID: UInt64
+    ) async throws -> CommitGraphGitDerivedBase? {
+        guard isCurrentRefreshRequest(requestID) else { return nil }
+        let request = CommitGraphGitDerivationRequest(
+            snapshot: snapshot,
+            integrityReport: integrityReport
+        )
+        let deriver = deriver
+        let task = Task {
+            try await deriver.deriveGitBase(request)
+        }
+        baseDerivationTask?.cancel()
+        baseDerivationTask = task
+        let base = try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        guard isCurrentRefreshRequest(requestID) else { return nil }
+        baseDerivationTask = nil
+        return base
+    }
+
+    private func deriveLatestScene(
+        snapshot: CommitGraphSnapshot,
+        base: CommitGraphGitDerivedBase,
         requestID: UInt64
     ) async throws -> RevisionMatchedDerivedState? {
         while isCurrentRefreshRequest(requestID) {
             try Task.checkCancellation()
             let revision = sceneRevision
-            let request = CommitGraphViewModelDerivationRequest(
+            let request = CommitGraphSceneDerivationRequest(
                 snapshot: snapshot,
                 previousSnapshot: currentSnapshot,
                 scene: scene,
-                integrityReport: integrityReport
+                base: base
             )
             let deriver = deriver
             let task = Task {
-                try await deriver.derive(request)
+                try await deriver.deriveScene(request)
             }
-            derivationTask?.cancel()
-            derivationTask = task
-            let state = try await withTaskCancellationHandler {
-                try await task.value
-            } onCancel: {
-                task.cancel()
+            sceneDerivationTask?.cancel()
+            sceneDerivationTask = task
+            let state: CommitGraphSceneDerivedState
+            do {
+                state = try await withTaskCancellationHandler {
+                    try await task.value
+                } onCancel: {
+                    task.cancel()
+                }
+            } catch is CancellationError {
+                guard isCurrentRefreshRequest(requestID) else { return nil }
+                if sceneRevision != revision {
+                    continue
+                }
+                throw CancellationError()
             }
             guard isCurrentRefreshRequest(requestID) else { return nil }
             guard sceneRevision == revision else {
                 continue
             }
-            derivationTask = nil
+            sceneDerivationTask = nil
             return RevisionMatchedDerivedState(
                 state: state,
                 sceneRevision: revision
@@ -1224,7 +1320,8 @@ public final class CommitGraphViewModel {
 
     private func installDerivedState(
         _ snapshot: CommitGraphSnapshot,
-        derived: CommitGraphViewModelDerivedState,
+        base: CommitGraphGitDerivedBase,
+        derived: CommitGraphSceneDerivedState,
         expectedSceneRevision: UInt64,
         requestID: UInt64
     ) -> Bool {
@@ -1232,20 +1329,18 @@ public final class CommitGraphViewModel {
               sceneRevision == expectedSceneRevision
         else { return false }
 
-        let availableHashes = Set(
-            snapshot.commitsNewestFirst.map(\.fullHash)
-        )
+        let availableHashes = base.availableHashes
         let selectedCommitDisappeared = selectedHash.map {
             !availableHashes.contains($0)
         } ?? false
         commits = snapshot.commitsNewestFirst
         currentSnapshot = snapshot
         installedSnapshotIdentity = CommitGraphSnapshotIdentity(snapshot)
-        layout = derived.canvasLayout
-        traditionalLayout = derived.traditionalLayout
+        layout = base.canvasLayout
+        traditionalLayout = base.traditionalLayout
         scene = derived.scene
         viewport = derived.scene.canvasViewport
-        integrityReport = derived.integrityReport
+        integrityReport = base.integrityReport
         projection = derived.projection
         renderIndex = derived.renderIndex
         nextCursor = nil
@@ -1530,6 +1625,7 @@ public final class CommitGraphViewModel {
 
     private func recordSceneMutation() {
         sceneRevision &+= 1
+        sceneDerivationTask?.cancel()
     }
 
     private func scheduleSceneSave() {

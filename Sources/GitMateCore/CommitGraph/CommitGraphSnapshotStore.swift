@@ -47,6 +47,26 @@ public actor BinaryCommitGraphSnapshotStore: CommitGraphSnapshotStoring {
 
         let data = try dataReader(url)
 
+        let storedSchemaVersion: Int
+        do {
+            storedSchemaVersion = try PropertyListDecoder().decode(
+                SnapshotVersionEnvelope.self,
+                from: data
+            ).schemaVersion
+        } catch {
+            throw CommitGraphSnapshotStoreError.corruptedSnapshot(
+                repositoryID: repositoryID
+            )
+        }
+        guard (1...CommitGraphSnapshot.currentSchemaVersion)
+            .contains(storedSchemaVersion)
+        else {
+            throw CommitGraphSnapshotStoreError.unsupportedSchema(
+                repositoryID: repositoryID,
+                schemaVersion: storedSchemaVersion
+            )
+        }
+
         let snapshot: CommitGraphSnapshot
         do {
             snapshot = try PropertyListDecoder().decode(
@@ -59,12 +79,8 @@ public actor BinaryCommitGraphSnapshotStore: CommitGraphSnapshotStoring {
             )
         }
 
-        guard snapshot.schemaVersion == CommitGraphSnapshot.currentSchemaVersion
-        else {
-            throw CommitGraphSnapshotStoreError.unsupportedSchema(
-                repositoryID: repositoryID,
-                schemaVersion: snapshot.schemaVersion
-            )
+        if storedSchemaVersion < CommitGraphSnapshot.currentSchemaVersion {
+            try await save(snapshot, repositoryID: repositoryID)
         }
         return snapshot
     }
@@ -90,5 +106,9 @@ public actor BinaryCommitGraphSnapshotStore: CommitGraphSnapshotStoring {
 
     private func snapshotURL(repositoryID: Int64) -> URL {
         rootDirectory.appending(path: "\(repositoryID).plist")
+    }
+
+    private struct SnapshotVersionEnvelope: Decodable {
+        let schemaVersion: Int
     }
 }
