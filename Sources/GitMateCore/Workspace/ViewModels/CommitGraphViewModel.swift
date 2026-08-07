@@ -351,6 +351,18 @@ public final class CommitGraphViewModel {
     @ObservationIgnored
     private var initialPresentationLeases: Set<UUID> = []
 
+    @ObservationIgnored
+    private var initialPresentationGeneration: UInt64 = 0
+
+    @ObservationIgnored
+    private var pendingPresentationCancellation: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var pendingPresentationCancellationID: UUID?
+
+    @ObservationIgnored
+    private let initialPresentationReleaseDelay: @Sendable () async -> Void
+
     public init(
         reader: any LocalGitReading,
         repositoryURL: URL,
@@ -362,7 +374,11 @@ public final class CommitGraphViewModel {
         layout: CommitGraphLayout = CommitGraphLayout(),
         traditionalLayout: CommitGraphTraditionalLayout =
             CommitGraphTraditionalLayout(),
-        deriver: (any CommitGraphViewModelDeriving)? = nil
+        deriver: (any CommitGraphViewModelDeriving)? = nil,
+        initialPresentationReleaseDelay:
+            @escaping @Sendable () async -> Void = {
+                await Task.yield()
+            }
     ) {
         self.reader = reader
         self.repositoryURL = repositoryURL
@@ -375,6 +391,7 @@ public final class CommitGraphViewModel {
         )
         self.pageSize = min(max(pageSize, 1), 200)
         self.maximumPatchCharacters = max(maximumPatchCharacters, 1)
+        self.initialPresentationReleaseDelay = initialPresentationReleaseDelay
         graphLayout = layout
     }
 
@@ -458,6 +475,10 @@ public final class CommitGraphViewModel {
     }
 
     private func beginInitialPresentationLease() -> UUID {
+        initialPresentationGeneration &+= 1
+        pendingPresentationCancellation?.cancel()
+        pendingPresentationCancellation = nil
+        pendingPresentationCancellationID = nil
         let leaseID = UUID()
         initialPresentationLeases.insert(leaseID)
         return leaseID
@@ -468,9 +489,42 @@ public final class CommitGraphViewModel {
               initialPresentationLeases.isEmpty
         else { return }
 
+        scheduleDeferredPresentationCancellation()
+    }
+
+    private func scheduleDeferredPresentationCancellation() {
+        pendingPresentationCancellation?.cancel()
+        let generation = initialPresentationGeneration
+        let cancellationID = UUID()
+        let delay = initialPresentationReleaseDelay
+        let task = Task { @MainActor [weak self] in
+            await delay()
+            guard !Task.isCancelled,
+                  let self
+            else { return }
+            self.completeDeferredPresentationCancellation(
+                generation: generation,
+                cancellationID: cancellationID
+            )
+        }
+        pendingPresentationCancellation = task
+        pendingPresentationCancellationID = cancellationID
+    }
+
+    private func completeDeferredPresentationCancellation(
+        generation: UInt64,
+        cancellationID: UUID
+    ) {
+        guard initialPresentationLeases.isEmpty,
+              initialPresentationGeneration == generation,
+              pendingPresentationCancellationID == cancellationID
+        else { return }
+
         initialCacheLoadTask?.cancel()
         initialCacheLoadTask = nil
         initialCacheLoadID = nil
+        pendingPresentationCancellation = nil
+        pendingPresentationCancellationID = nil
         baseDerivationTask?.cancel()
         sceneDerivationTask?.cancel()
         baseDerivationTask = nil
