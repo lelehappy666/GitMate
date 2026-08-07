@@ -346,19 +346,28 @@ public struct CommitGraphVisibleGroup: Equatable, Identifiable, Sendable {
     public let rect: GraphRect
     public let memberCount: Int
     public let isCollapsed: Bool
+    public let origin: GraphPoint
+    public let memberHashes: Set<String>
+    public let relativePositions: [String: GraphPoint]
 
     public init(
         id: UUID,
         title: String,
         rect: GraphRect,
         memberCount: Int,
-        isCollapsed: Bool
+        isCollapsed: Bool,
+        origin: GraphPoint? = nil,
+        memberHashes: Set<String>? = nil,
+        relativePositions: [String: GraphPoint] = [:]
     ) {
         self.id = id
         self.title = title
         self.rect = rect
         self.memberCount = memberCount
         self.isCollapsed = isCollapsed
+        self.origin = origin ?? GraphPoint(x: rect.x, y: rect.y)
+        self.memberHashes = memberHashes ?? Set(relativePositions.keys)
+        self.relativePositions = relativePositions
     }
 }
 
@@ -400,15 +409,18 @@ public struct CommitGraphSceneProjection: Equatable, Sendable {
     public let nodes: [CommitGraphVisibleNode]
     public let groups: [CommitGraphVisibleGroup]
     public let edges: [CommitGraphVisibleEdge]
+    public let lineStyle: CommitGraphLineStyle
 
     public init(
         nodes: [CommitGraphVisibleNode],
         groups: [CommitGraphVisibleGroup],
-        edges: [CommitGraphVisibleEdge]
+        edges: [CommitGraphVisibleEdge],
+        lineStyle: CommitGraphLineStyle = .curve
     ) {
         self.nodes = nodes
         self.groups = groups
         self.edges = edges
+        self.lineStyle = lineStyle
     }
 }
 
@@ -439,19 +451,34 @@ enum CommitGraphSceneGeometry {
     }
 
     static func expandedGroupRect(_ group: CommitGraphGroup) -> GraphRect {
-        let points = group.relativePositions.values
+        expandedGroupRect(
+            origin: group.origin,
+            relativePositions: group.relativePositions
+        )
+    }
+
+    static func expandedGroupRect(
+        origin: GraphPoint,
+        relativePositions: [String: GraphPoint]
+    ) -> GraphRect {
+        let points = relativePositions.values
         guard let minimumX = points.map(\.x).min(),
               let maximumX = points.map(\.x).max(),
               let minimumY = points.map(\.y).min(),
               let maximumY = points.map(\.y).max()
         else {
-            return collapsedGroupRect(group)
+            return GraphRect(
+                x: origin.x,
+                y: origin.y,
+                width: collapsedGroupWidth,
+                height: collapsedGroupHeight
+            )
         }
         return GraphRect(
-            x: group.origin.x + minimumX
+            x: origin.x + minimumX
                 - nodeWidth / 2
                 - groupPadding,
-            y: group.origin.y + minimumY
+            y: origin.y + minimumY
                 - nodeHeight / 2
                 - groupHeaderHeight,
             width: maximumX - minimumX

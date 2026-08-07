@@ -44,7 +44,10 @@ public enum CommitGraphSceneProjector {
                     ? CommitGraphSceneGeometry.collapsedGroupRect(group)
                     : CommitGraphSceneGeometry.expandedGroupRect(group),
                 memberCount: group.memberHashes.count,
-                isCollapsed: group.isCollapsed
+                isCollapsed: group.isCollapsed,
+                origin: group.origin,
+                memberHashes: group.memberHashes,
+                relativePositions: group.relativePositions
             )
         }
 
@@ -139,7 +142,8 @@ public enum CommitGraphSceneProjector {
         return CommitGraphSceneProjection(
             nodes: visibleNodes,
             groups: visibleGroups,
-            edges: ordinaryEdges + collapsedEdges
+            edges: ordinaryEdges + collapsedEdges,
+            lineStyle: scene.lineStyle
         )
     }
 

@@ -18,59 +18,106 @@ public struct CommitGraphVisibleScene: Equatable, Sendable {
 
 public struct CommitGraphRenderUpdate: Equatable, Sendable {
     public let updatedNodeHashes: [String]
+    public let updatedGroupIDs: [UUID]
     public let updatedEdgeIDs: [String]
 
     public init(
         updatedNodeHashes: [String],
+        updatedGroupIDs: [UUID] = [],
         updatedEdgeIDs: [String]
     ) {
         self.updatedNodeHashes = updatedNodeHashes
+        self.updatedGroupIDs = updatedGroupIDs
         self.updatedEdgeIDs = updatedEdgeIDs
     }
 
     public static let empty = CommitGraphRenderUpdate(
         updatedNodeHashes: [],
+        updatedGroupIDs: [],
         updatedEdgeIDs: []
     )
 }
 
+public struct CommitGraphRenderQueryDiagnostics: Equatable, Sendable {
+    public let visitedBuckets: Int
+    public let nodeCandidates: Int
+    public let groupCandidates: Int
+    public let edgeCandidates: Int
+
+    public init(
+        visitedBuckets: Int,
+        nodeCandidates: Int,
+        groupCandidates: Int,
+        edgeCandidates: Int
+    ) {
+        self.visitedBuckets = visitedBuckets
+        self.nodeCandidates = nodeCandidates
+        self.groupCandidates = groupCandidates
+        self.edgeCandidates = edgeCandidates
+    }
+}
+
+public struct CommitGraphRenderQueryResult: Equatable, Sendable {
+    public let scene: CommitGraphVisibleScene
+    public let diagnostics: CommitGraphRenderQueryDiagnostics
+
+    public init(
+        scene: CommitGraphVisibleScene,
+        diagnostics: CommitGraphRenderQueryDiagnostics
+    ) {
+        self.scene = scene
+        self.diagnostics = diagnostics
+    }
+}
+
 public struct CommitGraphRenderIndex: Sendable {
     private var nodes: [CommitGraphVisibleNode]
-    private let groups: [CommitGraphVisibleGroup]
+    private var groups: [CommitGraphVisibleGroup]
     private let edges: [CommitGraphVisibleEdge]
+    private let lineStyle: CommitGraphLineStyle
     private let nodeIndexByHash: [String: Int]
-    private let incidentEdgeIndices: [String: [Int]]
+    private let groupIndexByID: [UUID: Int]
+    private let groupIndexByMemberHash: [String: Int]
+    private let incidentEdgeIndices: [CommitGraphEndpointID: [Int]]
     private var endpointRects: [CommitGraphEndpointID: GraphRect]
     private var edgeGeometry: [Int: RenderEdgeGeometry]
     private var nodeGrid: RenderSpatialGrid
-    private let groupGrid: RenderSpatialGrid
+    private var groupGrid: RenderSpatialGrid
     private var edgeGrid: RenderSpatialGrid
 
     public init(projection: CommitGraphSceneProjection) {
         nodes = projection.nodes
         groups = projection.groups
         edges = projection.edges
+        lineStyle = projection.lineStyle
         nodeIndexByHash = Dictionary(
             projection.nodes.enumerated().map { ($0.element.id, $0.offset) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        groupIndexByID = Dictionary(
+            projection.groups.enumerated().map { ($0.element.id, $0.offset) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        groupIndexByMemberHash = Dictionary(
+            projection.groups.enumerated().flatMap { index, group in
+                group.memberHashes.map { ($0, index) }
+            },
             uniquingKeysWith: { first, _ in first }
         )
         endpointRects = CommitGraphSceneProjector.endpointRects(
             in: projection
         )
 
-        var adjacency: [String: [Int]] = [:]
+        var adjacency: [CommitGraphEndpointID: [Int]] = [:]
         var geometries: [Int: RenderEdgeGeometry] = [:]
         var builtEdgeGrid = RenderSpatialGrid()
         for (index, edge) in projection.edges.enumerated() {
-            if case let .node(hash) = edge.source {
-                adjacency[hash, default: []].append(index)
-            }
-            if case let .node(hash) = edge.target {
-                adjacency[hash, default: []].append(index)
-            }
+            adjacency[edge.source, default: []].append(index)
+            adjacency[edge.target, default: []].append(index)
             guard let geometry = Self.geometry(
                 for: edge,
-                endpointRects: endpointRects
+                endpointRects: endpointRects,
+                lineStyle: projection.lineStyle
             ) else {
                 continue
             }
@@ -109,29 +156,54 @@ public struct CommitGraphRenderIndex: Sendable {
         screenSize: GraphSize,
         padding: Double = 180
     ) -> CommitGraphVisibleScene {
+        queryWithDiagnostics(
+            viewport: viewport,
+            screenSize: screenSize,
+            padding: padding
+        ).scene
+    }
+
+    public func queryWithDiagnostics(
+        viewport: GraphViewport,
+        screenSize: GraphSize,
+        padding: Double = 180
+    ) -> CommitGraphRenderQueryResult {
         let bounds = Self.visibleCanvasRect(
             viewport: viewport,
             screenSize: screenSize,
             padding: padding
         )
-        let nodeIndices = nodeGrid.candidates(in: bounds)
+        let nodeQuery = nodeGrid.candidates(in: bounds)
+        let groupQuery = groupGrid.candidates(in: bounds)
+        let edgeQuery = edgeGrid.candidates(in: bounds)
+        let nodeIndices = nodeQuery.items
             .filter {
                 CommitGraphSceneGeometry.nodeRect(
                     center: nodes[$0].position
                 ).intersects(bounds)
             }
             .sorted()
-        let groupIndices = groupGrid.candidates(in: bounds)
+        let groupIndices = groupQuery.items
             .filter { groups[$0].rect.intersects(bounds) }
             .sorted()
-        let edgeIndices = edgeGrid.candidates(in: bounds)
+        let edgeIndices = edgeQuery.items
             .filter { edgeGeometry[$0]?.intersects(bounds) == true }
             .sorted()
 
-        return CommitGraphVisibleScene(
-            nodes: nodeIndices.map { nodes[$0] },
-            groups: groupIndices.map { groups[$0] },
-            edges: edgeIndices.map { edges[$0] }
+        return CommitGraphRenderQueryResult(
+            scene: CommitGraphVisibleScene(
+                nodes: nodeIndices.map { nodes[$0] },
+                groups: groupIndices.map { groups[$0] },
+                edges: edgeIndices.map { edges[$0] }
+            ),
+            diagnostics: CommitGraphRenderQueryDiagnostics(
+                visitedBuckets: nodeQuery.visitedBuckets
+                    + groupQuery.visitedBuckets
+                    + edgeQuery.visitedBuckets,
+                nodeCandidates: nodeQuery.items.count,
+                groupCandidates: groupQuery.items.count,
+                edgeCandidates: edgeQuery.items.count
+            )
         )
     }
 
@@ -155,54 +227,169 @@ public struct CommitGraphRenderIndex: Sendable {
         endpointRects[.node(hash)] = rect
         nodeGrid.replace(item: nodeIndex, rect: rect)
 
-        let updatedEdges = incidentEdgeIndices[hash] ?? []
-        for edgeIndex in updatedEdges {
+        var updatedGroupIDs: [UUID] = []
+        var affectedEdgeIndices = Set(
+            incidentEdgeIndices[.node(hash)] ?? []
+        )
+        if let groupIndex = groupIndexByMemberHash[hash] {
+            let group = groups[groupIndex]
+            var relativePositions = group.relativePositions
+            relativePositions[hash] = GraphPoint(
+                x: position.x - group.origin.x,
+                y: position.y - group.origin.y
+            )
+            let updated = Self.updatedGroup(
+                group,
+                origin: group.origin,
+                relativePositions: relativePositions
+            )
+            groups[groupIndex] = updated
+            groupGrid.replace(item: groupIndex, rect: updated.rect)
+            endpointRects[.group(group.id)] = updated.rect
+            updatedGroupIDs = [group.id]
+            affectedEdgeIndices.formUnion(
+                incidentEdgeIndices[.group(group.id)] ?? []
+            )
+        }
+        let updatedEdges = affectedEdgeIndices.sorted()
+        updateEdges(updatedEdges)
+
+        return CommitGraphRenderUpdate(
+            updatedNodeHashes: [hash],
+            updatedGroupIDs: updatedGroupIDs,
+            updatedEdgeIDs: updatedEdges.map { edges[$0].id }
+        )
+    }
+
+    public mutating func moveGroup(
+        id: UUID,
+        to origin: GraphPoint
+    ) -> CommitGraphRenderUpdate {
+        guard origin.x.isFinite,
+              origin.y.isFinite,
+              let groupIndex = groupIndexByID[id],
+              groups[groupIndex].origin != origin
+        else {
+            return .empty
+        }
+        let group = groups[groupIndex]
+        let updated = Self.updatedGroup(
+            group,
+            origin: origin,
+            relativePositions: group.relativePositions
+        )
+        groups[groupIndex] = updated
+        groupGrid.replace(item: groupIndex, rect: updated.rect)
+        endpointRects[.group(id)] = updated.rect
+
+        var updatedNodeHashes: [String] = []
+        var affectedEdgeIndices = Set(incidentEdgeIndices[.group(id)] ?? [])
+        for hash in group.memberHashes.sorted() {
+            guard let nodeIndex = nodeIndexByHash[hash],
+                  let relative = group.relativePositions[hash]
+            else { continue }
+            let newPosition = GraphPoint(
+                x: origin.x + relative.x,
+                y: origin.y + relative.y
+            )
+            nodes[nodeIndex] = CommitGraphVisibleNode(
+                node: nodes[nodeIndex].node,
+                position: newPosition
+            )
+            let rect = CommitGraphSceneGeometry.nodeRect(center: newPosition)
+            nodeGrid.replace(item: nodeIndex, rect: rect)
+            endpointRects[.node(hash)] = rect
+            affectedEdgeIndices.formUnion(
+                incidentEdgeIndices[.node(hash)] ?? []
+            )
+            updatedNodeHashes.append(hash)
+        }
+        let updatedEdges = affectedEdgeIndices.sorted()
+        updateEdges(updatedEdges)
+        return CommitGraphRenderUpdate(
+            updatedNodeHashes: updatedNodeHashes,
+            updatedGroupIDs: [id],
+            updatedEdgeIDs: updatedEdges.map { edges[$0].id }
+        )
+    }
+
+    private mutating func updateEdges(_ indices: [Int]) {
+        for edgeIndex in indices {
             guard let geometry = Self.geometry(
                 for: edges[edgeIndex],
-                endpointRects: endpointRects
+                endpointRects: endpointRects,
+                lineStyle: lineStyle
             ) else {
                 edgeGeometry.removeValue(forKey: edgeIndex)
                 edgeGrid.remove(item: edgeIndex)
                 continue
             }
             edgeGeometry[edgeIndex] = geometry
-            edgeGrid.replace(
-                item: edgeIndex,
-                cells: geometry.indexCells
-            )
+            edgeGrid.replace(item: edgeIndex, cells: geometry.indexCells)
         }
-
-        return CommitGraphRenderUpdate(
-            updatedNodeHashes: [hash],
-            updatedEdgeIDs: updatedEdges.map { edges[$0].id }
-        )
     }
 
     private static func geometry(
         for edge: CommitGraphVisibleEdge,
-        endpointRects: [CommitGraphEndpointID: GraphRect]
+        endpointRects: [CommitGraphEndpointID: GraphRect],
+        lineStyle: CommitGraphLineStyle
     ) -> RenderEdgeGeometry? {
         guard let sourceRect = endpointRects[edge.source],
               let targetRect = endpointRects[edge.target]
         else {
             return nil
         }
-        let curve = CommitGraphPathGeometry.curve(
-            startRect: sourceRect,
-            startAnchor: edge.ports.source,
-            endRect: targetRect,
-            endAnchor: edge.ports.target
-        )
-        let orthogonal = CommitGraphPathGeometry.orthogonal(
-            startRect: sourceRect,
-            startAnchor: edge.ports.source,
-            endRect: targetRect,
-            endAnchor: edge.ports.target
-        )
+        let path: CommitGraphGeneratedPath
+        switch lineStyle {
+        case .curve:
+            path = CommitGraphPathGeometry.curve(
+                startRect: sourceRect,
+                startAnchor: edge.ports.source,
+                endRect: targetRect,
+                endAnchor: edge.ports.target
+            )
+        case .orthogonal:
+            path = CommitGraphPathGeometry.orthogonal(
+                startRect: sourceRect,
+                startAnchor: edge.ports.source,
+                endRect: targetRect,
+                endAnchor: edge.ports.target
+            )
+        }
         return RenderEdgeGeometry(
             endpointRects: [sourceRect, targetRect],
-            segments: RenderEdgeGeometry.segments(for: curve)
-                + RenderEdgeGeometry.segments(for: orthogonal)
+            path: path
+        )
+    }
+
+    private static func updatedGroup(
+        _ group: CommitGraphVisibleGroup,
+        origin: GraphPoint,
+        relativePositions: [String: GraphPoint]
+    ) -> CommitGraphVisibleGroup {
+        let rect: GraphRect
+        if group.isCollapsed {
+            rect = GraphRect(
+                x: origin.x,
+                y: origin.y,
+                width: CommitGraphSceneGeometry.collapsedGroupWidth,
+                height: CommitGraphSceneGeometry.collapsedGroupHeight
+            )
+        } else {
+            rect = CommitGraphSceneGeometry.expandedGroupRect(
+                origin: origin,
+                relativePositions: relativePositions
+            )
+        }
+        return CommitGraphVisibleGroup(
+            id: group.id,
+            title: group.title,
+            rect: rect,
+            memberCount: group.memberCount,
+            isCollapsed: group.isCollapsed,
+            origin: origin,
+            memberHashes: group.memberHashes,
+            relativePositions: relativePositions
         )
     }
 
@@ -211,20 +398,6 @@ public struct CommitGraphRenderIndex: Sendable {
         screenSize: GraphSize,
         padding: Double
     ) -> GraphRect {
-        let scale: Double
-        if viewport.scale.isFinite, viewport.scale > 0 {
-            scale = min(
-                max(
-                    viewport.scale,
-                    CommitGraphViewportProjector.minimumScale
-                ),
-                CommitGraphViewportProjector.maximumScale
-            )
-        } else {
-            scale = 1
-        }
-        let offsetX = viewport.offsetX.isFinite ? viewport.offsetX : 0
-        let offsetY = viewport.offsetY.isFinite ? viewport.offsetY : 0
         let width = screenSize.width.isFinite
             ? max(screenSize.width, 0)
             : 0
@@ -232,27 +405,37 @@ public struct CommitGraphRenderIndex: Sendable {
             ? max(screenSize.height, 0)
             : 0
         let safePadding = padding.isFinite ? max(padding, 0) : 0
-        let minimumX = (-safePadding - offsetX) / scale
-        let minimumY = (-safePadding - offsetY) / scale
-        let maximumX = (width + safePadding - offsetX) / scale
-        let maximumY = (height + safePadding - offsetY) / scale
+        let topLeft = CommitGraphViewportProjector.canvasPoint(
+            screenPoint: GraphPoint(x: -safePadding, y: -safePadding),
+            viewport: viewport
+        )
+        let bottomRight = CommitGraphViewportProjector.canvasPoint(
+            screenPoint: GraphPoint(
+                x: width + safePadding,
+                y: height + safePadding
+            ),
+            viewport: viewport
+        )
         return GraphRect(
-            x: min(minimumX, maximumX),
-            y: min(minimumY, maximumY),
-            width: abs(maximumX - minimumX),
-            height: abs(maximumY - minimumY)
+            x: min(topLeft.x, bottomRight.x),
+            y: min(topLeft.y, bottomRight.y),
+            width: abs(bottomRight.x - topLeft.x),
+            height: abs(bottomRight.y - topLeft.y)
         )
     }
 }
 
 private struct RenderEdgeGeometry: Sendable {
     let endpointRects: [GraphRect]
-    let segments: [RenderSegment]
+    let path: RenderIndexedPath
     let indexCells: Set<RenderGridCell>?
 
-    init(endpointRects: [GraphRect], segments: [RenderSegment]) {
+    init(
+        endpointRects: [GraphRect],
+        path generatedPath: CommitGraphGeneratedPath
+    ) {
         self.endpointRects = endpointRects
-        self.segments = segments
+        path = RenderIndexedPath(generatedPath)
         for level in 0..<64 {
             var cells = Set<RenderGridCell>()
             var exceededLimit = false
@@ -267,22 +450,13 @@ private struct RenderEdgeGeometry: Sendable {
                 cells.formUnion(rectCells)
             }
             if exceededLimit { continue }
-            for segment in segments {
-                guard let segmentCells = RenderSpatialGrid.cells(
-                    from: segment.start,
-                    to: segment.end,
-                    level: level
-                ) else {
-                    exceededLimit = true
-                    break
-                }
-                cells.formUnion(segmentCells)
-                if cells.count > RenderSpatialGrid.maximumCellsPerItem {
-                    exceededLimit = true
-                    break
-                }
+            guard let pathCells = path.indexCells(level: level) else {
+                continue
             }
-            if exceededLimit { continue }
+            cells.formUnion(pathCells)
+            if cells.count > RenderSpatialGrid.maximumCellsPerItem {
+                continue
+            }
             indexCells = cells
             return
         }
@@ -291,49 +465,159 @@ private struct RenderEdgeGeometry: Sendable {
 
     func intersects(_ rect: GraphRect) -> Bool {
         endpointRects.contains { $0.intersects(rect) }
-            || segments.contains { $0.intersects(rect) }
+            || path.intersects(rect)
     }
+}
 
-    static func segments(
-        for path: CommitGraphGeneratedPath
-    ) -> [RenderSegment] {
-        let points: [GraphPoint]
+private enum RenderIndexedPath: Sendable {
+    case curve(RenderBezier)
+    case orthogonal([RenderSegment])
+
+    init(_ path: CommitGraphGeneratedPath) {
         switch path {
         case let .curve(start, control1, control2, end):
-            points = (0...20).map { step in
-                cubicPoint(
+            self = .curve(
+                RenderBezier(
                     start: start,
                     control1: control1,
                     control2: control2,
-                    end: end,
-                    t: Double(step) / 20
+                    end: end
                 )
-            }
-        case let .polyline(pathPoints):
-            points = pathPoints
-        }
-        return zip(points, points.dropFirst()).map {
-            RenderSegment(start: $0.0, end: $0.1)
+            )
+        case let .polyline(points):
+            self = .orthogonal(
+                zip(points, points.dropFirst()).map {
+                    RenderSegment(start: $0.0, end: $0.1)
+                }
+            )
         }
     }
 
-    private static func cubicPoint(
-        start: GraphPoint,
-        control1: GraphPoint,
-        control2: GraphPoint,
-        end: GraphPoint,
-        t: Double
-    ) -> GraphPoint {
-        let inverse = 1 - t
-        return GraphPoint(
-            x: inverse * inverse * inverse * start.x
-                + 3 * inverse * inverse * t * control1.x
-                + 3 * inverse * t * t * control2.x
-                + t * t * t * end.x,
-            y: inverse * inverse * inverse * start.y
-                + 3 * inverse * inverse * t * control1.y
-                + 3 * inverse * t * t * control2.y
-                + t * t * t * end.y
+    func indexCells(level: Int) -> Set<RenderGridCell>? {
+        switch self {
+        case let .curve(curve):
+            return RenderSpatialGrid.cells(
+                for: curve.controlBounds,
+                level: level
+            )
+        case let .orthogonal(segments):
+            var cells = Set<RenderGridCell>()
+            for segment in segments {
+                guard let segmentCells = RenderSpatialGrid.cells(
+                    from: segment.start,
+                    to: segment.end,
+                    level: level
+                ) else {
+                    return nil
+                }
+                cells.formUnion(segmentCells)
+                if cells.count > RenderSpatialGrid.maximumCellsPerItem {
+                    return nil
+                }
+            }
+            return cells
+        }
+    }
+
+    func intersects(_ rect: GraphRect) -> Bool {
+        switch self {
+        case let .curve(curve):
+            return curve.intersects(rect)
+        case let .orthogonal(segments):
+            return segments.contains { $0.intersects(rect) }
+        }
+    }
+}
+
+private struct RenderBezier: Sendable {
+    let start: GraphPoint
+    let control1: GraphPoint
+    let control2: GraphPoint
+    let end: GraphPoint
+
+    var controlBounds: GraphRect {
+        let xs = [start.x, control1.x, control2.x, end.x]
+        let ys = [start.y, control1.y, control2.y, end.y]
+        let minimumX = xs.min() ?? 0
+        let maximumX = xs.max() ?? minimumX
+        let minimumY = ys.min() ?? 0
+        let maximumY = ys.max() ?? minimumY
+        return GraphRect(
+            x: minimumX,
+            y: minimumY,
+            width: maximumX - minimumX,
+            height: maximumY - minimumY
+        )
+    }
+
+    func intersects(_ rect: GraphRect) -> Bool {
+        intersects(rect, depth: 0)
+    }
+
+    private func intersects(_ rect: GraphRect, depth: Int) -> Bool {
+        let bounds = controlBounds
+        guard bounds.intersects(rect) else { return false }
+        if rect.contains(start) || rect.contains(end) {
+            return true
+        }
+        if depth >= 16 || isFlat(tolerance: 0.35) {
+            return true
+        }
+        let halves = split()
+        return halves.0.intersects(rect, depth: depth + 1)
+            || halves.1.intersects(rect, depth: depth + 1)
+    }
+
+    private func isFlat(tolerance: Double) -> Bool {
+        let baseline = hypot(end.x - start.x, end.y - start.y)
+        if baseline <= tolerance {
+            return max(
+                hypot(control1.x - start.x, control1.y - start.y),
+                hypot(control2.x - start.x, control2.y - start.y)
+            ) <= tolerance
+        }
+        let firstDistance = abs(
+            (end.y - start.y) * control1.x
+                - (end.x - start.x) * control1.y
+                + end.x * start.y
+                - end.y * start.x
+        ) / baseline
+        let secondDistance = abs(
+            (end.y - start.y) * control2.x
+                - (end.x - start.x) * control2.y
+                + end.x * start.y
+                - end.y * start.x
+        ) / baseline
+        return max(firstDistance, secondDistance) <= tolerance
+    }
+
+    private func split() -> (RenderBezier, RenderBezier) {
+        let first = midpoint(start, control1)
+        let second = midpoint(control1, control2)
+        let third = midpoint(control2, end)
+        let leftControl2 = midpoint(first, second)
+        let rightControl1 = midpoint(second, third)
+        let center = midpoint(leftControl2, rightControl1)
+        return (
+            RenderBezier(
+                start: start,
+                control1: first,
+                control2: leftControl2,
+                end: center
+            ),
+            RenderBezier(
+                start: center,
+                control1: rightControl1,
+                control2: third,
+                end: end
+            )
+        )
+    }
+
+    private func midpoint(_ first: GraphPoint, _ second: GraphPoint) -> GraphPoint {
+        GraphPoint(
+            x: (first.x + second.x) / 2,
+            y: (first.y + second.y) / 2
         )
     }
 }
@@ -417,15 +701,249 @@ private struct RenderGridCell: Hashable, Sendable {
     let y: Int
 }
 
+private struct RenderSpatialQuery: Sendable {
+    let items: Set<Int>
+    let visitedBuckets: Int
+}
+
+private indirect enum RenderTreap<Value: Sendable>: Sendable {
+    case empty
+    case node(
+        key: Int,
+        priority: UInt64,
+        value: Value,
+        left: RenderTreap<Value>,
+        right: RenderTreap<Value>
+    )
+
+    var isEmpty: Bool {
+        if case .empty = self { return true }
+        return false
+    }
+
+    func value(for searchedKey: Int) -> Value? {
+        switch self {
+        case .empty:
+            return nil
+        case let .node(key, _, value, left, right):
+            if searchedKey == key { return value }
+            return searchedKey < key
+                ? left.value(for: searchedKey)
+                : right.value(for: searchedKey)
+        }
+    }
+
+    func setting(_ newValue: Value, for newKey: Int) -> Self {
+        switch self {
+        case .empty:
+            return .node(
+                key: newKey,
+                priority: Self.priority(for: newKey),
+                value: newValue,
+                left: .empty,
+                right: .empty
+            )
+        case let .node(key, priority, value, left, right):
+            if newKey == key {
+                return .node(
+                    key: key,
+                    priority: priority,
+                    value: newValue,
+                    left: left,
+                    right: right
+                )
+            }
+            if newKey < key {
+                let updatedLeft = left.setting(newValue, for: newKey)
+                let updated = Self.node(
+                    key: key,
+                    priority: priority,
+                    value: value,
+                    left: updatedLeft,
+                    right: right
+                )
+                if updatedLeft.rootPriority > priority {
+                    return Self.rotatedRight(updated)
+                }
+                return updated
+            }
+            let updatedRight = right.setting(newValue, for: newKey)
+            let updated = Self.node(
+                key: key,
+                priority: priority,
+                value: value,
+                left: left,
+                right: updatedRight
+            )
+            if updatedRight.rootPriority > priority {
+                return Self.rotatedLeft(updated)
+            }
+            return updated
+        }
+    }
+
+    func removing(_ removedKey: Int) -> Self {
+        switch self {
+        case .empty:
+            return .empty
+        case let .node(key, priority, value, left, right):
+            if removedKey == key {
+                return Self.merged(left, right)
+            }
+            if removedKey < key {
+                return .node(
+                    key: key,
+                    priority: priority,
+                    value: value,
+                    left: left.removing(removedKey),
+                    right: right
+                )
+            }
+            return .node(
+                key: key,
+                priority: priority,
+                value: value,
+                left: left,
+                right: right.removing(removedKey)
+            )
+        }
+    }
+
+    func forEach(
+        minimumKey: Int,
+        maximumKey: Int,
+        _ body: (Int, Value) -> Void
+    ) {
+        switch self {
+        case .empty:
+            return
+        case let .node(key, _, value, left, right):
+            if key > minimumKey {
+                left.forEach(
+                    minimumKey: minimumKey,
+                    maximumKey: maximumKey,
+                    body
+                )
+            }
+            if key >= minimumKey, key <= maximumKey {
+                body(key, value)
+            }
+            if key < maximumKey {
+                right.forEach(
+                    minimumKey: minimumKey,
+                    maximumKey: maximumKey,
+                    body
+                )
+            }
+        }
+    }
+
+    private var rootPriority: UInt64 {
+        if case let .node(_, priority, _, _, _) = self {
+            return priority
+        }
+        return 0
+    }
+
+    private static func priority(for key: Int) -> UInt64 {
+        var value = UInt64(bitPattern: Int64(truncatingIfNeeded: key))
+            &+ 0x9E37_79B9_7F4A_7C15
+        value = (value ^ (value >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        value = (value ^ (value >> 27)) &* 0x94D0_49BB_1331_11EB
+        return value ^ (value >> 31)
+    }
+
+    private static func rotatedRight(_ tree: Self) -> Self {
+        guard case let .node(
+            key,
+            priority,
+            value,
+            .node(leftKey, leftPriority, leftValue, leftLeft, leftRight),
+            right
+        ) = tree else { return tree }
+        return .node(
+            key: leftKey,
+            priority: leftPriority,
+            value: leftValue,
+            left: leftLeft,
+            right: .node(
+                key: key,
+                priority: priority,
+                value: value,
+                left: leftRight,
+                right: right
+            )
+        )
+    }
+
+    private static func rotatedLeft(_ tree: Self) -> Self {
+        guard case let .node(
+            key,
+            priority,
+            value,
+            left,
+            .node(rightKey, rightPriority, rightValue, rightLeft, rightRight)
+        ) = tree else { return tree }
+        return .node(
+            key: rightKey,
+            priority: rightPriority,
+            value: rightValue,
+            left: .node(
+                key: key,
+                priority: priority,
+                value: value,
+                left: left,
+                right: rightLeft
+            ),
+            right: rightRight
+        )
+    }
+
+    private static func merged(_ left: Self, _ right: Self) -> Self {
+        if left.isEmpty { return right }
+        if right.isEmpty { return left }
+        if left.rootPriority > right.rootPriority {
+            guard case let .node(
+                key,
+                priority,
+                value,
+                leftLeft,
+                leftRight
+            ) = left else { return right }
+            return .node(
+                key: key,
+                priority: priority,
+                value: value,
+                left: leftLeft,
+                right: merged(leftRight, right)
+            )
+        }
+        guard case let .node(
+            key,
+            priority,
+            value,
+            rightLeft,
+            rightRight
+        ) = right else { return left }
+        return .node(
+            key: key,
+            priority: priority,
+            value: value,
+            left: merged(left, rightLeft),
+            right: rightRight
+        )
+    }
+}
+
 private struct RenderSpatialGrid: Sendable {
     static let baseCellSize = 512.0
     static let maximumCellsPerItem = 512
 
-    private var buckets: [RenderGridCell: Set<Int>] = [:]
+    private typealias ColumnTree = RenderTreap<Set<Int>>
+    private typealias RowTree = RenderTreap<ColumnTree>
+
+    private var levels: [Int: RowTree] = [:]
     private var cellsByItem: [Int: Set<RenderGridCell>] = [:]
-    private var bucketCountByLevel: [Int: Int] = [:]
-    private var activeLevels: Set<Int> = []
-    private var overflowItems: Set<Int> = []
 
     mutating func replace(item: Int, rect: GraphRect) {
         replace(item: item, cells: Self.adaptiveCells(for: rect))
@@ -436,77 +954,67 @@ private struct RenderSpatialGrid: Sendable {
         cells: Set<RenderGridCell>?
     ) {
         remove(item: item)
-        guard let cells else {
-            overflowItems.insert(item)
-            return
-        }
+        guard let cells else { return }
         cellsByItem[item] = cells
         for cell in cells {
-            if buckets[cell] == nil {
-                bucketCountByLevel[cell.level, default: 0] += 1
-                activeLevels.insert(cell.level)
-            }
-            buckets[cell, default: []].insert(item)
+            var rows = levels[cell.level] ?? .empty
+            var columns = rows.value(for: cell.y) ?? .empty
+            var items = columns.value(for: cell.x) ?? []
+            items.insert(item)
+            columns = columns.setting(items, for: cell.x)
+            rows = rows.setting(columns, for: cell.y)
+            levels[cell.level] = rows
         }
     }
 
     mutating func remove(item: Int) {
-        overflowItems.remove(item)
         guard let cells = cellsByItem.removeValue(forKey: item) else {
             return
         }
         for cell in cells {
-            buckets[cell]?.remove(item)
-            if buckets[cell]?.isEmpty == true {
-                buckets.removeValue(forKey: cell)
-                let remaining = max(
-                    (bucketCountByLevel[cell.level] ?? 1) - 1,
-                    0
-                )
-                if remaining == 0 {
-                    bucketCountByLevel.removeValue(forKey: cell.level)
-                    activeLevels.remove(cell.level)
-                } else {
-                    bucketCountByLevel[cell.level] = remaining
-                }
+            guard var rows = levels[cell.level],
+                  var columns = rows.value(for: cell.y),
+                  var items = columns.value(for: cell.x)
+            else { continue }
+            items.remove(item)
+            columns = items.isEmpty
+                ? columns.removing(cell.x)
+                : columns.setting(items, for: cell.x)
+            rows = columns.isEmpty
+                ? rows.removing(cell.y)
+                : rows.setting(columns, for: cell.y)
+            if rows.isEmpty {
+                levels.removeValue(forKey: cell.level)
+            } else {
+                levels[cell.level] = rows
             }
         }
     }
 
-    func candidates(in rect: GraphRect) -> Set<Int> {
-        var result = overflowItems
-        for level in activeLevels {
-            guard let range = Self.cellRange(for: rect, level: level),
-                  let requestedCellCount = Self.cellCount(for: range)
-            else {
-                for (cell, items) in buckets where cell.level == level {
-                    result.formUnion(items)
-                }
+    func candidates(in rect: GraphRect) -> RenderSpatialQuery {
+        var result = Set<Int>()
+        var visitedBuckets = 0
+        for (level, rows) in levels {
+            guard let range = Self.cellRange(for: rect, level: level) else {
                 continue
             }
-            let levelBucketCount = bucketCountByLevel[level] ?? 0
-            if requestedCellCount > max(levelBucketCount * 2, 4_096) {
-                for (cell, items) in buckets
-                where cell.level == level
-                    && cell.x >= range.minimumX
-                    && cell.x <= range.maximumX
-                    && cell.y >= range.minimumY
-                    && cell.y <= range.maximumY {
+            rows.forEach(
+                minimumKey: range.minimumY,
+                maximumKey: range.maximumY
+            ) { _, columns in
+                columns.forEach(
+                    minimumKey: range.minimumX,
+                    maximumKey: range.maximumX
+                ) { _, items in
+                    visitedBuckets += 1
                     result.formUnion(items)
-                }
-                continue
-            }
-            for y in range.minimumY...range.maximumY {
-                for x in range.minimumX...range.maximumX {
-                    result.formUnion(
-                        buckets[
-                            RenderGridCell(level: level, x: x, y: y)
-                        ] ?? []
-                    )
                 }
             }
         }
-        return result
+        return RenderSpatialQuery(
+            items: result,
+            visitedBuckets: visitedBuckets
+        )
     }
 
     static func cells(
