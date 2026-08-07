@@ -13,90 +13,79 @@ public struct CommitGraphLayout: Sendable {
     }
 
     public func layout(
+        snapshot: CommitGraphSnapshot
+    ) -> CommitGraphLayoutResult {
+        let topology = CommitGraphLaneTopology.build(snapshot: snapshot)
+        return layout(
+            topology: topology,
+            orderedRows: Array(topology.rowsNewestFirst.reversed()),
+            preserving: nil
+        )
+    }
+
+    public func layout(
         page: CommitGraphPage,
         preserving previous: CommitGraphLayoutResult? = nil
     ) -> CommitGraphLayoutResult {
-        let commits = uniqueCommits(page.commits)
+        let pageOrder = uniqueCommits(page.commits)
+        let commits = canonicalNewestFirst(pageOrder)
+        let snapshot = CommitGraphSnapshot(
+            repositoryPath: "",
+            fingerprint: legacyFingerprint(commits: commits),
+            commitsNewestFirst: commits,
+            expectedCommitCount: commits.count,
+            shallowBoundaryParentHashes: [],
+            generatedAt: Date(timeIntervalSince1970: 0)
+        )
+        let topology = CommitGraphLaneTopology.build(snapshot: snapshot)
+        return layout(
+            topology: topology,
+            orderedRows: pageOrder.compactMap {
+                topology.row(hash: $0.fullHash)
+            },
+            preserving: previous
+        )
+    }
+
+    private func layout(
+        topology: CommitGraphLaneTopology,
+        orderedRows: [CommitGraphLaneRow],
+        preserving previous: CommitGraphLayoutResult?
+    ) -> CommitGraphLayoutResult {
         let frozenColumns = Dictionary(
             uniqueKeysWithValues: (previous?.nodes ?? []).map {
                 ($0.hash, $0.column)
             }
         )
-        let childrenByParent = Dictionary(
-            grouping: commits.flatMap { commit in
-                commit.parentHashes.map {
-                    (parentHash: $0, childHash: commit.fullHash)
-                }
-            },
-            by: \.parentHash
-        )
-        var assignedColumns = frozenColumns
-        var nodes: [CommitGraphNode] = []
-        var edges: [CommitGraphEdge] = []
-
-        for (row, commit) in commits.enumerated() {
-            let occupiedColumns = Set(
-                assignedColumns
-                    .filter { $0.key != commit.fullHash }
-                    .map(\.value)
+        let nodes = orderedRows.enumerated().map { rowIndex, laneRow in
+            let commit = laneRow.commit
+            let column = frozenColumns[commit.fullHash] ?? laneRow.lane
+            return CommitGraphNode(
+                hash: commit.fullHash,
+                shortHash: commit.shortHash,
+                subject: commit.subject,
+                authorName: commit.authorName,
+                authorEmail: commit.authorEmail,
+                authoredAt: commit.authoredAt,
+                decorations: commit.decorations,
+                column: column,
+                row: rowIndex,
+                colorIndex: laneRow.colorIndex,
+                x: 150 + Double(column) * horizontalSpacing,
+                y: 82 + Double(rowIndex) * verticalSpacing
             )
-            let column: Int
-            if let frozenColumn = frozenColumns[commit.fullHash] {
-                column = frozenColumn
-            } else if let firstParent = commit.parentHashes.first,
-                      let parentColumn = assignedColumns[firstParent] {
-                let isMerge = commit.parentHashes.count > 1
-                let isFirstChild = childrenByParent[firstParent]?.first?.childHash
-                    == commit.fullHash
-                column = isMerge || isFirstChild
-                    ? parentColumn
-                    : nearestFreeColumn(
-                        to: parentColumn,
-                        occupied: occupiedColumns,
-                        seed: stableHash(commit.fullHash)
-                    )
-            } else {
-                column = nextFreeColumn(occupied: occupiedColumns)
-            }
-            assignedColumns[commit.fullHash] = column
-
-            let branchKey = commit.decorations.first ?? commit.fullHash
-            nodes.append(
-                CommitGraphNode(
-                    hash: commit.fullHash,
-                    shortHash: commit.shortHash,
-                    subject: commit.subject,
-                    authorName: commit.authorName,
-                    authorEmail: commit.authorEmail,
-                    authoredAt: commit.authoredAt,
-                    decorations: commit.decorations,
-                    column: column,
-                    row: row,
-                    colorIndex: stableHash(branchKey) % 6,
-                    x: 150 + Double(column) * horizontalSpacing,
-                    y: 82 + Double(row) * verticalSpacing
-                )
-            )
-
-            for (parentIndex, parentHash) in commit.parentHashes.enumerated() {
-                let kind: CommitGraphEdgeKind = parentIndex == 0
-                    ? .parent
-                    : .merge
-                let colorKey = parentIndex == 0
-                    ? branchKey
-                    : parentHash
-                edges.append(
-                    CommitGraphEdge(
-                        id: "\(commit.fullHash)->\(parentHash)#\(parentIndex)",
-                        childHash: commit.fullHash,
-                        parentHash: parentHash,
-                        kind: kind,
-                        colorIndex: stableHash(colorKey) % 6
-                    )
+        }
+        let edges = topology.rowsNewestFirst.flatMap { row in
+            row.connections.map { connection in
+                CommitGraphEdge(
+                    id: connection.id,
+                    childHash: connection.childHash,
+                    parentHash: connection.parentHash,
+                    kind: connection.kind,
+                    colorIndex: connection.colorIndex
                 )
             }
         }
-
         let maximumColumn = nodes.map(\.column).max() ?? 0
         return CommitGraphLayoutResult(
             nodes: nodes,
@@ -112,45 +101,83 @@ public struct CommitGraphLayout: Sendable {
         )
     }
 
+    private func canonicalNewestFirst(_ commits: [GitCommit]) -> [GitCommit] {
+        let unique = uniqueCommits(commits)
+        let indexByHash = Dictionary(
+            unique.enumerated().map { ($0.element.fullHash, $0.offset) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var newestFirstViolations = 0
+        var oldestFirstViolations = 0
+        for commit in unique {
+            guard let childIndex = indexByHash[commit.fullHash] else { continue }
+            for parentHash in commit.parentHashes {
+                guard let parentIndex = indexByHash[parentHash] else { continue }
+                if childIndex > parentIndex {
+                    newestFirstViolations += 1
+                } else if childIndex < parentIndex {
+                    oldestFirstViolations += 1
+                }
+            }
+        }
+        return newestFirstViolations > oldestFirstViolations
+            ? Array(unique.reversed())
+            : unique
+    }
+
     private func uniqueCommits(_ commits: [GitCommit]) -> [GitCommit] {
         var seen: Set<String> = []
         return commits.filter { seen.insert($0.fullHash).inserted }
     }
 
-    private func nearestFreeColumn(
-        to preferred: Int,
-        occupied: Set<Int>,
-        seed: Int
-    ) -> Int {
-        guard occupied.contains(preferred) else {
-            return preferred
-        }
-        for distance in 1...max(occupied.count + 1, 1) {
-            let candidates = seed.isMultiple(of: 2)
-                ? [preferred + distance, max(preferred - distance, 0)]
-                : [max(preferred - distance, 0), preferred + distance]
-            if let result = candidates.first(where: {
-                $0 >= 0 && !occupied.contains($0)
-            }) {
-                return result
+    private func legacyFingerprint(
+        commits: [GitCommit]
+    ) -> CommitGraphReferenceFingerprint {
+        var referencesByName: [String: CommitGraphReference] = [:]
+        var headName: String?
+        var headHash: String?
+
+        for commit in commits {
+            for decoration in commit.decorations {
+                if decoration.hasPrefix("HEAD -> ") {
+                    let name = String(decoration.dropFirst("HEAD -> ".count))
+                    guard !name.isEmpty else { continue }
+                    headName = name
+                    headHash = commit.fullHash
+                    let refName = "refs/heads/\(name)"
+                    referencesByName[refName] = CommitGraphReference(
+                        name: refName,
+                        targetHash: commit.fullHash,
+                        kind: .localBranch
+                    )
+                } else if decoration.hasPrefix("tag:")
+                    || decoration == "HEAD" {
+                    continue
+                } else if decoration.contains("/") {
+                    let refName = "refs/remotes/\(decoration)"
+                    referencesByName[refName] = CommitGraphReference(
+                        name: refName,
+                        targetHash: commit.fullHash,
+                        kind: .remoteBranch
+                    )
+                } else {
+                    let refName = "refs/heads/\(decoration)"
+                    referencesByName[refName] = CommitGraphReference(
+                        name: refName,
+                        targetHash: commit.fullHash,
+                        kind: .localBranch
+                    )
+                }
             }
         }
-        return (occupied.max() ?? preferred) + 1
-    }
-
-    private func nextFreeColumn(occupied: Set<Int>) -> Int {
-        for column in 0...(occupied.count + 1) where !occupied.contains(column) {
-            return column
+        if headHash == nil {
+            headHash = commits.first?.fullHash
         }
-        return (occupied.max() ?? -1) + 1
-    }
-
-    private func stableHash(_ value: String) -> Int {
-        var hash: UInt64 = 14_695_981_039_346_656_037
-        for byte in value.utf8 {
-            hash ^= UInt64(byte)
-            hash &*= 1_099_511_628_211
-        }
-        return Int(hash % UInt64(Int.max))
+        return CommitGraphReferenceFingerprint(
+            references: referencesByName.values.sorted { $0.name < $1.name },
+            headName: headName,
+            headHash: headHash,
+            isShallow: false
+        )
     }
 }

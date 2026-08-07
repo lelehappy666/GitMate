@@ -103,8 +103,59 @@ let commitGraphLayoutTests = [
             featureNode.column,
             "合并提交必须继承第一父提交泳道"
         )
+    },
+    TestCase("画布布局反转共享拓扑行且不改变泳道") {
+        let snapshot = layoutBranchingSnapshot()
+        let topology = CommitGraphLaneTopology.build(snapshot: snapshot)
+
+        let canvas = CommitGraphLayout().layout(snapshot: snapshot)
+
+        try expectEqual(
+            canvas.nodes.map(\.hash),
+            ["root", "main", "feature", "merge"],
+            "画布必须最早提交在上"
+        )
+        try expectEqual(
+            canvas.node(hash: "merge")?.column,
+            topology.row(hash: "merge")?.lane,
+            "画布和传统布局必须共用稳定泳道"
+        )
+        try expectEqual(canvas.node(hash: "merge")?.column, 0, "主分支必须保持核心泳道")
     }
 ]
+
+private func layoutBranchingSnapshot() -> CommitGraphSnapshot {
+    let commits = [
+        graphCommit(hash: "merge", parents: ["main", "feature"]),
+        graphCommit(hash: "feature", parents: ["root"]),
+        graphCommit(hash: "main", parents: ["root"]),
+        graphCommit(hash: "root")
+    ]
+    return CommitGraphSnapshot(
+        repositoryPath: "/repo",
+        fingerprint: CommitGraphReferenceFingerprint(
+            references: [
+                CommitGraphReference(
+                    name: "refs/heads/main",
+                    targetHash: "merge",
+                    kind: .localBranch
+                ),
+                CommitGraphReference(
+                    name: "refs/heads/feature/sync",
+                    targetHash: "feature",
+                    kind: .localBranch
+                )
+            ],
+            headName: "main",
+            headHash: "merge",
+            isShallow: false
+        ),
+        commitsNewestFirst: commits,
+        expectedCommitCount: commits.count,
+        shallowBoundaryParentHashes: [],
+        generatedAt: Date(timeIntervalSince1970: 1)
+    )
+}
 
 private func graphCommit(
     hash: String,
