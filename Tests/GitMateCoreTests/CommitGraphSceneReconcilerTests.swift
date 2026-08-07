@@ -205,6 +205,73 @@ let commitGraphSceneReconcilerTests = [
             [stableKey: ports],
             "聚合键未变化的端口必须复用，组内伪边必须清理"
         )
+    },
+    TestCase("刷新新增跨组边时创建端口且不改变已有端口") {
+        let groupID = UUID(uuidString: "12121212-1212-1212-1212-121212121212")!
+        let group = CommitGraphGroup(
+            id: groupID,
+            title: "功能组",
+            memberHashes: ["a", "b"],
+            source: .manual,
+            origin: GraphPoint(x: 100, y: 100),
+            relativePositions: [
+                "a": GraphPoint(x: 20, y: 20),
+                "b": GraphPoint(x: 40, y: 40)
+            ],
+            isCollapsed: true
+        )
+        let stableKey = CollapsedEdgeKey(
+            groupID: groupID,
+            externalNodeID: "c",
+            direction: .leavingGroup
+        )
+        let newKey = CollapsedEdgeKey(
+            groupID: groupID,
+            externalNodeID: "d",
+            direction: .leavingGroup
+        )
+        let stablePorts = CommitGraphEdgePorts(
+            source: PortAnchor(side: .bottom, offset: 0.18),
+            target: PortAnchor(side: .top, offset: 0.82)
+        )
+        let oldSnapshot = reconcileSnapshot(
+            commits: [
+                reconcileCommit(hash: "a", parents: ["c"]),
+                reconcileCommit(hash: "b"),
+                reconcileCommit(hash: "c")
+            ]
+        )
+        let newSnapshot = reconcileSnapshot(
+            commits: [
+                reconcileCommit(hash: "a", parents: ["c", "d"]),
+                reconcileCommit(hash: "b"),
+                reconcileCommit(hash: "c"),
+                reconcileCommit(hash: "d")
+            ]
+        )
+
+        let reconciled = CommitGraphSceneReconciler.reconcile(
+            scene: CommitGraphSceneState(
+                groups: [group],
+                boundaryPorts: [stableKey: stablePorts]
+            ),
+            oldSnapshot: oldSnapshot,
+            newSnapshot: newSnapshot,
+            defaultPositions: [
+                "c": GraphPoint(x: 420, y: 220),
+                "d": GraphPoint(x: 520, y: 320)
+            ]
+        )
+
+        try expectEqual(
+            reconciled.boundaryPorts[stableKey],
+            stablePorts,
+            "聚合键未变化时 side 和 offset 必须原样复用"
+        )
+        try expect(
+            reconciled.boundaryPorts[newKey] != nil,
+            "新增跨组边必须创建稳定端口"
+        )
     }
 ]
 

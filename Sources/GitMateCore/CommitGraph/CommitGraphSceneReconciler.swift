@@ -68,17 +68,25 @@ public enum CommitGraphSceneReconciler {
                 }
             }
         )
-        let groupIDs = Set(reconciledGroups.map(\.id))
-        let validBoundaryKeys = validBoundaryKeys(
+        let boundaryRelations = boundaryRelations(
             snapshot: newSnapshot,
-            groups: reconciledGroups
+            groups: reconciledGroups,
+            nodePositions: nodePositions
         )
         let edgePorts = scene.edgePorts.filter {
             validEdgeIDs.contains($0.key)
         }
-        let boundaryPorts = scene.boundaryPorts.filter { key, _ in
-            groupIDs.contains(key.groupID)
-                && validBoundaryKeys.contains(key)
+        var boundaryPorts: [CollapsedEdgeKey: CommitGraphEdgePorts] = [:]
+        for (key, relation) in boundaryRelations {
+            if let existing = scene.boundaryPorts[key] {
+                boundaryPorts[key] = existing
+            } else if let sourceRect = relation.sourceRect,
+                      let targetRect = relation.targetRect {
+                boundaryPorts[key] = CommitGraphPortAllocator.ports(
+                    sourceRect: sourceRect,
+                    targetRect: targetRect
+                )
+            }
         }
 
         return CommitGraphSceneState(
@@ -92,17 +100,26 @@ public enum CommitGraphSceneReconciler {
         )
     }
 
-    private static func validBoundaryKeys(
+    private struct BoundaryRelation {
+        let sourceRect: GraphRect?
+        let targetRect: GraphRect?
+    }
+
+    private static func boundaryRelations(
         snapshot: CommitGraphSnapshot,
-        groups: [CommitGraphGroup]
-    ) -> Set<CollapsedEdgeKey> {
+        groups: [CommitGraphGroup],
+        nodePositions: [String: GraphPoint]
+    ) -> [CollapsedEdgeKey: BoundaryRelation] {
         let membership = Dictionary(
             groups.flatMap { group in
                 group.memberHashes.map { ($0, group.id) }
             },
             uniquingKeysWith: { first, _ in first }
         )
-        var keys: Set<CollapsedEdgeKey> = []
+        let groupsByID = Dictionary(
+            uniqueKeysWithValues: groups.map { ($0.id, $0) }
+        )
+        var relations: [CollapsedEdgeKey: BoundaryRelation] = [:]
 
         for commit in snapshot.commitsNewestFirst {
             let childGroupID = membership[commit.fullHash]
@@ -110,35 +127,77 @@ public enum CommitGraphSceneReconciler {
                 let parentGroupID = membership[parentHash]
                 guard childGroupID != parentGroupID else { continue }
 
-                if let childGroupID {
-                    keys.insert(
-                        CollapsedEdgeKey(
+                if let childGroupID,
+                   let childGroup = groupsByID[childGroupID] {
+                    let parentPosition = position(
+                        hash: parentHash,
+                        groupsByID: groupsByID,
+                        membership: membership,
+                        nodePositions: nodePositions
+                    )
+                    let key = CollapsedEdgeKey(
+                        groupID: childGroupID,
+                        externalNodeID: parentHash,
+                        direction: .leavingGroup
+                    )
+                    relations[key] = BoundaryRelation(
+                        sourceRect: CommitGraphSceneGeometry
+                            .collapsedGroupRect(childGroup),
+                        targetRect: parentPosition.map {
+                            CommitGraphSceneGeometry.nodeRect(center: $0)
+                        }
+                    )
+                    if let parentGroupID,
+                       let parentGroup = groupsByID[parentGroupID] {
+                        let key = CollapsedEdgeKey(
                             groupID: childGroupID,
-                            externalNodeID: parentHash,
+                            externalNodeID: "group:\(parentGroupID.uuidString)",
                             direction: .leavingGroup
                         )
-                    )
-                    if let parentGroupID {
-                        keys.insert(
-                            CollapsedEdgeKey(
-                                groupID: childGroupID,
-                                externalNodeID: "group:\(parentGroupID.uuidString)",
-                                direction: .leavingGroup
-                            )
+                        relations[key] = BoundaryRelation(
+                            sourceRect: CommitGraphSceneGeometry
+                                .collapsedGroupRect(childGroup),
+                            targetRect: CommitGraphSceneGeometry
+                                .collapsedGroupRect(parentGroup)
                         )
                     }
                 }
-                if let parentGroupID {
-                    keys.insert(
-                        CollapsedEdgeKey(
-                            groupID: parentGroupID,
-                            externalNodeID: commit.fullHash,
-                            direction: .enteringGroup
-                        )
+                if let parentGroupID,
+                   let parentGroup = groupsByID[parentGroupID] {
+                    let childPosition = position(
+                        hash: commit.fullHash,
+                        groupsByID: groupsByID,
+                        membership: membership,
+                        nodePositions: nodePositions
+                    )
+                    let key = CollapsedEdgeKey(
+                        groupID: parentGroupID,
+                        externalNodeID: commit.fullHash,
+                        direction: .enteringGroup
+                    )
+                    relations[key] = BoundaryRelation(
+                        sourceRect: childPosition.map {
+                            CommitGraphSceneGeometry.nodeRect(center: $0)
+                        },
+                        targetRect: CommitGraphSceneGeometry
+                            .collapsedGroupRect(parentGroup)
                     )
                 }
             }
         }
-        return keys
+        return relations
+    }
+
+    private static func position(
+        hash: String,
+        groupsByID: [UUID: CommitGraphGroup],
+        membership: [String: UUID],
+        nodePositions: [String: GraphPoint]
+    ) -> GraphPoint? {
+        if let groupID = membership[hash],
+           let group = groupsByID[groupID] {
+            return group.absolutePosition(for: hash)
+        }
+        return nodePositions[hash]
     }
 }

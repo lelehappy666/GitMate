@@ -190,6 +190,65 @@ let commitGraphRefreshCoordinatorTests = [
         }
         try expectEqual(resultB.snapshot, snapshotB, "仓库 B 刷新不得受影响")
         try expectEqual(resultA.snapshot, snapshotA, "仓库 A 新刷新必须完成")
+    },
+    TestCase("旧或已取消的挂起保存必须在新快照之前串行结束") {
+        let snapshotA = refreshSnapshot(hash: "a")
+        let snapshotB = refreshSnapshot(hash: "b")
+        let reader = CountingSnapshotReader(
+            fingerprint: refreshFingerprint(hash: "requested"),
+            snapshots: [snapshotA, snapshotB]
+        )
+        let store = ControlledSaveSnapshotStore()
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: reader,
+            store: store
+        )
+        let repositoryURL = URL(filePath: "/repo")
+        let first = Task {
+            try await coordinator.refresh(
+                repositoryID: 30,
+                repositoryURL: repositoryURL
+            )
+        }
+        await store.waitForSave(1)
+        first.cancel()
+        let second = Task {
+            try await coordinator.refresh(
+                repositoryID: 30,
+                repositoryURL: repositoryURL
+            )
+        }
+        await reader.waitForSnapshotCalls(2)
+        for _ in 0..<100 {
+            await Task.yield()
+        }
+
+        let savesBeforeOldCompletion = await store.startedSaveCount()
+        if savesBeforeOldCompletion != 1 {
+            await store.completeSave(1)
+            await store.completeSave(2)
+            _ = try? await first.value
+            _ = try? await second.value
+        }
+        try expectEqual(
+            savesBeforeOldCompletion,
+            1,
+            "旧保存未完成时新保存不得进入持久层"
+        )
+        await store.completeSave(1)
+        await store.waitForSave(2)
+        await store.completeSave(2)
+        let secondResult = try await second.value
+        do {
+            _ = try await first.value
+            throw TestFailure(description: "旧刷新必须按代次失效")
+        } catch is CancellationError {
+            // 预期路径。
+        }
+
+        let saved = await store.currentSnapshot(repositoryID: 30)
+        try expectEqual(secondResult.snapshot, snapshotB, "新刷新必须完成")
+        try expectEqual(saved, snapshotB, "旧保存恢复后不得覆盖新快照")
     }
 ]
 
@@ -197,6 +256,7 @@ private actor CountingSnapshotReader: CommitGraphSnapshotReading {
     private let currentFingerprint: CommitGraphReferenceFingerprint
     private var snapshots: [CommitGraphSnapshot]
     private var calls = 0
+    private var callWaiters: [Int: [CheckedContinuation<Void, Never>]] = [:]
 
     init(
         fingerprint: CommitGraphReferenceFingerprint,
@@ -217,6 +277,11 @@ private actor CountingSnapshotReader: CommitGraphSnapshotReading {
         fingerprint: CommitGraphReferenceFingerprint
     ) async throws -> CommitGraphSnapshot {
         calls += 1
+        if let waiters = callWaiters.removeValue(forKey: calls) {
+            for waiter in waiters {
+                waiter.resume()
+            }
+        }
         guard !snapshots.isEmpty else {
             throw TestFailure(description: "没有可返回的测试快照")
         }
@@ -225,6 +290,13 @@ private actor CountingSnapshotReader: CommitGraphSnapshotReading {
 
     func snapshotCallCount() -> Int {
         calls
+    }
+
+    func waitForSnapshotCalls(_ expectedCount: Int) async {
+        guard calls < expectedCount else { return }
+        await withCheckedContinuation { continuation in
+            callWaiters[expectedCount, default: []].append(continuation)
+        }
     }
 }
 
@@ -299,6 +371,53 @@ private actor InMemorySnapshotStore: CommitGraphSnapshotStoring {
 
     func saveCount() -> Int {
         saves
+    }
+}
+
+private actor ControlledSaveSnapshotStore: CommitGraphSnapshotStoring {
+    private var snapshotsByRepositoryID: [Int64: CommitGraphSnapshot] = [:]
+    private var startedSaves = 0
+    private var saveContinuations: [Int: CheckedContinuation<Void, Never>] = [:]
+    private var saveWaiters: [Int: [CheckedContinuation<Void, Never>]] = [:]
+
+    func load(repositoryID: Int64) async throws -> CommitGraphSnapshot? {
+        snapshotsByRepositoryID[repositoryID]
+    }
+
+    func save(
+        _ snapshot: CommitGraphSnapshot,
+        repositoryID: Int64
+    ) async throws {
+        startedSaves += 1
+        let saveID = startedSaves
+        if let waiters = saveWaiters.removeValue(forKey: saveID) {
+            for waiter in waiters {
+                waiter.resume()
+            }
+        }
+        await withCheckedContinuation { continuation in
+            saveContinuations[saveID] = continuation
+        }
+        snapshotsByRepositoryID[repositoryID] = snapshot
+    }
+
+    func waitForSave(_ saveID: Int) async {
+        guard startedSaves < saveID else { return }
+        await withCheckedContinuation { continuation in
+            saveWaiters[saveID, default: []].append(continuation)
+        }
+    }
+
+    func completeSave(_ saveID: Int) {
+        saveContinuations.removeValue(forKey: saveID)?.resume()
+    }
+
+    func startedSaveCount() -> Int {
+        startedSaves
+    }
+
+    func currentSnapshot(repositoryID: Int64) -> CommitGraphSnapshot? {
+        snapshotsByRepositoryID[repositoryID]
     }
 }
 
