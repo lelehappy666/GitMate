@@ -40,11 +40,32 @@ public actor JSONCommitGraphSceneStore: CommitGraphSceneStoring {
             return nil
         }
 
+        let data = try Data(contentsOf: url)
+        let storedSchemaVersion: Int
+        do {
+            storedSchemaVersion = try JSONDecoder().decode(
+                SceneVersionEnvelope.self,
+                from: data
+            ).schemaVersion
+        } catch is DecodingError {
+            throw CommitGraphSceneStoreError.corruptedScene(
+                repositoryID: repositoryID
+            )
+        }
+        guard (1...CommitGraphSceneState.currentSchemaVersion)
+            .contains(storedSchemaVersion)
+        else {
+            throw CommitGraphSceneStoreError.unsupportedSchema(
+                repositoryID: repositoryID,
+                schemaVersion: storedSchemaVersion
+            )
+        }
+
         let scene: CommitGraphSceneState
         do {
             scene = try JSONDecoder().decode(
                 CommitGraphSceneState.self,
-                from: Data(contentsOf: url)
+                from: data
             )
         } catch is DecodingError {
             throw CommitGraphSceneStoreError.corruptedScene(
@@ -81,5 +102,9 @@ public actor JSONCommitGraphSceneStore: CommitGraphSceneStoring {
 
     private func sceneURL(repositoryID: Int64) -> URL {
         rootDirectory.appending(path: "\(repositoryID).json")
+    }
+
+    private struct SceneVersionEnvelope: Decodable {
+        let schemaVersion: Int
     }
 }

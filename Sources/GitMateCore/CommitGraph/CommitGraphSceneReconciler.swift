@@ -90,13 +90,15 @@ public enum CommitGraphSceneReconciler {
         }
 
         return CommitGraphSceneState(
-            schemaVersion: scene.schemaVersion,
+            schemaVersion: CommitGraphSceneState.currentSchemaVersion,
             nodePositions: nodePositions,
             groups: reconciledGroups,
             regions: scene.regions,
             edgePorts: edgePorts,
             boundaryPorts: boundaryPorts,
-            lineStyle: scene.lineStyle
+            lineStyle: scene.lineStyle,
+            viewMode: scene.viewMode,
+            canvasViewport: scene.canvasViewport
         )
     }
 

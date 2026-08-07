@@ -43,6 +43,11 @@ public enum CommitGraphLineStyle: String, Codable, CaseIterable, Sendable {
     case orthogonal
 }
 
+public enum CommitGraphViewMode: String, Codable, CaseIterable, Sendable {
+    case traditional
+    case canvas
+}
+
 public struct CommitGraphSelectionModifiers:
     OptionSet,
     Equatable,
@@ -163,7 +168,7 @@ public struct CollapsedEdgeKey: Codable, Equatable, Hashable, Sendable {
 }
 
 public struct CommitGraphSceneState: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
 
     public var schemaVersion: Int
     public var nodePositions: [String: GraphPoint]
@@ -172,6 +177,8 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
     public var edgePorts: [String: CommitGraphEdgePorts]
     public var boundaryPorts: [CollapsedEdgeKey: CommitGraphEdgePorts]
     public var lineStyle: CommitGraphLineStyle
+    public var viewMode: CommitGraphViewMode
+    public var canvasViewport: GraphViewport
 
     public init(
         schemaVersion: Int = currentSchemaVersion,
@@ -180,7 +187,9 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
         regions: [CommitGraphRegionMarker] = [],
         edgePorts: [String: CommitGraphEdgePorts] = [:],
         boundaryPorts: [CollapsedEdgeKey: CommitGraphEdgePorts] = [:],
-        lineStyle: CommitGraphLineStyle = .curve
+        lineStyle: CommitGraphLineStyle = .curve,
+        viewMode: CommitGraphViewMode = .traditional,
+        canvasViewport: GraphViewport = GraphViewport()
     ) {
         self.schemaVersion = schemaVersion
         self.nodePositions = nodePositions
@@ -189,6 +198,8 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
         self.edgePorts = edgePorts
         self.boundaryPorts = boundaryPorts
         self.lineStyle = lineStyle
+        self.viewMode = viewMode
+        self.canvasViewport = canvasViewport
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -199,14 +210,39 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
         case edgePorts
         case boundaryPorts
         case lineStyle
+        case viewMode
+        case canvasViewport
+    }
+
+    private struct CodableViewport: Codable {
+        let offsetX: Double
+        let offsetY: Double
+        let scale: Double
+
+        init(_ viewport: GraphViewport) {
+            offsetX = viewport.offsetX
+            offsetY = viewport.offsetY
+            scale = viewport.scale
+        }
+
+        var viewport: GraphViewport {
+            GraphViewport(
+                offsetX: offsetX,
+                offsetY: offsetY,
+                scale: scale
+            )
+        }
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        schemaVersion = try container.decode(
+        let storedSchemaVersion = try container.decode(
             Int.self,
             forKey: .schemaVersion
         )
+        schemaVersion = storedSchemaVersion == 1
+            ? Self.currentSchemaVersion
+            : storedSchemaVersion
         nodePositions = try container.decode(
             [String: GraphPoint].self,
             forKey: .nodePositions
@@ -230,6 +266,35 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
         lineStyle = try container.decode(
             CommitGraphLineStyle.self,
             forKey: .lineStyle
+        )
+        if storedSchemaVersion == 1 {
+            viewMode = .traditional
+            canvasViewport = GraphViewport()
+        } else {
+            viewMode = try container.decode(
+                CommitGraphViewMode.self,
+                forKey: .viewMode
+            )
+            canvasViewport = try container.decode(
+                CodableViewport.self,
+                forKey: .canvasViewport
+            ).viewport
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(nodePositions, forKey: .nodePositions)
+        try container.encode(groups, forKey: .groups)
+        try container.encode(regions, forKey: .regions)
+        try container.encode(edgePorts, forKey: .edgePorts)
+        try container.encode(boundaryPorts, forKey: .boundaryPorts)
+        try container.encode(lineStyle, forKey: .lineStyle)
+        try container.encode(viewMode, forKey: .viewMode)
+        try container.encode(
+            CodableViewport(canvasViewport),
+            forKey: .canvasViewport
         )
     }
 

@@ -476,6 +476,378 @@ let commitGraphViewModelTests = [
             topologyBefore,
             "拖动批次不得重新计算 Git 拓扑"
         )
+    },
+    TestCase("刷新只对账 Git 变化并保留用户场景") { @MainActor in
+        let groupID = UUID(
+            uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+        )!
+        let region = CommitGraphRegionMarker(
+            id: UUID(
+                uuidString: "BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF"
+            )!,
+            title: "v2.0",
+            colorHex: "#2F80ED",
+            rect: GraphRect(x: 40, y: 80, width: 600, height: 420)
+        )
+        let boundaryKey = CollapsedEdgeKey(
+            groupID: groupID,
+            externalNodeID: "hash-c",
+            direction: .enteringGroup
+        )
+        let boundaryPorts = CommitGraphEdgePorts(
+            source: PortAnchor(side: .bottom, offset: 0.25),
+            target: PortAnchor(side: .top, offset: 0.75)
+        )
+        let storedScene = CommitGraphSceneState(
+            nodePositions: [:],
+            groups: [
+                CommitGraphGroup(
+                    id: groupID,
+                    title: "核心历史",
+                    memberHashes: ["hash-a", "hash-b"],
+                    source: .manual,
+                    origin: GraphPoint(x: 360, y: 220),
+                    relativePositions: [
+                        "hash-a": GraphPoint(x: 0, y: 0),
+                        "hash-b": GraphPoint(x: 0, y: 126)
+                    ],
+                    isCollapsed: true
+                )
+            ],
+            regions: [region],
+            boundaryPorts: [boundaryKey: boundaryPorts],
+            lineStyle: .orthogonal,
+            viewMode: .canvas,
+            canvasViewport: GraphViewport(
+                offsetX: 140,
+                offsetY: -90,
+                scale: 1.2
+            )
+        )
+        let oldSnapshot = commitGraphSnapshot(
+            commits: [
+                commitGraphCommit(
+                    hash: "hash-c",
+                    parents: ["hash-b"]
+                ),
+                commitGraphCommit(
+                    hash: "hash-b",
+                    parents: ["hash-a"]
+                ),
+                commitGraphCommit(hash: "hash-a")
+            ],
+            headHash: "hash-c"
+        )
+        let newSnapshot = commitGraphSnapshot(
+            commits: [
+                commitGraphCommit(
+                    hash: "hash-d",
+                    parents: ["hash-c"]
+                ),
+                commitGraphCommit(
+                    hash: "hash-c",
+                    parents: ["hash-b"]
+                ),
+                commitGraphCommit(
+                    hash: "hash-b",
+                    parents: ["hash-a"]
+                ),
+                commitGraphCommit(hash: "hash-a")
+            ],
+            headHash: "hash-d"
+        )
+        let snapshotStore = InMemoryCommitGraphSnapshotStore(
+            snapshot: oldSnapshot
+        )
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: StaticCommitGraphSnapshotReader(snapshot: newSnapshot),
+            store: snapshotStore
+        )
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 901,
+            sceneStore: InMemoryCommitGraphSceneStore(
+                scenes: [901: storedScene]
+            ),
+            refreshCoordinator: coordinator
+        )
+
+        await viewModel.loadCachedSnapshot()
+        await viewModel.refresh(source: .toolbar)
+
+        try expectEqual(
+            viewModel.scene.canvasViewport,
+            storedScene.canvasViewport,
+            "刷新必须保留画布视口"
+        )
+        try expectEqual(
+            viewModel.scene.regions,
+            [region],
+            "刷新必须保留版本区域"
+        )
+        try expectEqual(
+            viewModel.scene.groups.first?.isCollapsed,
+            true,
+            "刷新必须保留分组折叠状态"
+        )
+        try expectEqual(
+            viewModel.scene.boundaryPorts[boundaryKey],
+            boundaryPorts,
+            "聚合键不变时必须复用原有固定端口"
+        )
+        try expectEqual(
+            viewModel.scene.lineStyle,
+            .orthogonal,
+            "刷新不得改变连线样式"
+        )
+        try expectEqual(
+            viewModel.integrityReport?.status,
+            .valid,
+            "刷新后必须暴露完整性校验结果"
+        )
+        guard case .current = viewModel.refreshState else {
+            throw TestFailure(description: "成功刷新必须进入最新状态")
+        }
+    },
+    TestCase("双布局切换保留选中提交并恢复画布视口") { @MainActor in
+        let snapshot = commitGraphSnapshot(
+            commits: [
+                commitGraphCommit(
+                    hash: "hash-b",
+                    parents: ["hash-a"]
+                ),
+                commitGraphCommit(hash: "hash-a")
+            ],
+            headHash: "hash-b"
+        )
+        let storedViewport = GraphViewport(
+            offsetX: 180,
+            offsetY: -120,
+            scale: 1.3
+        )
+        let sceneStore = InMemoryCommitGraphSceneStore(
+            scenes: [902: CommitGraphSceneState(
+                viewMode: .canvas,
+                canvasViewport: storedViewport
+            )]
+        )
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
+            store: InMemoryCommitGraphSnapshotStore(snapshot: snapshot)
+        )
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 902,
+            sceneStore: sceneStore,
+            refreshCoordinator: coordinator
+        )
+        await viewModel.loadCachedSnapshot()
+        viewModel.selectForNavigation(hash: "hash-a")
+
+        viewModel.setViewMode(.traditional)
+        try expectEqual(
+            viewModel.focusedHash,
+            "hash-a",
+            "切换布局必须优先聚焦当前选中提交"
+        )
+        viewModel.viewport = GraphViewport(
+            offsetX: 0,
+            offsetY: 0,
+            scale: 1
+        )
+        viewModel.setViewMode(.canvas)
+
+        try expectEqual(
+            viewModel.selectedHash,
+            "hash-a",
+            "选中提交必须跨布局保留"
+        )
+        try expectEqual(
+            viewModel.viewport,
+            storedViewport,
+            "返回画布布局时必须恢复之前视口"
+        )
+        viewModel.consumeFocusedHash("hash-a")
+        try expectEqual(
+            viewModel.focusedHash,
+            nil,
+            "聚焦请求成功后必须只消费一次"
+        )
+    },
+    TestCase("刷新失败时保留上次正确快照") { @MainActor in
+        let snapshot = commitGraphSnapshot(
+            commits: [commitGraphCommit(hash: "hash-a")],
+            headHash: "hash-a"
+        )
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: FailingCommitGraphSnapshotReader(),
+            store: InMemoryCommitGraphSnapshotStore(snapshot: snapshot)
+        )
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 903,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: coordinator
+        )
+        await viewModel.loadCachedSnapshot()
+        let layoutBefore = viewModel.layout
+
+        await viewModel.refresh(source: .sidebar)
+
+        try expectEqual(
+            viewModel.layout,
+            layoutBefore,
+            "刷新失败不得替换上次正确布局"
+        )
+        guard case .stale(let message) = viewModel.refreshState else {
+            throw TestFailure(description: "有快照的刷新失败必须进入陈旧状态")
+        }
+        try expect(
+            message.contains("上次正确结果"),
+            "陈旧状态必须说明正在显示的数据来源"
+        )
+    },
+    TestCase("可见场景在拖动后使用持久空间索引的新位置") { @MainActor in
+        let snapshot = commitGraphSnapshot(
+            commits: [commitGraphCommit(hash: "hash-a")],
+            headHash: "hash-a"
+        )
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
+            store: InMemoryCommitGraphSnapshotStore(snapshot: snapshot)
+        )
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 904,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: coordinator
+        )
+        await viewModel.loadCachedSnapshot()
+        let before = try required(
+            viewModel.visibleScene(
+                screenSize: GraphSize(width: 1_000, height: 800)
+            ).nodes.first?.position,
+            "初始节点必须可见"
+        )
+
+        viewModel.moveNode(
+            hash: "hash-a",
+            by: GraphPoint(x: 24, y: 16)
+        )
+
+        try expectEqual(
+            viewModel.visibleScene(
+                screenSize: GraphSize(width: 1_000, height: 800)
+            ).nodes.first?.position,
+            GraphPoint(x: before.x + 24, y: before.y + 16),
+            "拖动必须局部更新持久空间索引"
+        )
+    },
+    TestCase("并发刷新的旧结果不得覆盖新场景") { @MainActor in
+        let cached = commitGraphSnapshot(
+            commits: [commitGraphCommit(hash: "hash-a")],
+            headHash: "hash-a"
+        )
+        let reader = ControlledCommitGraphSnapshotReader(
+            fingerprint: commitGraphFingerprint(headHash: "hash-new")
+        )
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: reader,
+            store: InMemoryCommitGraphSnapshotStore(snapshot: cached)
+        )
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 905,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: coordinator
+        )
+        await viewModel.loadCachedSnapshot()
+
+        let first = Task { @MainActor in
+            await viewModel.refresh(source: .toolbar)
+        }
+        await reader.waitForRequest(1)
+        let second = Task { @MainActor in
+            await viewModel.refresh(source: .sidebar)
+        }
+        await reader.waitForRequest(2)
+        await reader.completeRequest(
+            2,
+            snapshot: commitGraphSnapshot(
+                commits: [commitGraphCommit(hash: "hash-new")],
+                headHash: "hash-new"
+            )
+        )
+        await second.value
+        await reader.completeRequest(
+            1,
+            snapshot: commitGraphSnapshot(
+                commits: [commitGraphCommit(hash: "hash-stale")],
+                headHash: "hash-stale"
+            )
+        )
+        await first.value
+
+        try expect(
+            viewModel.layout.node(hash: "hash-new") != nil,
+            "最新刷新结果必须留在页面"
+        )
+        try expectEqual(
+            viewModel.layout.node(hash: "hash-stale"),
+            nil,
+            "过期请求完成后不得覆盖新布局"
+        )
+    },
+    TestCase("自动分组建议直接使用完整快照") { @MainActor in
+        let snapshot = commitGraphSnapshot(
+            commits: [
+                commitGraphCommit(
+                    hash: "hash-c",
+                    parents: ["hash-b"],
+                    decorations: ["HEAD -> main"]
+                ),
+                commitGraphCommit(
+                    hash: "hash-b",
+                    parents: ["hash-a"],
+                    decorations: []
+                ),
+                commitGraphCommit(
+                    hash: "hash-a",
+                    decorations: []
+                )
+            ],
+            headHash: "hash-c"
+        )
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
+            store: InMemoryCommitGraphSnapshotStore(snapshot: snapshot)
+        )
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 906,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: coordinator
+        )
+        await viewModel.loadCachedSnapshot()
+
+        await viewModel.prepareGroupSuggestions()
+
+        try expectEqual(
+            viewModel.groupSuggestions.first?.memberHashes,
+            Set(["hash-a", "hash-b", "hash-c"]),
+            "建议必须包含快照中的完整分支历史"
+        )
+        try expectEqual(
+            viewModel.scene.groups,
+            [],
+            "自动分组仍只能生成建议并等待用户确认"
+        )
     }
 ]
 
@@ -659,9 +1031,122 @@ private actor FailingDiffCommitGraphReader: CommitGraphTestReading {
     }
 }
 
+private actor StaticCommitGraphSnapshotReader: CommitGraphSnapshotReading {
+    private let value: CommitGraphSnapshot
+
+    init(snapshot: CommitGraphSnapshot) {
+        value = snapshot
+    }
+
+    func fingerprint(
+        repositoryURL _: URL
+    ) async throws -> CommitGraphReferenceFingerprint {
+        value.fingerprint
+    }
+
+    func snapshot(
+        repositoryURL _: URL,
+        fingerprint _: CommitGraphReferenceFingerprint
+    ) async throws -> CommitGraphSnapshot {
+        value
+    }
+}
+
+private actor FailingCommitGraphSnapshotReader: CommitGraphSnapshotReading {
+    func fingerprint(
+        repositoryURL _: URL
+    ) async throws -> CommitGraphReferenceFingerprint {
+        throw LocalGitReaderError.invalidRevision("仓库不可用")
+    }
+
+    func snapshot(
+        repositoryURL _: URL,
+        fingerprint _: CommitGraphReferenceFingerprint
+    ) async throws -> CommitGraphSnapshot {
+        throw LocalGitReaderError.invalidRevision("仓库不可用")
+    }
+}
+
+private actor ControlledCommitGraphSnapshotReader:
+    CommitGraphSnapshotReading
+{
+    private let value: CommitGraphReferenceFingerprint
+    private var requestCount = 0
+    private var requests: [
+        Int: CheckedContinuation<CommitGraphSnapshot, Error>
+    ] = [:]
+    private var requestWaiters: [
+        Int: [CheckedContinuation<Void, Never>]
+    ] = [:]
+
+    init(fingerprint: CommitGraphReferenceFingerprint) {
+        value = fingerprint
+    }
+
+    func fingerprint(
+        repositoryURL _: URL
+    ) async throws -> CommitGraphReferenceFingerprint {
+        value
+    }
+
+    func snapshot(
+        repositoryURL _: URL,
+        fingerprint _: CommitGraphReferenceFingerprint
+    ) async throws -> CommitGraphSnapshot {
+        requestCount += 1
+        let requestID = requestCount
+        if let waiters = requestWaiters.removeValue(forKey: requestID) {
+            for waiter in waiters {
+                waiter.resume()
+            }
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            requests[requestID] = continuation
+        }
+    }
+
+    func waitForRequest(_ requestID: Int) async {
+        guard requestCount < requestID else { return }
+        await withCheckedContinuation { continuation in
+            requestWaiters[requestID, default: []].append(continuation)
+        }
+    }
+
+    func completeRequest(
+        _ requestID: Int,
+        snapshot: CommitGraphSnapshot
+    ) {
+        requests.removeValue(forKey: requestID)?.resume(
+            returning: snapshot
+        )
+    }
+}
+
+private actor InMemoryCommitGraphSnapshotStore:
+    CommitGraphSnapshotStoring
+{
+    private var value: CommitGraphSnapshot?
+
+    init(snapshot: CommitGraphSnapshot? = nil) {
+        value = snapshot
+    }
+
+    func load(repositoryID _: Int64) async throws -> CommitGraphSnapshot? {
+        value
+    }
+
+    func save(
+        _ snapshot: CommitGraphSnapshot,
+        repositoryID _: Int64
+    ) async throws {
+        value = snapshot
+    }
+}
+
 private func commitGraphCommit(
     hash: String,
-    parents: [String] = []
+    parents: [String] = [],
+    decorations: [String]? = nil
 ) -> GitCommit {
     GitCommit(
         shortHash: String(hash.prefix(7)),
@@ -671,7 +1156,39 @@ private func commitGraphCommit(
         authorEmail: "lele@example.com",
         authoredAt: Date(timeIntervalSince1970: 100),
         parentHashes: parents,
-        decorations: hash == "hash-a" ? ["HEAD -> main"] : []
+        decorations: decorations
+            ?? (hash == "hash-a" ? ["HEAD -> main"] : [])
+    )
+}
+
+private func commitGraphSnapshot(
+    commits: [GitCommit],
+    headHash: String
+) -> CommitGraphSnapshot {
+    CommitGraphSnapshot(
+        repositoryPath: commitGraphRepositoryURL.standardizedFileURL.path,
+        fingerprint: commitGraphFingerprint(headHash: headHash),
+        commitsNewestFirst: commits,
+        expectedCommitCount: commits.count,
+        shallowBoundaryParentHashes: [],
+        generatedAt: Date(timeIntervalSince1970: 1_000)
+    )
+}
+
+private func commitGraphFingerprint(
+    headHash: String
+) -> CommitGraphReferenceFingerprint {
+    CommitGraphReferenceFingerprint(
+        references: [
+            CommitGraphReference(
+                name: "refs/heads/main",
+                targetHash: headHash,
+                kind: .localBranch
+            )
+        ],
+        headName: "main",
+        headHash: headHash,
+        isShallow: false
     )
 }
 

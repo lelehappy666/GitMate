@@ -35,7 +35,13 @@ let commitGraphSceneStoreTests = [
                     target: PortAnchor(side: .left, offset: 0.75)
                 )
             ],
-            lineStyle: .orthogonal
+            lineStyle: .orthogonal,
+            viewMode: .canvas,
+            canvasViewport: GraphViewport(
+                offsetX: 120,
+                offsetY: -80,
+                scale: 1.25
+            )
         )
 
         try await store.save(scene, repositoryID: 42)
@@ -116,7 +122,7 @@ let commitGraphSceneStoreTests = [
             "仅有临时文件时不得恢复不完整场景"
         )
     },
-    TestCase("旧场景缺少区域字段时按空数组恢复") {
+    TestCase("旧场景迁移到传统布局并使用默认画布视口") {
         let data = Data(
             """
             {
@@ -140,6 +146,47 @@ let commitGraphSceneStoreTests = [
             [],
             "旧场景缺少区域字段时必须兼容为无区域"
         )
+        try expectEqual(
+            scene.schemaVersion,
+            CommitGraphSceneState.currentSchemaVersion,
+            "schema 1 场景必须在解码时迁移到当前版本"
+        )
+        try expectEqual(
+            scene.viewMode,
+            .traditional,
+            "schema 1 场景必须默认使用传统布局"
+        )
+        try expectEqual(
+            scene.canvasViewport,
+            GraphViewport(),
+            "schema 1 场景必须补全默认画布视口"
+        )
+    },
+    TestCase("未知未来场景版本返回稳定错误") {
+        let directory = commitGraphSceneStoreTemporaryDirectory()
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        try Data(
+            """
+            {
+              "schemaVersion": 99
+            }
+            """.utf8
+        ).write(to: directory.appending(path: "19.json"))
+        let store = JSONCommitGraphSceneStore(rootDirectory: directory)
+
+        do {
+            _ = try await store.load(repositoryID: 19)
+            throw TestFailure(description: "未来 schema 必须被拒绝")
+        } catch let error as CommitGraphSceneStoreError {
+            try expectEqual(
+                error,
+                .unsupportedSchema(repositoryID: 19, schemaVersion: 99),
+                "未知未来 schema 必须返回可识别的版本错误"
+            )
+        }
     },
     TestCase("版本区域随场景完整保存和恢复") {
         let directory = commitGraphSceneStoreTemporaryDirectory()
