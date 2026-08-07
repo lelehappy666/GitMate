@@ -261,4 +261,21 @@ public enum CommitGraphSceneProjector {
             key.direction.rawValue
         ].joined(separator: "|")
     }
+
+    static func endpointRects(
+        in projection: CommitGraphSceneProjection
+    ) -> [CommitGraphEndpointID: GraphRect] {
+        var result = Dictionary(
+            uniqueKeysWithValues: projection.nodes.map {
+                (
+                    CommitGraphEndpointID.node($0.id),
+                    CommitGraphSceneGeometry.nodeRect(center: $0.position)
+                )
+            }
+        )
+        for group in projection.groups {
+            result[.group(group.id)] = group.rect
+        }
+        return result
+    }
 }
