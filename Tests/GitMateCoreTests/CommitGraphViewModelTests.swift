@@ -1401,6 +1401,76 @@ let commitGraphViewModelTests = [
             nil,
             "安装必须使用后台 base 提供的 Set，而不是在主线程扫描 commits 重建"
         )
+    },
+    TestCase("侧边栏首次进入先加载缓存且同仓库后续只刷新") { @MainActor in
+        let firstSnapshot = commitGraphSnapshot(
+            commits: [commitGraphCommit(hash: "hash-first")],
+            headHash: "hash-first"
+        )
+        let secondSnapshot = commitGraphSnapshot(
+            commits: [commitGraphCommit(hash: "hash-second")],
+            headHash: "hash-second"
+        )
+        let store = CountingCommitGraphSnapshotStore(
+            snapshots: [
+                941: firstSnapshot,
+                942: secondSnapshot
+            ]
+        )
+        let firstViewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 941,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: CommitGraphRefreshCoordinator(
+                reader: StaticCommitGraphSnapshotReader(
+                    snapshot: firstSnapshot
+                ),
+                store: store
+            )
+        )
+
+        // revision=1 的首次侧边栏进入仍应先命中缓存，再执行 sidebar 刷新。
+        await firstViewModel.refreshAfterInitialCacheLoad(source: .sidebar)
+        let firstPresentationLoads = await store.loadCount(
+            repositoryID: 941
+        )
+        try expectEqual(
+            firstPresentationLoads,
+            2,
+            "首次呈现必须先读取一次缓存，再由刷新协调器读取一次"
+        )
+        await firstViewModel.refreshAfterInitialCacheLoad(source: .sidebar)
+        let repeatedRefreshLoads = await store.loadCount(
+            repositoryID: 941
+        )
+        try expectEqual(
+            repeatedRefreshLoads,
+            3,
+            "同一 ViewModel 的后续刷新不得重复执行缓存首屏读取"
+        )
+
+        let secondViewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 942,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: CommitGraphRefreshCoordinator(
+                reader: StaticCommitGraphSnapshotReader(
+                    snapshot: secondSnapshot
+                ),
+                store: store
+            )
+        )
+        await secondViewModel.refreshAfterInitialCacheLoad(source: .sidebar)
+        let secondRepositoryLoads = await store.loadCount(
+            repositoryID: 942
+        )
+        try expectEqual(
+            secondRepositoryLoads,
+            2,
+            "切换到另一仓库后必须拥有独立的首次缓存读取"
+        )
     }
 ]
 
@@ -1916,6 +1986,33 @@ private actor InMemoryCommitGraphSnapshotStore:
         repositoryID _: Int64
     ) async throws {
         value = snapshot
+    }
+}
+
+private actor CountingCommitGraphSnapshotStore:
+    CommitGraphSnapshotStoring
+{
+    private var snapshots: [Int64: CommitGraphSnapshot]
+    private var counts: [Int64: Int] = [:]
+
+    init(snapshots: [Int64: CommitGraphSnapshot]) {
+        self.snapshots = snapshots
+    }
+
+    func load(repositoryID: Int64) async throws -> CommitGraphSnapshot? {
+        counts[repositoryID, default: 0] += 1
+        return snapshots[repositoryID]
+    }
+
+    func save(
+        _ snapshot: CommitGraphSnapshot,
+        repositoryID: Int64
+    ) async throws {
+        snapshots[repositoryID] = snapshot
+    }
+
+    func loadCount(repositoryID: Int64) -> Int {
+        counts[repositoryID, default: 0]
     }
 }
 

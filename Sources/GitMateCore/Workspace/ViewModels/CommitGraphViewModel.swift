@@ -339,6 +339,9 @@ public final class CommitGraphViewModel {
     private var sceneDerivationTask:
         Task<CommitGraphSceneDerivedState, Error>?
 
+    @ObservationIgnored
+    private var initialCacheLoadTask: Task<Void, Never>?
+
     public init(
         reader: any LocalGitReading,
         repositoryURL: URL,
@@ -422,6 +425,30 @@ public final class CommitGraphViewModel {
                 ? .failed(message: "本地提交图缓存已损坏。")
                 : .stale(message: "本地缓存损坏，继续显示上次正确结果。")
         }
+    }
+
+    /// 页面首次出现时先且只先读取一次本地快照；随后所有来源都可继续
+    /// 请求完整刷新。任务被 SwiftUI 取消时不启动过期来源的刷新。
+    public func refreshAfterInitialCacheLoad(
+        source: CommitGraphRefreshSource
+    ) async {
+        await loadCachedSnapshotOnce()
+        guard !Task.isCancelled else { return }
+        await refresh(source: source)
+    }
+
+    private func loadCachedSnapshotOnce() async {
+        if let initialCacheLoadTask {
+            await initialCacheLoadTask.value
+            return
+        }
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.loadCachedSnapshot()
+        }
+        initialCacheLoadTask = task
+        await task.value
     }
 
     public func refresh(source _: CommitGraphRefreshSource) async {

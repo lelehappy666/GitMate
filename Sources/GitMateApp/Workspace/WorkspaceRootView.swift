@@ -897,14 +897,9 @@ private struct CommitGraphPageContainer: View {
     var body: some View {
         CommitGraphView(viewModel: viewModel)
             .task(id: refreshRevision) {
-                if refreshRevision == 0 {
-                    await viewModel.loadCachedSnapshot()
-                    // 缓存先于完整扫描呈现；两次操作顺序执行，避免首次进入
-                    // 页面时旧的分页加载与快照刷新同时写入 ViewModel。
-                    await viewModel.refresh(source: .initial)
-                } else {
-                    await viewModel.refresh(source: .sidebar)
-                }
+                await viewModel.refreshAfterInitialCacheLoad(
+                    source: refreshRevision == 0 ? .initial : .sidebar
+                )
             }
     }
 }
