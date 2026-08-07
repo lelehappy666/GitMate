@@ -108,7 +108,10 @@ let commitGraphLayoutTests = [
         let snapshot = layoutBranchingSnapshot()
         let topology = CommitGraphLaneTopology.build(snapshot: snapshot)
 
-        let canvas = CommitGraphLayout().layout(snapshot: snapshot)
+        let canvas = CommitGraphLayout().layout(topology: topology)
+        let traditional = CommitGraphTraditionalLayout().layout(
+            topology: topology
+        )
 
         try expectEqual(
             canvas.nodes.map(\.hash),
@@ -121,6 +124,13 @@ let commitGraphLayoutTests = [
             "画布和传统布局必须共用稳定泳道"
         )
         try expectEqual(canvas.node(hash: "merge")?.column, 0, "主分支必须保持核心泳道")
+        for row in traditional.rows {
+            try expectEqual(
+                canvas.node(hash: row.commit.fullHash)?.column,
+                row.lane,
+                "传统和画布布局必须复用同一份泳道结果"
+            )
+        }
     }
 ]
 

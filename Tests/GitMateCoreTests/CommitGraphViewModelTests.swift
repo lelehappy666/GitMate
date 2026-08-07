@@ -848,6 +848,219 @@ let commitGraphViewModelTests = [
             [],
             "自动分组仍只能生成建议并等待用户确认"
         )
+    },
+    TestCase("未来场景版本进入持久化保护且不覆盖原文件") { @MainActor in
+        let directory = commitGraphViewModelTemporaryDirectory()
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let sceneURL = directory.appending(path: "907.json")
+        let originalData = Data(
+            """
+            {
+              "schemaVersion": 99,
+              "futureState": "必须保留"
+            }
+            """.utf8
+        )
+        try originalData.write(to: sceneURL)
+        let snapshot = commitGraphSnapshot(
+            commits: [commitGraphCommit(hash: "hash-a")],
+            headHash: "hash-a"
+        )
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
+            store: InMemoryCommitGraphSnapshotStore(snapshot: snapshot)
+        )
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 907,
+            sceneStore: JSONCommitGraphSceneStore(rootDirectory: directory),
+            refreshCoordinator: coordinator
+        )
+
+        await viewModel.loadCachedSnapshot()
+        viewModel.setViewMode(.canvas)
+        viewModel.setLineStyle(.orthogonal)
+        viewModel.moveNode(
+            hash: "hash-a",
+            by: GraphPoint(x: 24, y: 16)
+        )
+        await viewModel.persistSceneImmediately()
+
+        try expect(
+            viewModel.sceneWarningMessage?.contains("较新版本") == true,
+            "未来 schema 必须给出明确的只读保护提示"
+        )
+        let persistedData = try Data(contentsOf: sceneURL)
+        try expectEqual(
+            persistedData,
+            originalData,
+            "任何自动保存和常见状态修改都不得覆盖未来 schema"
+        )
+    },
+    TestCase("新刷新命中已落盘快照时仍安装到当前页面") { @MainActor in
+        let snapshotA = commitGraphSnapshot(
+            commits: [commitGraphCommit(hash: "hash-a")],
+            headHash: "hash-a"
+        )
+        let snapshotB = commitGraphSnapshot(
+            commits: [commitGraphCommit(hash: "hash-b")],
+            headHash: "hash-b"
+        )
+        let snapshotStore = InMemoryCommitGraphSnapshotStore(
+            snapshot: snapshotA
+        )
+        let deriver = SelectivelyGatedCommitGraphDeriver(
+            blockedRequestID: 2
+        )
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: StaticCommitGraphSnapshotReader(snapshot: snapshotB),
+            store: snapshotStore
+        )
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 908,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: coordinator,
+            deriver: deriver
+        )
+        await viewModel.loadCachedSnapshot()
+
+        let first = Task { @MainActor in
+            await viewModel.refresh(source: .toolbar)
+        }
+        await deriver.waitUntilBlocked()
+        await viewModel.refresh(source: .sidebar)
+
+        try expect(
+            viewModel.layout.node(hash: "hash-b") != nil,
+            "didChange=false 仅代表磁盘未变，当前 VM 仍必须安装该快照"
+        )
+        await deriver.releaseBlockedRequest()
+        await first.value
+        try expectEqual(
+            viewModel.layout.node(hash: "hash-a"),
+            nil,
+            "过期代次不得把旧 VM 状态写回页面"
+        )
+    },
+    TestCase("缓存加载打断首次刷新时统一收尾加载状态") { @MainActor in
+        let valid = commitGraphSnapshot(
+            commits: [commitGraphCommit(hash: "hash-a")],
+            headHash: "hash-a"
+        )
+        let invalid = CommitGraphSnapshot(
+            repositoryPath: valid.repositoryPath,
+            fingerprint: valid.fingerprint,
+            commitsNewestFirst: valid.commitsNewestFirst,
+            expectedCommitCount: 2,
+            shallowBoundaryParentHashes: [],
+            generatedAt: valid.generatedAt
+        )
+        let scenarios: [(CommitGraphSnapshot?, String)] = [
+            (valid, "hit"),
+            (nil, "missing"),
+            (invalid, "invalid")
+        ]
+
+        for (index, scenario) in scenarios.enumerated() {
+            let reader = ControlledCommitGraphSnapshotReader(
+                fingerprint: commitGraphFingerprint(
+                    headHash: "hash-new-\(index)"
+                )
+            )
+            let store = InMemoryCommitGraphSnapshotStore(
+                snapshot: scenario.0
+            )
+            let coordinator = CommitGraphRefreshCoordinator(
+                reader: reader,
+                store: store
+            )
+            let viewModel = CommitGraphViewModel(
+                reader: StaticCommitGraphReader(),
+                repositoryURL: commitGraphRepositoryURL,
+                repositoryID: Int64(920 + index),
+                sceneStore: InMemoryCommitGraphSceneStore(),
+                refreshCoordinator: coordinator
+            )
+            let refreshTask = Task { @MainActor in
+                await viewModel.refresh(source: .initial)
+            }
+            await reader.waitForRequest(1)
+            try expect(viewModel.isLoading, "首次刷新应进入加载状态")
+
+            await viewModel.loadCachedSnapshot()
+
+            try expect(
+                !viewModel.isLoading,
+                "\(scenario.1) 缓存分支成为最新代次后必须统一收尾"
+            )
+            await reader.completeRequest(
+                1,
+                snapshot: commitGraphSnapshot(
+                    commits: [
+                        commitGraphCommit(hash: "hash-new-\(index)")
+                    ],
+                    headHash: "hash-new-\(index)"
+                )
+            )
+            await refreshTask.value
+        }
+    },
+    TestCase("后台派生挂起时主线程仍可响应且旧结果不安装") { @MainActor in
+        let snapshotA = commitGraphSnapshot(
+            commits: [commitGraphCommit(hash: "hash-a")],
+            headHash: "hash-a"
+        )
+        let snapshotB = commitGraphSnapshot(
+            commits: [commitGraphCommit(hash: "hash-b")],
+            headHash: "hash-b"
+        )
+        let store = InMemoryCommitGraphSnapshotStore(snapshot: snapshotA)
+        let deriver = SelectivelyGatedCommitGraphDeriver(
+            blockedRequestID: 1
+        )
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: StaticCommitGraphSnapshotReader(snapshot: snapshotB),
+            store: store
+        )
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 909,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: coordinator,
+            deriver: deriver
+        )
+        let cachedTask = Task { @MainActor in
+            await viewModel.loadCachedSnapshot()
+        }
+        await deriver.waitUntilBlocked()
+
+        viewModel.pan(by: GraphPoint(x: 17, y: 9))
+        try expectEqual(
+            viewModel.viewport,
+            GraphViewport(offsetX: 17, offsetY: 9, scale: 1),
+            "派生挂起时 MainActor 仍必须可处理交互"
+        )
+        try await store.save(snapshotB, repositoryID: 909)
+        await viewModel.refresh(source: .toolbar)
+        try expect(
+            viewModel.layout.node(hash: "hash-b") != nil,
+            "较新代次必须在旧派生仍挂起时原子安装"
+        )
+
+        await deriver.releaseBlockedRequest()
+        await cachedTask.value
+        try expectEqual(
+            viewModel.layout.node(hash: "hash-a"),
+            nil,
+            "旧派生结果返回后必须被代次门禁拒绝"
+        )
     }
 ]
 
@@ -1122,6 +1335,51 @@ private actor ControlledCommitGraphSnapshotReader:
     }
 }
 
+private actor SelectivelyGatedCommitGraphDeriver:
+    CommitGraphViewModelDeriving
+{
+    private let blockedRequestID: Int
+    private let base = DefaultCommitGraphViewModelDeriver()
+    private var requestCount = 0
+    private var didReachBlockedRequest = false
+    private var blockedContinuation: CheckedContinuation<Void, Never>?
+    private var blockedWaiters: [CheckedContinuation<Void, Never>] = []
+
+    init(blockedRequestID: Int) {
+        self.blockedRequestID = blockedRequestID
+    }
+
+    func derive(
+        _ request: CommitGraphViewModelDerivationRequest
+    ) async -> CommitGraphViewModelDerivedState {
+        requestCount += 1
+        let requestID = requestCount
+        if requestID == blockedRequestID {
+            await withCheckedContinuation { continuation in
+                blockedContinuation = continuation
+                didReachBlockedRequest = true
+                for waiter in blockedWaiters {
+                    waiter.resume()
+                }
+                blockedWaiters.removeAll()
+            }
+        }
+        return await base.derive(request)
+    }
+
+    func waitUntilBlocked() async {
+        guard !didReachBlockedRequest else { return }
+        await withCheckedContinuation { continuation in
+            blockedWaiters.append(continuation)
+        }
+    }
+
+    func releaseBlockedRequest() {
+        blockedContinuation?.resume()
+        blockedContinuation = nil
+    }
+}
+
 private actor InMemoryCommitGraphSnapshotStore:
     CommitGraphSnapshotStoring
 {
@@ -1255,4 +1513,16 @@ private func required<T>(
         throw TestFailure(description: message)
     }
     return value
+}
+
+private func commitGraphViewModelTemporaryDirectory() -> URL {
+    FileManager.default.temporaryDirectory
+        .appending(
+            path: "GitMateCommitGraphViewModelTests",
+            directoryHint: .isDirectory
+        )
+        .appending(
+            path: UUID().uuidString,
+            directoryHint: .isDirectory
+        )
 }

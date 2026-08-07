@@ -446,6 +446,7 @@ public struct CommitGraphVisibleEdge: Equatable, Identifiable, Sendable {
     public let aggregateKey: CollapsedEdgeKey?
     public let aggregateCount: Int
     public let originalEdgeIDs: [String]
+    public let path: CommitGraphGeneratedPath?
 
     public init(
         id: String,
@@ -456,7 +457,8 @@ public struct CommitGraphVisibleEdge: Equatable, Identifiable, Sendable {
         ports: CommitGraphEdgePorts,
         aggregateKey: CollapsedEdgeKey?,
         aggregateCount: Int,
-        originalEdgeIDs: [String]
+        originalEdgeIDs: [String],
+        path: CommitGraphGeneratedPath? = nil
     ) {
         self.id = id
         self.source = source
@@ -467,6 +469,7 @@ public struct CommitGraphVisibleEdge: Equatable, Identifiable, Sendable {
         self.aggregateKey = aggregateKey
         self.aggregateCount = aggregateCount
         self.originalEdgeIDs = originalEdgeIDs
+        self.path = path
     }
 }
 

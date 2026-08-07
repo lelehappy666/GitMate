@@ -15,7 +15,14 @@ public struct CommitGraphLayout: Sendable {
     public func layout(
         snapshot: CommitGraphSnapshot
     ) -> CommitGraphLayoutResult {
-        let topology = CommitGraphLaneTopology.build(snapshot: snapshot)
+        layout(
+            topology: CommitGraphLaneTopology.build(snapshot: snapshot)
+        )
+    }
+
+    public func layout(
+        topology: CommitGraphLaneTopology
+    ) -> CommitGraphLayoutResult {
         return layout(
             topology: topology,
             orderedRows: Array(topology.rowsNewestFirst.reversed()),

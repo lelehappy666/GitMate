@@ -199,7 +199,8 @@ public struct CommitGraphRenderIndex: Sendable {
             .filter { groups[$0].rect.intersects(bounds) }
             .sorted()
         var generatedEdgeGeometries = 0
-        let edgeIndices = edgeQuery.items.sorted().filter { index in
+        let visibleEdges = edgeQuery.items.sorted().compactMap { index
+            -> CommitGraphVisibleEdge? in
             guard edgeCandidates[index] != nil,
                   let geometry = Self.geometry(
                     for: edges[index],
@@ -207,17 +208,30 @@ public struct CommitGraphRenderIndex: Sendable {
                     lineStyle: lineStyle
                   )
             else {
-                return false
+                return nil
             }
             generatedEdgeGeometries += 1
-            return geometry.intersects(bounds)
+            guard geometry.intersects(bounds) else { return nil }
+            let edge = edges[index]
+            return CommitGraphVisibleEdge(
+                id: edge.id,
+                source: edge.source,
+                target: edge.target,
+                kind: edge.kind,
+                colorIndex: edge.colorIndex,
+                ports: edge.ports,
+                aggregateKey: edge.aggregateKey,
+                aggregateCount: edge.aggregateCount,
+                originalEdgeIDs: edge.originalEdgeIDs,
+                path: geometry.generatedPath
+            )
         }
 
         return CommitGraphRenderQueryResult(
             scene: CommitGraphVisibleScene(
                 nodes: nodeIndices.map { nodes[$0] },
                 groups: groupIndices.map { groups[$0] },
-                edges: edgeIndices.map { edges[$0] }
+                edges: visibleEdges
             ),
             diagnostics: CommitGraphRenderQueryDiagnostics(
                 visitedBuckets: nodeQuery.visitedBuckets
@@ -562,6 +576,7 @@ private struct RenderEdgeCandidate: Sendable {
 
 private struct RenderEdgeGeometry: Sendable {
     let endpointRects: [GraphRect]
+    let generatedPath: CommitGraphGeneratedPath
     let path: RenderIndexedPath
     let indexCells: Set<RenderGridCell>?
 
@@ -570,6 +585,7 @@ private struct RenderEdgeGeometry: Sendable {
         path generatedPath: CommitGraphGeneratedPath
     ) {
         self.endpointRects = endpointRects
+        self.generatedPath = generatedPath
         path = RenderIndexedPath(generatedPath)
         for level in 0..<64 {
             var cells = Set<RenderGridCell>()

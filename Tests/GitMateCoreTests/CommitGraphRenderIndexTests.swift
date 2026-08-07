@@ -124,6 +124,25 @@ let commitGraphRenderIndexTests = [
             ["left->right"],
             "多级索引必须保留超长且穿过视口的边，并排除完全离屏的边"
         )
+        guard case .curve? = visible.edges.first?.path else {
+            throw TestFailure(description: "曲线查询必须携带已生成的穿屏路径")
+        }
+
+        var orthogonalIndex = index
+        _ = orthogonalIndex.setLineStyle(.orthogonal)
+        let orthogonalVisible = orthogonalIndex.query(
+            viewport: GraphViewport(),
+            screenSize: GraphSize(width: 800, height: 600),
+            padding: 0
+        )
+        try expectEqual(
+            orthogonalVisible.edges.map(\.id),
+            ["left->right"],
+            "直角连线的穿屏边也必须进入可见场景"
+        )
+        guard case .polyline? = orthogonalVisible.edges.first?.path else {
+            throw TestFailure(description: "直角查询必须携带已生成的穿屏路径")
+        }
     },
     TestCase("移动节点只更新目标节点和相邻边") {
         let ports = CommitGraphEdgePorts(
