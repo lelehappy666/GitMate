@@ -871,6 +871,8 @@ private struct FilesCommitsPageContainer: View {
 
 private struct CommitGraphPageContainer: View {
     @State private var viewModel: CommitGraphViewModel
+    @State private var presentationLeaseID: UUID?
+    @State private var isPresentationActive = false
 
     init(
         reader: any LocalGitReading,
@@ -896,8 +898,20 @@ private struct CommitGraphPageContainer: View {
 
     var body: some View {
         CommitGraphView(viewModel: viewModel)
-            .task(id: refreshRevision) {
-                await viewModel.refreshForPresentation(
+            .onAppear {
+                guard presentationLeaseID == nil else { return }
+                presentationLeaseID = viewModel.beginInitialPresentation()
+                isPresentationActive = true
+            }
+            .onDisappear {
+                guard let presentationLeaseID else { return }
+                isPresentationActive = false
+                self.presentationLeaseID = nil
+                viewModel.endInitialPresentation(presentationLeaseID)
+            }
+            .task(id: "\(refreshRevision)-\(isPresentationActive)") {
+                guard isPresentationActive else { return }
+                await viewModel.refreshForPresentationRevision(
                     source: refreshRevision == 0 ? .initial : .sidebar
                 )
             }

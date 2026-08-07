@@ -1402,7 +1402,7 @@ let commitGraphViewModelTests = [
             "安装必须使用后台 base 提供的 Set，而不是在主线程扫描 commits 重建"
         )
     },
-    TestCase("侧边栏首次进入先加载缓存且同仓库后续只刷新") { @MainActor in
+    TestCase("稳定呈现租约首次加载缓存且后续刷新保持幂等") { @MainActor in
         let firstSnapshot = commitGraphSnapshot(
             commits: [commitGraphCommit(hash: "hash-first")],
             headHash: "hash-first"
@@ -1431,7 +1431,8 @@ let commitGraphViewModelTests = [
         )
 
         // revision=1 的首次侧边栏进入仍应先命中缓存，再执行 sidebar 刷新。
-        await firstViewModel.refreshForPresentation(source: .sidebar)
+        let firstLease = firstViewModel.beginInitialPresentation()
+        await firstViewModel.refreshForPresentationRevision(source: .sidebar)
         let firstPresentationLoads = await store.loadCount(
             repositoryID: 941
         )
@@ -1440,7 +1441,7 @@ let commitGraphViewModelTests = [
             2,
             "首次呈现必须先读取一次缓存，再由刷新协调器读取一次"
         )
-        await firstViewModel.refreshForPresentation(source: .sidebar)
+        await firstViewModel.refreshForPresentationRevision(source: .sidebar)
         let repeatedRefreshLoads = await store.loadCount(
             repositoryID: 941
         )
@@ -1449,6 +1450,17 @@ let commitGraphViewModelTests = [
             3,
             "同一 ViewModel 的后续刷新不得重复执行缓存首屏读取"
         )
+        firstViewModel.endInitialPresentation(firstLease)
+
+        let reappearLease = firstViewModel.beginInitialPresentation()
+        await firstViewModel.refreshForPresentationRevision(source: .sidebar)
+        let reappearLoads = await store.loadCount(repositoryID: 941)
+        try expectEqual(
+            reappearLoads,
+            4,
+            "缓存成功后重新呈现只执行刷新，不得再次读取首次缓存"
+        )
+        firstViewModel.endInitialPresentation(reappearLease)
 
         let secondViewModel = CommitGraphViewModel(
             reader: StaticCommitGraphReader(),
@@ -1462,7 +1474,8 @@ let commitGraphViewModelTests = [
                 store: store
             )
         )
-        await secondViewModel.refreshForPresentation(source: .sidebar)
+        let secondLease = secondViewModel.beginInitialPresentation()
+        await secondViewModel.refreshForPresentationRevision(source: .sidebar)
         let secondRepositoryLoads = await store.loadCount(
             repositoryID: 942
         )
@@ -1471,8 +1484,9 @@ let commitGraphViewModelTests = [
             2,
             "切换到另一仓库后必须拥有独立的首次缓存读取"
         )
+        secondViewModel.endInitialPresentation(secondLease)
     },
-    TestCase("两个首次呈现租约取消其一后共享缓存任务继续") { @MainActor in
+    TestCase("稳定呈现租约中连续刷新版本取消不取消共享缓存") { @MainActor in
         let snapshot = commitGraphSnapshot(
             commits: [commitGraphCommit(hash: "hash-lease")],
             headHash: "hash-lease"
@@ -1488,12 +1502,13 @@ let commitGraphViewModelTests = [
                 store: store
             )
         )
+        let lease = viewModel.beginInitialPresentation()
         let first = Task { @MainActor in
-            await viewModel.refreshForPresentation(source: .sidebar)
+            await viewModel.refreshForPresentationRevision(source: .sidebar)
         }
         await store.waitUntilInitialLoadStarts()
         let second = Task { @MainActor in
-            await viewModel.refreshForPresentation(source: .sidebar)
+            await viewModel.refreshForPresentationRevision(source: .sidebar)
         }
         first.cancel()
         await Task.yield()
@@ -1503,6 +1518,12 @@ let commitGraphViewModelTests = [
             !wasCancelled,
             "仍有其他呈现租约时不得取消共享缓存任务"
         )
+        let loadCountDuringRevisionChanges = await store.loadCount()
+        try expectEqual(
+            loadCountDuringRevisionChanges,
+            1,
+            "连续 revision 只允许一份首次缓存读取"
+        )
         await store.releaseInitialLoad()
         await first.value
         await second.value
@@ -1510,14 +1531,15 @@ let commitGraphViewModelTests = [
             viewModel.layout.node(hash: "hash-lease") != nil,
             "保留的租约必须完成缓存安装和刷新"
         )
+        viewModel.endInitialPresentation(lease)
     },
-    TestCase("最后一个首次呈现租约取消后停止缓存任务并允许重新进入") { @MainActor in
+    TestCase("呈现结束取消缓存读取且下次进入可以重试") { @MainActor in
         let snapshot = commitGraphSnapshot(
             commits: [commitGraphCommit(hash: "hash-reenter")],
             headHash: "hash-reenter"
         )
         let store = PresentationLeaseSnapshotStore(snapshot: snapshot)
-        var viewModel: CommitGraphViewModel? = CommitGraphViewModel(
+        let viewModel = CommitGraphViewModel(
             reader: StaticCommitGraphReader(),
             repositoryURL: commitGraphRepositoryURL,
             repositoryID: 944,
@@ -1527,158 +1549,31 @@ let commitGraphViewModelTests = [
                 store: store
             )
         )
-        weak var weakViewModel = viewModel
-        let first = Task { @MainActor [weak viewModel] in
-            await viewModel?.refreshForPresentation(source: .sidebar)
+        let firstLease = viewModel.beginInitialPresentation()
+        let first = Task { @MainActor in
+            await viewModel.refreshForPresentationRevision(source: .sidebar)
         }
         await store.waitUntilInitialLoadStarts()
         first.cancel()
+        let wasCancelledBeforePresentationEnds = await store
+            .wasInitialLoadCancelled()
+        try expect(
+            !wasCancelledBeforePresentationEnds,
+            "取消单次刷新任务不得释放页面呈现租约"
+        )
+        viewModel.endInitialPresentation(firstLease)
         await store.waitUntilInitialLoadCancels()
         await first.value
 
-        do {
-            guard let activeViewModel = viewModel else {
-                throw TestFailure(description: "重进前 ViewModel 必须仍然存在")
-            }
-            await activeViewModel.refreshForPresentation(source: .sidebar)
-            try expect(
-                activeViewModel.layout.node(hash: "hash-reenter") != nil,
-                "取消后再次进入必须重新读取缓存并完成刷新"
-            )
-        }
+        let reenterLease = viewModel.beginInitialPresentation()
+        await viewModel.refreshForPresentationRevision(source: .sidebar)
+        try expect(
+            viewModel.layout.node(hash: "hash-reenter") != nil,
+            "取消后再次进入必须重新读取缓存并完成刷新"
+        )
         let loadCount = await store.loadCount()
         try expectEqual(loadCount, 3, "重进必须重新读取一次缓存，再执行一次刷新")
-
-        viewModel = nil
-        try expect(weakViewModel == nil, "取消后的共享任务不得永久持有 ViewModel")
-    },
-    TestCase("快速交接呈现租约不会取消共享缓存任务") { @MainActor in
-        let snapshot = commitGraphSnapshot(
-            commits: [commitGraphCommit(hash: "hash-handoff")],
-            headHash: "hash-handoff"
-        )
-        let store = PresentationLeaseSnapshotStore(snapshot: snapshot)
-        let releaseGate = PresentationReleaseGate()
-        let viewModel = CommitGraphViewModel(
-            reader: StaticCommitGraphReader(),
-            repositoryURL: commitGraphRepositoryURL,
-            repositoryID: 945,
-            sceneStore: InMemoryCommitGraphSceneStore(),
-            refreshCoordinator: CommitGraphRefreshCoordinator(
-                reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
-                store: store
-            ),
-            initialPresentationReleaseDelay: {
-                await releaseGate.wait()
-            }
-        )
-        let first = Task { @MainActor in
-            await viewModel.refreshForPresentation(source: .sidebar)
-        }
-        await store.waitUntilInitialLoadStarts()
-        first.cancel()
-        await releaseGate.waitUntilWaiting()
-
-        let second = Task { @MainActor in
-            await viewModel.refreshForPresentation(source: .sidebar)
-        }
-        await Task.yield()
-        let loadCountBeforeRelease = await store.loadCount()
-        try expectEqual(
-            loadCountBeforeRelease,
-            1,
-            "新租约取得前不得重复启动首次缓存读取"
-        )
-        await releaseGate.release()
-        let wasCancelledAfterHandoff = await store.wasInitialLoadCancelled()
-        try expect(
-            !wasCancelledAfterHandoff,
-            "新租约已取得时，旧的延后释放不得取消共享缓存"
-        )
-        await store.releaseInitialLoad()
-        await first.value
-        await second.value
-    },
-    TestCase("最后租约的延后释放最终取消共享缓存任务") { @MainActor in
-        let snapshot = commitGraphSnapshot(
-            commits: [commitGraphCommit(hash: "hash-final-release")],
-            headHash: "hash-final-release"
-        )
-        let store = PresentationLeaseSnapshotStore(snapshot: snapshot)
-        let releaseGate = PresentationReleaseGate()
-        let viewModel = CommitGraphViewModel(
-            reader: StaticCommitGraphReader(),
-            repositoryURL: commitGraphRepositoryURL,
-            repositoryID: 946,
-            sceneStore: InMemoryCommitGraphSceneStore(),
-            refreshCoordinator: CommitGraphRefreshCoordinator(
-                reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
-                store: store
-            ),
-            initialPresentationReleaseDelay: {
-                await releaseGate.wait()
-            }
-        )
-        let task = Task { @MainActor in
-            await viewModel.refreshForPresentation(source: .sidebar)
-        }
-        await store.waitUntilInitialLoadStarts()
-        task.cancel()
-        await releaseGate.waitUntilWaiting()
-        let wasCancelledInGracePeriod = await store.wasInitialLoadCancelled()
-        try expect(
-            !wasCancelledInGracePeriod,
-            "交接窗口内不得提前取消缓存读取"
-        )
-        await releaseGate.release()
-        await store.waitUntilInitialLoadCancels()
-        await task.value
-    },
-    TestCase("连续刷新版本交接只复用一份首次缓存读取") { @MainActor in
-        let snapshot = commitGraphSnapshot(
-            commits: [commitGraphCommit(hash: "hash-rapid")],
-            headHash: "hash-rapid"
-        )
-        let store = PresentationLeaseSnapshotStore(snapshot: snapshot)
-        let releaseGate = PresentationReleaseGate()
-        let viewModel = CommitGraphViewModel(
-            reader: StaticCommitGraphReader(),
-            repositoryURL: commitGraphRepositoryURL,
-            repositoryID: 947,
-            sceneStore: InMemoryCommitGraphSceneStore(),
-            refreshCoordinator: CommitGraphRefreshCoordinator(
-                reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
-                store: store
-            ),
-            initialPresentationReleaseDelay: {
-                await releaseGate.wait()
-            }
-        )
-        let first = Task { @MainActor in
-            await viewModel.refreshForPresentation(source: .sidebar)
-        }
-        await store.waitUntilInitialLoadStarts()
-        first.cancel()
-        await releaseGate.waitUntilWaiting()
-        let second = Task { @MainActor in
-            await viewModel.refreshForPresentation(source: .sidebar)
-        }
-        second.cancel()
-        let third = Task { @MainActor in
-            await viewModel.refreshForPresentation(source: .sidebar)
-        }
-        await Task.yield()
-        let continuousLoadCount = await store.loadCount()
-        try expectEqual(
-            continuousLoadCount,
-            1,
-            "连续 revision 交接期间只允许一个首次缓存读取"
-        )
-        await releaseGate.release()
-        await store.releaseInitialLoad()
-        await first.value
-        await second.value
-        await third.value
+        viewModel.endInitialPresentation(reenterLease)
     }
 ]
 
@@ -2297,43 +2192,6 @@ private actor PresentationLeaseSnapshotStore:
         initialLoadContinuation = nil
         let waiters = cancelWaiters
         cancelWaiters.removeAll()
-        for waiter in waiters {
-            waiter.resume()
-        }
-    }
-}
-
-private actor PresentationReleaseGate {
-    private var released = false
-    private var waiting = false
-    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
-    private var waitingWaiters: [CheckedContinuation<Void, Never>] = []
-
-    func wait() async {
-        guard !released else { return }
-        waiting = true
-        let waiters = waitingWaiters
-        waitingWaiters.removeAll()
-        for waiter in waiters {
-            waiter.resume()
-        }
-        await withCheckedContinuation { continuation in
-            releaseWaiters.append(continuation)
-        }
-    }
-
-    func waitUntilWaiting() async {
-        guard !waiting else { return }
-        await withCheckedContinuation { continuation in
-            waitingWaiters.append(continuation)
-        }
-    }
-
-    func release() {
-        guard !released else { return }
-        released = true
-        let waiters = releaseWaiters
-        releaseWaiters.removeAll()
         for waiter in waiters {
             waiter.resume()
         }

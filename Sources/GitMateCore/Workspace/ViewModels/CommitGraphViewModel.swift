@@ -351,18 +351,6 @@ public final class CommitGraphViewModel {
     @ObservationIgnored
     private var initialPresentationLeases: Set<UUID> = []
 
-    @ObservationIgnored
-    private var initialPresentationGeneration: UInt64 = 0
-
-    @ObservationIgnored
-    private var pendingPresentationCancellation: Task<Void, Never>?
-
-    @ObservationIgnored
-    private var pendingPresentationCancellationID: UUID?
-
-    @ObservationIgnored
-    private let initialPresentationReleaseDelay: @Sendable () async -> Void
-
     public init(
         reader: any LocalGitReading,
         repositoryURL: URL,
@@ -374,11 +362,7 @@ public final class CommitGraphViewModel {
         layout: CommitGraphLayout = CommitGraphLayout(),
         traditionalLayout: CommitGraphTraditionalLayout =
             CommitGraphTraditionalLayout(),
-        deriver: (any CommitGraphViewModelDeriving)? = nil,
-        initialPresentationReleaseDelay:
-            @escaping @Sendable () async -> Void = {
-                await Task.yield()
-            }
+        deriver: (any CommitGraphViewModelDeriving)? = nil
     ) {
         self.reader = reader
         self.repositoryURL = repositoryURL
@@ -391,7 +375,6 @@ public final class CommitGraphViewModel {
         )
         self.pageSize = min(max(pageSize, 1), 200)
         self.maximumPatchCharacters = max(maximumPatchCharacters, 1)
-        self.initialPresentationReleaseDelay = initialPresentationReleaseDelay
         graphLayout = layout
     }
 
@@ -456,75 +439,41 @@ public final class CommitGraphViewModel {
         }
     }
 
-    /// 一个呈现任务的首次加载租约。多个同时存在的页面任务复用同一个
-    /// 缓存读取；只有最后一个租约结束时才取消该读取及其派生工作。
-    public func refreshForPresentation(
-        source: CommitGraphRefreshSource
-    ) async {
-        let leaseID = beginInitialPresentationLease()
-        await withTaskCancellationHandler {
-            defer { endInitialPresentationLease(leaseID) }
-            await loadCachedSnapshotForPresentation()
-            guard !Task.isCancelled else { return }
-            await refresh(source: source)
-        } onCancel: {
-            Task { @MainActor [weak self] in
-                self?.endInitialPresentationLease(leaseID)
-            }
-        }
-    }
-
-    private func beginInitialPresentationLease() -> UUID {
-        initialPresentationGeneration &+= 1
-        pendingPresentationCancellation?.cancel()
-        pendingPresentationCancellation = nil
-        pendingPresentationCancellationID = nil
+    /// 页面进入时取得稳定租约。该租约与单次刷新任务分离，避免 revision
+    /// 变化取消旧任务时错误终止仍在显示的缓存读取。
+    @discardableResult
+    public func beginInitialPresentation() -> UUID {
         let leaseID = UUID()
         initialPresentationLeases.insert(leaseID)
+        startInitialCacheLoadForPresentationIfNeeded()
         return leaseID
     }
 
-    private func endInitialPresentationLease(_ leaseID: UUID) {
+    /// 页面离开时归还稳定租约；最后一个页面离开才终止可取消的缓存和派生。
+    public func endInitialPresentation(_ leaseID: UUID) {
         guard initialPresentationLeases.remove(leaseID) != nil,
               initialPresentationLeases.isEmpty
         else { return }
 
-        scheduleDeferredPresentationCancellation()
+        cancelInitialPresentationWork()
     }
 
-    private func scheduleDeferredPresentationCancellation() {
-        pendingPresentationCancellation?.cancel()
-        let generation = initialPresentationGeneration
-        let cancellationID = UUID()
-        let delay = initialPresentationReleaseDelay
-        let task = Task { @MainActor [weak self] in
-            await delay()
-            guard !Task.isCancelled,
-                  let self
-            else { return }
-            self.completeDeferredPresentationCancellation(
-                generation: generation,
-                cancellationID: cancellationID
-            )
-        }
-        pendingPresentationCancellation = task
-        pendingPresentationCancellationID = cancellationID
-    }
-
-    private func completeDeferredPresentationCancellation(
-        generation: UInt64,
-        cancellationID: UUID
-    ) {
-        guard initialPresentationLeases.isEmpty,
-              initialPresentationGeneration == generation,
-              pendingPresentationCancellationID == cancellationID
+    /// revision 任务只协调“缓存优先后刷新”，不会取得或释放页面呈现租约。
+    public func refreshForPresentationRevision(
+        source: CommitGraphRefreshSource
+    ) async {
+        guard !initialPresentationLeases.isEmpty else { return }
+        await loadCachedSnapshotForPresentation()
+        guard !Task.isCancelled,
+              !initialPresentationLeases.isEmpty
         else { return }
+        await refresh(source: source)
+    }
 
+    private func cancelInitialPresentationWork() {
         initialCacheLoadTask?.cancel()
         initialCacheLoadTask = nil
         initialCacheLoadID = nil
-        pendingPresentationCancellation = nil
-        pendingPresentationCancellationID = nil
         baseDerivationTask?.cancel()
         sceneDerivationTask?.cancel()
         baseDerivationTask = nil
@@ -534,28 +483,30 @@ public final class CommitGraphViewModel {
         isLoadingMore = false
     }
 
+    private func startInitialCacheLoadForPresentationIfNeeded() {
+        guard !didCompleteInitialCacheLoad,
+              initialCacheLoadTask == nil
+        else { return }
+
+        let loadID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return false }
+            return await self.loadCachedSnapshot()
+        }
+        initialCacheLoadTask = task
+        initialCacheLoadID = loadID
+    }
+
     private func loadCachedSnapshotForPresentation() async {
         guard !didCompleteInitialCacheLoad else { return }
-
-        let task: Task<Bool, Never>
-        let loadID: UUID
-        if let initialCacheLoadTask, let initialCacheLoadID {
-            task = initialCacheLoadTask
-            loadID = initialCacheLoadID
-        } else {
-            let nextLoadID = UUID()
-            let nextTask = Task { @MainActor [weak self] in
-                guard let self else { return false }
-                return await self.loadCachedSnapshot()
-            }
-            initialCacheLoadTask = nextTask
-            initialCacheLoadID = nextLoadID
-            task = nextTask
-            loadID = nextLoadID
-        }
+        startInitialCacheLoadForPresentationIfNeeded()
+        guard let task = initialCacheLoadTask,
+              let loadID = initialCacheLoadID
+        else { return }
 
         let didLoad = await task.value
         guard !Task.isCancelled,
+              !initialPresentationLeases.isEmpty,
               initialCacheLoadID == loadID
         else { return }
         initialCacheLoadTask = nil
