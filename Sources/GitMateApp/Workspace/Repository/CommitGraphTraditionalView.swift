@@ -2,6 +2,12 @@ import AppKit
 import GitMateCore
 import SwiftUI
 
+struct CommitGraphTraditionalGroupBadge: Equatable {
+    let title: String
+    let isCollapsed: Bool
+    let groupID: UUID
+}
+
 struct CommitGraphTraditionalView: View {
     let layout: CommitGraphTraditionalLayoutResult
     let groups: [CommitGraphGroup]
@@ -14,6 +20,8 @@ struct CommitGraphTraditionalView: View {
 
     @State private var verticalOffset = 0.0
     @State private var laneHorizontalOffset = 0.0
+    @State private var groupByHash:
+        [String: CommitGraphTraditionalGroupBadge] = [:]
 
     var body: some View {
         GeometryReader { geometry in
@@ -32,7 +40,7 @@ struct CommitGraphTraditionalView: View {
             ZStack(alignment: .topLeading) {
                 CommitGraphTraditionalCanvas(
                     layout: layout,
-                    groups: groups,
+                    groupByHash: groupByHash,
                     visibleRows: visibleRows,
                     verticalOffset: verticalOffset,
                     laneHorizontalOffset: laneHorizontalOffset,
@@ -66,11 +74,16 @@ struct CommitGraphTraditionalView: View {
                         select(layout.rows[row].commit.fullHash)
                     }
                 )
-                .accessibilityLabel("传统提交图")
-                .accessibilityHint("上下滚动查看历史，在左侧泳道区横向滚动查看分支")
+                .accessibilityHidden(true)
                 .accessibilityIdentifier("workspace.commitGraph.traditional")
+
+                accessibilityRows(
+                    visibleRows: visibleRows,
+                    width: width
+                )
             }
             .onAppear {
+                rebuildGroupIndex()
                 clampOffsets(width: width, height: height)
                 applyFocusIfNeeded(viewportHeight: height)
             }
@@ -87,8 +100,52 @@ struct CommitGraphTraditionalView: View {
             .onChange(of: focusedHash) { _, _ in
                 applyFocusIfNeeded(viewportHeight: height)
             }
+            .onChange(of: groups) { _, _ in
+                rebuildGroupIndex()
+            }
         }
         .background(.white)
+    }
+
+    private func accessibilityRows(
+        visibleRows: Range<Int>,
+        width: Double
+    ) -> some View {
+        ForEach(Array(visibleRows), id: \.self) { rowIndex in
+            if layout.rows.indices.contains(rowIndex) {
+                let row = layout.rows[rowIndex]
+                Rectangle()
+                    .fill(.clear)
+                    .frame(
+                        width: width,
+                        height: CommitGraphTraditionalMetrics.rowHeight
+                    )
+                    .position(
+                        x: width / 2,
+                        y: Double(rowIndex)
+                            * CommitGraphTraditionalMetrics.rowHeight
+                            + CommitGraphTraditionalMetrics.rowHeight / 2
+                            - verticalOffset
+                    )
+                    .allowsHitTesting(false)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(
+                        "\(row.commit.subject)，作者 \(row.commit.authorName)，提交 \(row.commit.shortHash)"
+                    )
+                    .accessibilityHint("打开提交详情")
+                    .accessibilityAddTraits(
+                        row.commit.fullHash == selectedHash
+                            ? [.isButton, .isSelected]
+                            : .isButton
+                    )
+                    .accessibilityAction {
+                        select(row.commit.fullHash)
+                    }
+                    .accessibilityIdentifier(
+                        "workspace.commitGraph.traditional.row.\(row.commit.fullHash)"
+                    )
+            }
+        }
     }
 
     private func avatarLayer(
@@ -150,12 +207,30 @@ struct CommitGraphTraditionalView: View {
               let row = layout.row(hash: focusedHash)
         else { return }
         let desired = Double(row.row) * CommitGraphTraditionalMetrics.rowHeight
-            - viewportHeight * 0.32
+            - viewportHeight * 0.5
         verticalOffset = clampedVerticalOffset(
             desired,
             viewportHeight: viewportHeight
         )
         consumeFocus(focusedHash)
+    }
+
+    private func rebuildGroupIndex() {
+        var rebuilt: [String: CommitGraphTraditionalGroupBadge] = [:]
+        rebuilt.reserveCapacity(
+            groups.reduce(0) { $0 + $1.memberHashes.count }
+        )
+        for group in groups {
+            let badge = CommitGraphTraditionalGroupBadge(
+                title: group.title,
+                isCollapsed: group.isCollapsed,
+                groupID: group.id
+            )
+            for hash in group.memberHashes {
+                rebuilt[hash] = badge
+            }
+        }
+        groupByHash = rebuilt
     }
 
     private func clampOffsets(width: Double, height: Double) {
@@ -254,11 +329,17 @@ private struct TraditionalInteractionSurface: NSViewRepresentable {
 
         override func scrollWheel(with event: NSEvent) {
             let point = convert(event.locationInWindow, from: nil)
+            let verticalScale: Double = event.hasPreciseScrollingDeltas
+                ? 1
+                : rowHeight * 3
+            let horizontalScale: Double = event.hasPreciseScrollingDeltas
+                ? 1
+                : 48
             let horizontal = point.x <= laneViewportWidth
-                ? Double(event.scrollingDeltaX)
+                ? Double(event.scrollingDeltaX) * horizontalScale
                 : 0
             coordinator?.scroll(
-                Double(event.scrollingDeltaY),
+                Double(event.scrollingDeltaY) * verticalScale,
                 horizontal
             )
         }

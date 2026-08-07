@@ -19,8 +19,19 @@ enum CommitGraphTraditionalMetrics {
 }
 
 struct CommitGraphTraditionalCanvas: View {
+    private struct Badge {
+        let text: String
+        let color: Color
+    }
+
+    private struct BadgePlan {
+        let visible: [Badge]
+        let hiddenCount: Int
+        let totalWidth: Double
+    }
+
     let layout: CommitGraphTraditionalLayoutResult
-    let groups: [CommitGraphGroup]
+    let groupByHash: [String: CommitGraphTraditionalGroupBadge]
     let visibleRows: Range<Int>
     let verticalOffset: Double
     let laneHorizontalOffset: Double
@@ -111,42 +122,46 @@ struct CommitGraphTraditionalCanvas: View {
                 height: Double(size.height)
             )))
 
+            for span in layout.connectionSpans(
+                intersecting: visibleRows
+            ) {
+                let connection = span.connection
+                let source = lanePoint(
+                    row: span.sourceRow,
+                    lane: connection.sourceLane
+                )
+                let target = lanePoint(
+                    row: span.targetRow,
+                    lane: connection.targetLane
+                )
+                var path = Path()
+                path.move(to: source)
+                let middleY = source.y + (target.y - source.y) * 0.5
+                path.addCurve(
+                    to: target,
+                    control1: CGPoint(x: source.x, y: middleY),
+                    control2: CGPoint(x: target.x, y: middleY)
+                )
+                layer.stroke(
+                    path,
+                    with: .color(
+                        CommitGraphPalette.color(
+                            connection.colorIndex
+                        ).opacity(0.9)
+                    ),
+                    style: StrokeStyle(
+                        lineWidth: connection.kind == .merge ? 2.2 : 2,
+                        lineCap: .round,
+                        lineJoin: .round,
+                        dash: connection.kind == .merge ? [6, 4] : []
+                    )
+                )
+            }
+
             for rowIndex in visibleRows {
                 guard layout.rows.indices.contains(rowIndex) else { continue }
                 let row = layout.rows[rowIndex]
                 let source = lanePoint(row: rowIndex, lane: row.lane)
-
-                for connection in row.connections {
-                    guard let targetRow = layout.row(
-                        hash: connection.parentHash
-                    ) else { continue }
-                    let target = lanePoint(
-                        row: targetRow.row,
-                        lane: connection.targetLane
-                    )
-                    var path = Path()
-                    path.move(to: source)
-                    let middleY = source.y + (target.y - source.y) * 0.5
-                    path.addCurve(
-                        to: target,
-                        control1: CGPoint(x: source.x, y: middleY),
-                        control2: CGPoint(x: target.x, y: middleY)
-                    )
-                    layer.stroke(
-                        path,
-                        with: .color(
-                            CommitGraphPalette.color(
-                                connection.colorIndex
-                            ).opacity(0.9)
-                        ),
-                        style: StrokeStyle(
-                            lineWidth: connection.kind == .merge ? 2.2 : 2,
-                            lineCap: .round,
-                            lineJoin: .round,
-                            dash: connection.kind == .merge ? [6, 4] : []
-                        )
-                    )
-                }
 
                 let color = CommitGraphPalette.color(row.colorIndex)
                 let outer = CGRect(
@@ -197,9 +212,30 @@ struct CommitGraphTraditionalCanvas: View {
                 let avatarX = laneWidth + 18
                 let textX = avatarX
                     + CommitGraphTraditionalMetrics.avatarSize + 12
-                let trailingWidth = min(252.0, max(Double(size.width) * 0.27, 168))
+                let hashRect = CGRect(
+                    x: Double(size.width) - 80,
+                    y: rowRect.minY + 8,
+                    width: 66,
+                    height: 18
+                )
+                let headerTrailingX = hashRect.minX - 8
+                let badgePlan = badgePlan(
+                    badges: badges(for: row),
+                    maximumWidth: max(
+                        headerTrailingX - textX - 140,
+                        0
+                    )
+                )
+                drawBadgePlan(
+                    badgePlan,
+                    trailingX: headerTrailingX,
+                    centerY: rowRect.minY + 18,
+                    context: &layer
+                )
                 let textWidth = max(
-                    Double(size.width) - textX - trailingWidth - 14,
+                    headerTrailingX - textX
+                        - badgePlan.totalWidth
+                        - (badgePlan.totalWidth > 0 ? 8 : 0),
                     1
                 )
                 drawFittedText(
@@ -219,7 +255,10 @@ struct CommitGraphTraditionalCanvas: View {
                     in: CGRect(
                         x: textX,
                         y: rowRect.minY + 30,
-                        width: max(textWidth * 0.55, 1),
+                        width: max(
+                            Double(size.width) - textX - 124,
+                            1
+                        ),
                         height: 16
                     ),
                     font: .systemFont(ofSize: 10.5, weight: .medium),
@@ -227,12 +266,6 @@ struct CommitGraphTraditionalCanvas: View {
                     context: &layer
                 )
 
-                let hashRect = CGRect(
-                    x: Double(size.width) - 80,
-                    y: rowRect.minY + 8,
-                    width: 66,
-                    height: 18
-                )
                 drawFittedText(
                     row.commit.shortHash,
                     in: hashRect,
@@ -254,46 +287,137 @@ struct CommitGraphTraditionalCanvas: View {
                     context: &layer
                 )
 
-                drawBadges(
-                    for: row,
-                    rowRect: rowRect,
-                    trailingX: Double(size.width) - 92,
-                    context: &layer
-                )
             }
         }
     }
 
-    private func drawBadges(
-        for row: CommitGraphTraditionalRow,
-        rowRect: CGRect,
+    private func badges(
+        for row: CommitGraphTraditionalRow
+    ) -> [Badge] {
+        var result: [Badge] = []
+        if let group = groupByHash[row.commit.fullHash] {
+            result.append(
+                Badge(
+                    text: group.isCollapsed
+                        ? "分组·已折叠"
+                        : "分组·\(group.title)",
+                    color: CommitGraphPalette.color(
+                        groupID: group.groupID
+                    )
+                )
+            )
+        }
+        result.append(
+            contentsOf: layout.references(
+                hash: row.commit.fullHash
+            ).map { reference in
+                switch reference.kind {
+                case .head:
+                    Badge(
+                        text: reference.name,
+                        color: GitMateTheme.accent
+                    )
+                case .localBranch:
+                    Badge(
+                        text: reference.name,
+                        color: CommitGraphPalette.color(row.colorIndex)
+                    )
+                case .remoteBranch:
+                    Badge(
+                        text: "远程·\(reference.name)",
+                        color: Color(red: 0.37, green: 0.20, blue: 0.68)
+                    )
+                case .tag:
+                    Badge(
+                        text: "标签·\(reference.name)",
+                        color: GitMateTheme.warning
+                    )
+                }
+            }
+        )
+        return result
+    }
+
+    private func badgePlan(
+        badges: [Badge],
+        maximumWidth: Double
+    ) -> BadgePlan {
+        guard !badges.isEmpty, maximumWidth > 0 else {
+            return BadgePlan(
+                visible: [],
+                hiddenCount: 0,
+                totalWidth: 0
+            )
+        }
+        let gap = 5.0
+        let allWidth = badges.enumerated().reduce(0.0) { partial, item in
+            partial + badgeWidth(item.element.text)
+                + (item.offset == 0 ? 0 : gap)
+        }
+        if allWidth <= maximumWidth {
+            return BadgePlan(
+                visible: badges,
+                hiddenCount: 0,
+                totalWidth: allWidth
+            )
+        }
+
+        for visibleCount in stride(
+            from: badges.count - 1,
+            through: 0,
+            by: -1
+        ) {
+            let hiddenCount = badges.count - visibleCount
+            let visible = Array(badges.prefix(visibleCount))
+            let visibleWidth = visible.enumerated().reduce(0.0) {
+                partial,
+                item in
+                partial + badgeWidth(item.element.text)
+                    + (item.offset == 0 ? 0 : gap)
+            }
+            let hiddenWidth = badgeWidth("+\(hiddenCount)")
+            let totalWidth = visibleWidth
+                + (visible.isEmpty ? 0 : gap)
+                + hiddenWidth
+            if totalWidth <= maximumWidth {
+                return BadgePlan(
+                    visible: visible,
+                    hiddenCount: hiddenCount,
+                    totalWidth: totalWidth
+                )
+            }
+        }
+        return BadgePlan(
+            visible: [],
+            hiddenCount: 0,
+            totalWidth: 0
+        )
+    }
+
+    private func drawBadgePlan(
+        _ plan: BadgePlan,
         trailingX: Double,
+        centerY: Double,
         context: inout GraphicsContext
     ) {
         var x = trailingX
-        if let group = groups.first(where: {
-            $0.memberHashes.contains(row.commit.fullHash)
-        }) {
+        if plan.hiddenCount > 0 {
             x = drawBadge(
-                group.isCollapsed ? "分组·已折叠" : "分组",
-                color: CommitGraphPalette.color(groupID: group.id),
+                "+\(plan.hiddenCount)",
+                color: GitMateTheme.textSecondary,
                 trailingX: x,
-                centerY: rowRect.minY + 38,
+                centerY: centerY,
                 context: &context
-            ) - 6
+            ) - 5
         }
-
-        if let branch = row.commit.decorations
-            .lazy
-            .compactMap(branchName)
-            .first {
-            _ = drawBadge(
-                branch,
-                color: CommitGraphPalette.color(row.colorIndex),
+        for badge in plan.visible.reversed() {
+            x = drawBadge(
+                badge.text,
+                color: badge.color,
                 trailingX: x,
-                centerY: rowRect.minY + 38,
+                centerY: centerY,
                 context: &context
-            )
+            ) - 5
         }
     }
 
@@ -305,7 +429,7 @@ struct CommitGraphTraditionalCanvas: View {
         context: inout GraphicsContext
     ) -> Double {
         let font = NSFont.systemFont(ofSize: 9.5, weight: .semibold)
-        let width = min(max(measuredWidth(text, font: font) + 14, 34), 108)
+        let width = badgeWidth(text)
         let rect = CGRect(
             x: trailingX - width,
             y: centerY - 9,
@@ -324,6 +448,11 @@ struct CommitGraphTraditionalCanvas: View {
             context: &context
         )
         return rect.minX
+    }
+
+    private func badgeWidth(_ text: String) -> Double {
+        let font = NSFont.systemFont(ofSize: 9.5, weight: .semibold)
+        return min(max(measuredWidth(text, font: font) + 14, 34), 118)
     }
 
     private func drawTrailingText(
@@ -371,18 +500,6 @@ struct CommitGraphTraditionalCanvas: View {
             width: width,
             height: CommitGraphTraditionalMetrics.rowHeight
         )
-    }
-
-    private func branchName(_ decoration: String) -> String? {
-        var name = decoration.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, !name.hasPrefix("tag:") else { return nil }
-        if name.hasPrefix("HEAD -> ") {
-            name.removeFirst("HEAD -> ".count)
-        }
-        if name.hasPrefix("origin/") {
-            return name
-        }
-        return name == "HEAD" ? nil : name
     }
 
     private func drawFittedText(
