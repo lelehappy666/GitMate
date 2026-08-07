@@ -1,6 +1,21 @@
 import GitMateCore
 
 let workspaceRouteTests = [
+    TestCase("重复选择同一提交图仍递增刷新版本") {
+        var trigger = CommitGraphRefreshTrigger()
+        let first = trigger.request(repositoryID: 42)
+        let second = trigger.request(repositoryID: 42)
+        try expectEqual(first, 1, "首次请求版本为一")
+        try expectEqual(second, 2, "重复请求必须递增")
+    },
+    TestCase("不同仓库的提交图刷新版本互不串扰") {
+        var trigger = CommitGraphRefreshTrigger()
+        _ = trigger.request(repositoryID: 42)
+        let other = trigger.request(repositoryID: 43)
+        let original = trigger.request(repositoryID: 42)
+        try expectEqual(other, 1, "另一仓库应从首个版本开始")
+        try expectEqual(original, 2, "原仓库必须保留自己的版本序列")
+    },
     TestCase("页面十至十五路由编号稳定") {
         try expectEqual(WorkspaceRoute.dashboard.pageNumber, 10, "工作台应为第 10 页")
         try expectEqual(WorkspaceRoute.repositories.pageNumber, 11, "仓库墙应为第 11 页")

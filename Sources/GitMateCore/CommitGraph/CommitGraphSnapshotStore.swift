@@ -93,13 +93,27 @@ public actor BinaryCommitGraphSnapshotStore: CommitGraphSnapshotStoring {
             at: rootDirectory,
             withIntermediateDirectories: true
         )
+        let destination = snapshotURL(repositoryID: repositoryID)
+        if fileManager.fileExists(atPath: destination.path),
+           let existingSchemaVersion = try? PropertyListDecoder().decode(
+               SnapshotVersionEnvelope.self,
+               from: dataReader(destination)
+           ).schemaVersion,
+           existingSchemaVersion > CommitGraphSnapshot.currentSchemaVersion {
+            // 新版应用写入的快照不能被当前版本回退覆盖；保留文件，等
+            // 支持对应 schema 的版本接手。
+            throw CommitGraphSnapshotStoreError.unsupportedSchema(
+                repositoryID: repositoryID,
+                schemaVersion: existingSchemaVersion
+            )
+        }
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
         let data = try encoder.encode(snapshot)
 
         // Foundation 在目标文件同一目录创建临时文件后再替换，保证读者不会观察到半写入快照。
         try data.write(
-            to: snapshotURL(repositoryID: repositoryID),
+            to: destination,
             options: .atomic
         )
     }

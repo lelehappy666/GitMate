@@ -9,6 +9,8 @@ struct WorkspaceRootView: View {
     @State private var repositoryGroups: WorkspaceRepositoryGroups
     @State private var repositorySelectionGate: RepositorySelectionGate
     @State private var repositoryRevision = 0
+    @State private var commitGraphRefreshTrigger =
+        CommitGraphRefreshTrigger()
 
     let preferences: [RepositorySyncPreference]
     let runtime: WorkspaceRuntimeDependencies
@@ -96,7 +98,8 @@ struct WorkspaceRootView: View {
                 selection: $selection,
                 repositories: repositoryGroups.local,
                 selectionGate: repositorySelectionGate,
-                account: session.account
+                account: session.account,
+                onCommitGraphRequested: requestCommitGraphRefresh
             )
         } detail: {
             if apiAuthorizationRequired {
@@ -206,7 +209,11 @@ struct WorkspaceRootView: View {
                     reader: runtime.localGit,
                     repositoryURL: runtime.catalog.localURL(for: repository),
                     repositoryID: repository.id,
-                    sceneStore: runtime.commitGraphSceneStore
+                    sceneStore: runtime.commitGraphSceneStore,
+                    refreshCoordinator: runtime.commitGraphRefreshCoordinator,
+                    refreshRevision: commitGraphRefreshTrigger.revision(
+                        repositoryID: repository.id
+                    )
                 )
                 .id("commit-graph-\(repositoryID)")
             } else {
@@ -226,6 +233,12 @@ struct WorkspaceRootView: View {
 
     private func requireReauthorization() {
         apiAuthorizationRequired = true
+    }
+
+    private func requestCommitGraphRefresh(repositoryID: Int64) {
+        _ = commitGraphRefreshTrigger.request(
+            repositoryID: repositoryID
+        )
     }
 
     private var reauthorizationView: some View {
@@ -863,20 +876,36 @@ private struct CommitGraphPageContainer: View {
         reader: any LocalGitReading,
         repositoryURL: URL,
         repositoryID: Int64,
-        sceneStore: any CommitGraphSceneStoring
+        sceneStore: any CommitGraphSceneStoring,
+        refreshCoordinator: CommitGraphRefreshCoordinator,
+        refreshRevision: Int
     ) {
         _viewModel = State(
             initialValue: CommitGraphViewModel(
                 reader: reader,
                 repositoryURL: repositoryURL,
                 repositoryID: repositoryID,
-                sceneStore: sceneStore
+                sceneStore: sceneStore,
+                refreshCoordinator: refreshCoordinator
             )
         )
+        self.refreshRevision = refreshRevision
     }
+
+    let refreshRevision: Int
 
     var body: some View {
         CommitGraphView(viewModel: viewModel)
+            .task(id: refreshRevision) {
+                if refreshRevision == 0 {
+                    await viewModel.loadCachedSnapshot()
+                    // 缓存先于完整扫描呈现；两次操作顺序执行，避免首次进入
+                    // 页面时旧的分页加载与快照刷新同时写入 ViewModel。
+                    await viewModel.refresh(source: .initial)
+                } else {
+                    await viewModel.refresh(source: .sidebar)
+                }
+            }
     }
 }
 

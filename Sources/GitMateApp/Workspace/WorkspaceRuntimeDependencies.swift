@@ -17,6 +17,8 @@ final class WorkspaceRuntimeDependencies {
     let importedRepositoryStore: any ImportedLocalRepositoryStoring
     let localRepositoryImporter: any LocalRepositoryImporting
     let commitGraphSceneStore: any CommitGraphSceneStoring
+    let commitGraphSnapshotStore: any CommitGraphSnapshotStoring
+    let commitGraphRefreshCoordinator: CommitGraphRefreshCoordinator
 
     private var contentServices: [String: WorkspaceContentService] = [:]
     private var workspaceAPIs: [String: any GitHubWorkspaceAPI] = [:]
@@ -49,7 +51,11 @@ final class WorkspaceRuntimeDependencies {
         localRepositoryImporter:
             (any LocalRepositoryImporting)? = nil,
         commitGraphSceneStore:
-            (any CommitGraphSceneStoring)? = nil
+            (any CommitGraphSceneStoring)? = nil,
+        commitGraphSnapshotStore:
+            (any CommitGraphSnapshotStoring)? = nil,
+        commitGraphRefreshCoordinator:
+            CommitGraphRefreshCoordinator? = nil
     ) {
         self.credentialStore = credentialStore
         self.catalog = catalog ?? LocalRepositoryCatalog(
@@ -100,6 +106,27 @@ final class WorkspaceRuntimeDependencies {
                     path: "CommitGraphScenes",
                     directoryHint: .isDirectory
                 )
+            )
+        let snapshotStore = commitGraphSnapshotStore
+            ?? BinaryCommitGraphSnapshotStore(
+                // 正式运行时 syncDestination 位于 Application Support/GitMate/
+                // Repositories，因此快照也和本地工作区数据一起持久化。
+                rootDirectory: syncDestination
+                    .deletingLastPathComponent()
+                    .appending(
+                        path: "CommitGraphSnapshots",
+                        directoryHint: .isDirectory
+                    )
+            )
+        self.commitGraphSnapshotStore = snapshotStore
+        self.commitGraphRefreshCoordinator =
+            commitGraphRefreshCoordinator
+            ?? CommitGraphRefreshCoordinator(
+                reader: (localGit as? any CommitGraphSnapshotReading)
+                    ?? CommandLocalGitReader(
+                        executor: ProcessCommandExecutor()
+                    ),
+                store: snapshotStore
             )
     }
 

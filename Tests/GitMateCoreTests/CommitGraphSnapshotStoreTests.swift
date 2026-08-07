@@ -138,6 +138,58 @@ let commitGraphSnapshotStoreTests = [
             )
         }
     },
+    TestCase("未来版本的提交图快照不会被刷新覆盖") {
+        let directory = commitGraphSnapshotStoreTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let futureSchema = CommitGraphSnapshot.currentSchemaVersion + 1
+        let futureSnapshot = CommitGraphSnapshot(
+            schemaVersion: futureSchema,
+            repositoryPath: "/repo",
+            fingerprint: CommitGraphReferenceFingerprint(
+                references: [],
+                headName: "main",
+                headHash: "future",
+                isShallow: false
+            ),
+            commitsNewestFirst: [],
+            expectedCommitCount: 0,
+            shallowBoundaryParentHashes: [],
+            generatedAt: Date(timeIntervalSince1970: 1)
+        )
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        let targetURL = directory.appending(path: "9.plist")
+        try encoder.encode(futureSnapshot).write(to: targetURL)
+        let originalData = try Data(contentsOf: targetURL)
+        let store = BinaryCommitGraphSnapshotStore(rootDirectory: directory)
+
+        do {
+            try await store.save(
+                commitGraphSnapshotStoreFixture(repositoryPath: "/repo"),
+                repositoryID: 9
+            )
+            throw TestFailure(description: "未来版本缓存不得被覆盖")
+        } catch let error as CommitGraphSnapshotStoreError {
+            try expectEqual(
+                error,
+                .unsupportedSchema(
+                    repositoryID: 9,
+                    schemaVersion: futureSchema
+                ),
+                "必须保留未来版本的原始缓存"
+            )
+        }
+        let preservedData = try Data(contentsOf: targetURL)
+        try expectEqual(
+            preservedData,
+            originalData,
+            "拒绝保存后磁盘内容必须保持不变"
+        )
+    },
     TestCase("临时文件不会被识别为提交图快照") {
         let directory = commitGraphSnapshotStoreTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -47,9 +47,6 @@ struct CommitGraphView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.white)
-        .task {
-            await viewModel.load()
-        }
         .sheet(isPresented: detailPresented) {
             if let detail = viewModel.selectedCommit {
                 CommitDetailSheet(

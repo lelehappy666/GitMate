@@ -6,18 +6,21 @@ struct WorkspaceSidebar: View {
     let repositories: [Repository]
     let selectionGate: RepositorySelectionGate
     let account: GitHubAccount
+    let onCommitGraphRequested: (Int64) -> Void
     @State private var currentRepositoryID: Int64?
 
     init(
         selection: Binding<WorkspaceSelection>,
         repositories: [Repository],
         selectionGate: RepositorySelectionGate,
-        account: GitHubAccount
+        account: GitHubAccount,
+        onCommitGraphRequested: @escaping (Int64) -> Void
     ) {
         _selection = selection
         self.repositories = repositories
         self.selectionGate = selectionGate
         self.account = account
+        self.onCommitGraphRequested = onCommitGraphRequested
         _currentRepositoryID = State(
             initialValue: selection.wrappedValue.route.repositoryID
                 ?? repositories.first?.id
@@ -85,7 +88,11 @@ struct WorkspaceSidebar: View {
                 routeButton(
                     title: "提交图",
                     symbol: "point.3.connected.trianglepath.dotted",
-                    route: repositoryRoute { .commitGraph(repositoryID: $0) }
+                    route: repositoryRoute { .commitGraph(repositoryID: $0) },
+                    onSelect: {
+                        guard let currentRepositoryID else { return }
+                        onCommitGraphRequested(currentRepositoryID)
+                    }
                 )
             }
             .padding(.horizontal, 10)
@@ -194,10 +201,12 @@ struct WorkspaceSidebar: View {
     private func routeButton(
         title: String,
         symbol: String,
-        route: WorkspaceRoute
+        route: WorkspaceRoute,
+        onSelect: (() -> Void)? = nil
     ) -> some View {
         Button {
             selection.route = route
+            onSelect?()
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: symbol)

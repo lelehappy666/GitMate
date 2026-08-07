@@ -366,7 +366,7 @@ private struct PreviewGitHubWorkspaceAPI: GitHubWorkspaceAPI {
     }
 }
 
-private struct PreviewLocalGitReader: LocalGitReading {
+private struct PreviewLocalGitReader: LocalGitReading, CommitGraphSnapshotReading {
     func status(repositoryURL: URL) async throws -> LocalRepositoryStatus {
         LocalRepositoryStatus(
             branch: repositoryURL.path.contains("design-system")
@@ -512,6 +512,42 @@ private struct PreviewLocalGitReader: LocalGitReading {
         CommitGraphPage(
             commits: Array(Self.commits.prefix(limit)),
             nextCursor: nil
+        )
+    }
+
+    func fingerprint(
+        repositoryURL: URL
+    ) async throws -> CommitGraphReferenceFingerprint {
+        CommitGraphReferenceFingerprint(
+            references: [
+                CommitGraphReference(
+                    name: "main",
+                    targetHash: Self.commits[0].fullHash,
+                    kind: .localBranch
+                ),
+                CommitGraphReference(
+                    name: "origin/main",
+                    targetHash: Self.commits[0].fullHash,
+                    kind: .remoteBranch
+                )
+            ],
+            headName: "main",
+            headHash: Self.commits[0].fullHash,
+            isShallow: false
+        )
+    }
+
+    func snapshot(
+        repositoryURL: URL,
+        fingerprint: CommitGraphReferenceFingerprint
+    ) async throws -> CommitGraphSnapshot {
+        CommitGraphSnapshot(
+            repositoryPath: repositoryURL.standardizedFileURL.path,
+            fingerprint: fingerprint,
+            commitsNewestFirst: Self.commits,
+            expectedCommitCount: Self.commits.count,
+            shallowBoundaryParentHashes: [],
+            generatedAt: Date()
         )
     }
 
