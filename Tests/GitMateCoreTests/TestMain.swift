@@ -44,6 +44,7 @@ struct GitMateCoreTestsMain {
             + commitGraphSceneStoreTests
             + commitGraphViewportProjectorTests
             + commitGraphViewModelTests
+            + commitGraphIntegrityValidatorTests
         var failedCount = 0
 
         for test in tests {

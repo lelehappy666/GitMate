@@ -1,6 +1,6 @@
 import Foundation
 
-public struct GitCommit: Identifiable, Equatable, Sendable {
+public struct GitCommit: Identifiable, Codable, Equatable, Sendable {
     public var id: String { fullHash }
     public let shortHash: String
     public let fullHash: String
