@@ -506,21 +506,36 @@ let commitGraphRenderIndexTests = [
         let nodes = (0..<50_000).map { index in
             renderVisibleNode(
                 hash: "edge-node-\(index)",
-                x: Double(index % 5) * 10_000,
-                y: Double(index) * 10_000
+                x: index % 2 == 0 ? 200 : 20_000,
+                y: Double(index) * 140
             )
         }
-        let edges = (0..<50_000).map { index in
+        let parentEdges = (1..<50_000).map { index in
             renderIndexEdge(
-                id: "edge-\(index)",
+                id: "parent-\(index)",
                 source: "edge-node-\(index)",
-                target: "edge-node-\(index)",
+                target: "edge-node-\(index - 1)",
                 ports: CommitGraphEdgePorts(
                     source: PortAnchor(side: .right, offset: 0.31),
                     target: PortAnchor(side: .bottom, offset: 0.69)
                 )
             )
         }
+        let offscreenMergeEdges = (0..<1_000).map { index in
+            renderIndexEdge(
+                id: "wide-merge-\(index)",
+                source: "edge-node-\(40_001 + index * 2)",
+                target: "edge-node-\(8_000 + index * 2)",
+                kind: .merge
+            )
+        }
+        let crossingMerge = renderIndexEdge(
+            id: "visible-long-merge",
+            source: "edge-node-40000",
+            target: "edge-node-10000",
+            kind: .merge
+        )
+        let edges = parentEdges + offscreenMergeEdges + [crossingMerge]
         var index = CommitGraphRenderIndex(
             projection: CommitGraphSceneProjection(
                 nodes: nodes,
@@ -529,7 +544,7 @@ let commitGraphRenderIndexTests = [
                 lineStyle: .curve
             )
         )
-        let targetY = Double(25_000) * 10_000
+        let targetY = Double(25_000) * 140
         let viewport = GraphViewport(offsetY: -targetY)
         let screen = GraphSize(width: 800, height: 600)
         let before = index.queryWithDiagnostics(
@@ -551,12 +566,23 @@ let commitGraphRenderIndexTests = [
             "切换线型本身不得遍历或生成五万条边的几何"
         )
         try expect(
-            after.diagnostics.generatedEdgeGeometries < 20,
+            before.diagnostics.edgeCandidates < 100,
+            "曲线候选必须沿真实路径形成窄带，不能让一千条宽 Merge 的 AABB 全部命中"
+        )
+        try expect(
+            after.diagnostics.edgeCandidates < 100,
+            "直角候选必须沿真实折线路径形成窄带，不能退化为二维面积"
+        )
+        try expect(
+            after.diagnostics.generatedEdgeGeometries < 100,
             "切换后的首次查询只能生成局部候选边几何"
         )
         try expect(
-            after.diagnostics.edgeCandidates < 20,
-            "切换后的边候选必须保持局部规模"
+            before.scene.edges.contains { $0.id == "visible-long-merge" }
+                && after.scene.edges.contains {
+                    $0.id == "visible-long-merge"
+                },
+            "两种线型都不得漏掉真实穿过视口的超长 Merge"
         )
         try expectEqual(
             after.scene.edges.first?.ports,
@@ -605,6 +631,7 @@ private func renderIndexEdge(
     id: String,
     source: String,
     target: String,
+    kind: CommitGraphEdgeKind = .parent,
     ports: CommitGraphEdgePorts = CommitGraphEdgePorts(
         source: PortAnchor(side: .right, offset: 0.5),
         target: PortAnchor(side: .left, offset: 0.5)
@@ -614,7 +641,7 @@ private func renderIndexEdge(
         id: id,
         source: .node(source),
         target: .node(target),
-        kind: .parent,
+        kind: kind,
         colorIndex: 0,
         ports: ports,
         aggregateKey: nil,

@@ -476,7 +476,7 @@ public struct CommitGraphRenderIndex: Sendable {
 }
 
 private struct RenderEdgeCandidate: Sendable {
-    let bounds: GraphRect
+    private static let preferredCellLimit = 16
     let indexCells: Set<RenderGridCell>?
 
     init(
@@ -484,58 +484,79 @@ private struct RenderEdgeCandidate: Sendable {
         targetRect: GraphRect,
         ports: CommitGraphEdgePorts
     ) {
-        let curve = CommitGraphPathGeometry.curve(
-            startRect: sourceRect,
-            startAnchor: ports.source,
-            endRect: targetRect,
-            endAnchor: ports.target
+        let curve = RenderIndexedPath(
+            CommitGraphPathGeometry.curve(
+                startRect: sourceRect,
+                startAnchor: ports.source,
+                endRect: targetRect,
+                endAnchor: ports.target
+            )
         )
-        let orthogonal = CommitGraphPathGeometry.orthogonal(
-            startRect: sourceRect,
-            startAnchor: ports.source,
-            endRect: targetRect,
-            endAnchor: ports.target
+        let orthogonal = RenderIndexedPath(
+            CommitGraphPathGeometry.orthogonal(
+                startRect: sourceRect,
+                startAnchor: ports.source,
+                endRect: targetRect,
+                endAnchor: ports.target
+            )
         )
-        var points = [
-            GraphPoint(x: sourceRect.minimumX, y: sourceRect.minimumY),
-            GraphPoint(x: sourceRect.maximumX, y: sourceRect.maximumY),
-            GraphPoint(x: targetRect.minimumX, y: targetRect.minimumY),
-            GraphPoint(x: targetRect.maximumX, y: targetRect.maximumY)
-        ]
-        switch curve {
-        case let .curve(start, control1, control2, end):
-            points.append(contentsOf: [start, control1, control2, end])
-        case let .polyline(curvePoints):
-            points.append(contentsOf: curvePoints)
-        }
-        switch orthogonal {
-        case let .polyline(orthogonalPoints):
-            points.append(contentsOf: orthogonalPoints)
-        case let .curve(start, control1, control2, end):
-            points.append(contentsOf: [start, control1, control2, end])
-        }
-        let xs = points.map(\.x)
-        let ys = points.map(\.y)
-        let minimumX = xs.min() ?? 0
-        let maximumX = xs.max() ?? minimumX
-        let minimumY = ys.min() ?? 0
-        let maximumY = ys.max() ?? minimumY
-        bounds = GraphRect(
-            x: minimumX,
-            y: minimumY,
-            width: maximumX - minimumX,
-            height: maximumY - minimumY
-        )
-        for level in 0..<64 {
-            if let cells = RenderSpatialGrid.cells(
-                for: bounds,
-                level: level
-            ) {
-                indexCells = cells
-                return
-            }
+        for scale in RenderSpatialGrid.adaptiveScales {
+            var cells = Set<RenderGridCell>()
+            guard Self.append(
+                rect: sourceRect,
+                scale: scale,
+                limit: Self.preferredCellLimit,
+                to: &cells
+            ), Self.append(
+                rect: targetRect,
+                scale: scale,
+                limit: Self.preferredCellLimit,
+                to: &cells
+            ), Self.append(
+                path: curve,
+                scale: scale,
+                limit: Self.preferredCellLimit,
+                to: &cells
+            ), Self.append(
+                path: orthogonal,
+                scale: scale,
+                limit: Self.preferredCellLimit,
+                to: &cells
+            ) else { continue }
+            indexCells = cells
+            return
         }
         indexCells = nil
+    }
+
+    private static func append(
+        rect: GraphRect,
+        scale: RenderGridScale,
+        limit: Int,
+        to cells: inout Set<RenderGridCell>
+    ) -> Bool {
+        guard let rectCells = RenderSpatialGrid.cells(
+            for: rect,
+            scale: scale
+        ) else { return false }
+        cells.formUnion(rectCells)
+        return cells.count <= limit
+    }
+
+    private static func append(
+        path: RenderIndexedPath,
+        scale: RenderGridScale,
+        limit: Int,
+        to cells: inout Set<RenderGridCell>
+    ) -> Bool {
+        guard let pathCells = path.indexCells(
+            scale: scale,
+            limit: limit
+        ) else {
+            return false
+        }
+        cells.formUnion(pathCells)
+        return cells.count <= limit
     }
 }
 
@@ -608,11 +629,25 @@ private enum RenderIndexedPath: Sendable {
     }
 
     func indexCells(level: Int) -> Set<RenderGridCell>? {
+        indexCells(scale: RenderGridScale(xLevel: level, yLevel: level))
+    }
+
+    func indexCells(scale: RenderGridScale) -> Set<RenderGridCell>? {
+        indexCells(
+            scale: scale,
+            limit: RenderSpatialGrid.maximumCellsPerItem
+        )
+    }
+
+    func indexCells(
+        scale: RenderGridScale,
+        limit: Int
+    ) -> Set<RenderGridCell>? {
         switch self {
         case let .curve(curve):
-            return RenderSpatialGrid.cells(
-                for: curve.controlBounds,
-                level: level
+            return curve.conservativeIndexCells(
+                scale: scale,
+                limit: limit
             )
         case let .orthogonal(segments):
             var cells = Set<RenderGridCell>()
@@ -620,12 +655,13 @@ private enum RenderIndexedPath: Sendable {
                 guard let segmentCells = RenderSpatialGrid.cells(
                     from: segment.start,
                     to: segment.end,
-                    level: level
+                    scale: scale,
+                    limit: limit
                 ) else {
                     return nil
                 }
                 cells.formUnion(segmentCells)
-                if cells.count > RenderSpatialGrid.maximumCellsPerItem {
+                if cells.count > limit {
                     return nil
                 }
             }
@@ -641,6 +677,7 @@ private enum RenderIndexedPath: Sendable {
             return segments.contains { $0.intersects(rect) }
         }
     }
+
 }
 
 private struct RenderBezier: Sendable {
@@ -666,6 +703,62 @@ private struct RenderBezier: Sendable {
 
     func intersects(_ rect: GraphRect) -> Bool {
         intersects(rect, depth: 0)
+    }
+
+    func conservativeIndexCells(
+        scale: RenderGridScale,
+        limit: Int
+    ) -> Set<RenderGridCell>? {
+        var result = Set<RenderGridCell>()
+        guard appendConservativeIndexCells(
+            scale: scale,
+            limit: limit,
+            depth: 0,
+            to: &result
+        ) else { return nil }
+        return result
+    }
+
+    private func appendConservativeIndexCells(
+        scale: RenderGridScale,
+        limit: Int,
+        depth: Int,
+        to result: inout Set<RenderGridCell>
+    ) -> Bool {
+        guard let boundsCells = RenderSpatialGrid.cells(
+            for: controlBounds,
+            scale: scale
+        ) else {
+            guard depth < 32 else { return false }
+            let halves = split()
+            return halves.0.appendConservativeIndexCells(
+                scale: scale,
+                limit: limit,
+                depth: depth + 1,
+                to: &result
+            ) && halves.1.appendConservativeIndexCells(
+                scale: scale,
+                limit: limit,
+                depth: depth + 1,
+                to: &result
+            )
+        }
+        if boundsCells.count <= 4 || depth >= 32 {
+            result.formUnion(boundsCells)
+            return result.count <= limit
+        }
+        let halves = split()
+        return halves.0.appendConservativeIndexCells(
+            scale: scale,
+            limit: limit,
+            depth: depth + 1,
+            to: &result
+        ) && halves.1.appendConservativeIndexCells(
+            scale: scale,
+            limit: limit,
+            depth: depth + 1,
+            to: &result
+        )
     }
 
     private func intersects(_ rect: GraphRect, depth: Int) -> Bool {
@@ -809,8 +902,13 @@ private struct RenderSegment: Sendable {
     }
 }
 
+private struct RenderGridScale: Hashable, Sendable {
+    let xLevel: Int
+    let yLevel: Int
+}
+
 private struct RenderGridCell: Hashable, Sendable {
-    let level: Int
+    let scale: RenderGridScale
     let x: Int
     let y: Int
 }
@@ -1056,7 +1154,7 @@ private struct RenderSpatialGrid: Sendable {
     private typealias ColumnTree = RenderTreap<Set<Int>>
     private typealias RowTree = RenderTreap<ColumnTree>
 
-    private var levels: [Int: RowTree] = [:]
+    private var levels: [RenderGridScale: RowTree] = [:]
     private var cellsByItem: [Int: Set<RenderGridCell>] = [:]
 
     mutating func replace(item: Int, rect: GraphRect) {
@@ -1071,13 +1169,13 @@ private struct RenderSpatialGrid: Sendable {
         guard let cells else { return }
         cellsByItem[item] = cells
         for cell in cells {
-            var rows = levels[cell.level] ?? .empty
+            var rows = levels[cell.scale] ?? .empty
             var columns = rows.value(for: cell.y) ?? .empty
             var items = columns.value(for: cell.x) ?? []
             items.insert(item)
             columns = columns.setting(items, for: cell.x)
             rows = rows.setting(columns, for: cell.y)
-            levels[cell.level] = rows
+            levels[cell.scale] = rows
         }
     }
 
@@ -1086,7 +1184,7 @@ private struct RenderSpatialGrid: Sendable {
             return
         }
         for cell in cells {
-            guard var rows = levels[cell.level],
+            guard var rows = levels[cell.scale],
                   var columns = rows.value(for: cell.y),
                   var items = columns.value(for: cell.x)
             else { continue }
@@ -1098,9 +1196,9 @@ private struct RenderSpatialGrid: Sendable {
                 ? rows.removing(cell.y)
                 : rows.setting(columns, for: cell.y)
             if rows.isEmpty {
-                levels.removeValue(forKey: cell.level)
+                levels.removeValue(forKey: cell.scale)
             } else {
-                levels[cell.level] = rows
+                levels[cell.scale] = rows
             }
         }
     }
@@ -1108,8 +1206,8 @@ private struct RenderSpatialGrid: Sendable {
     func candidates(in rect: GraphRect) -> RenderSpatialQuery {
         var result = Set<Int>()
         var visitedBuckets = 0
-        for (level, rows) in levels {
-            guard let range = Self.cellRange(for: rect, level: level) else {
+        for (scale, rows) in levels {
+            guard let range = Self.cellRange(for: rect, scale: scale) else {
                 continue
             }
             rows.forEach(
@@ -1135,7 +1233,17 @@ private struct RenderSpatialGrid: Sendable {
         for rect: GraphRect,
         level: Int
     ) -> Set<RenderGridCell>? {
-        guard let range = cellRange(for: rect, level: level) else {
+        cells(
+            for: rect,
+            scale: RenderGridScale(xLevel: level, yLevel: level)
+        )
+    }
+
+    static func cells(
+        for rect: GraphRect,
+        scale: RenderGridScale
+    ) -> Set<RenderGridCell>? {
+        guard let range = cellRange(for: rect, scale: scale) else {
             return nil
         }
         guard let count = cellCount(for: range),
@@ -1147,7 +1255,7 @@ private struct RenderSpatialGrid: Sendable {
         result.reserveCapacity(count)
         for y in range.minimumY...range.maximumY {
             for x in range.minimumX...range.maximumX {
-                result.insert(RenderGridCell(level: level, x: x, y: y))
+                result.insert(RenderGridCell(scale: scale, x: x, y: y))
             }
         }
         return result
@@ -1158,13 +1266,40 @@ private struct RenderSpatialGrid: Sendable {
         to end: GraphPoint,
         level: Int
     ) -> Set<RenderGridCell>? {
-        let currentCellSize = cellSize(for: level)
+        cells(
+            from: start,
+            to: end,
+            scale: RenderGridScale(xLevel: level, yLevel: level)
+        )
+    }
+
+    static func cells(
+        from start: GraphPoint,
+        to end: GraphPoint,
+        scale: RenderGridScale
+    ) -> Set<RenderGridCell>? {
+        cells(
+            from: start,
+            to: end,
+            scale: scale,
+            limit: maximumCellsPerItem
+        )
+    }
+
+    static func cells(
+        from start: GraphPoint,
+        to end: GraphPoint,
+        scale: RenderGridScale,
+        limit: Int
+    ) -> Set<RenderGridCell>? {
+        let cellWidth = cellSize(for: scale.xLevel)
+        let cellHeight = cellSize(for: scale.yLevel)
         guard start.x.isFinite,
               start.y.isFinite,
               end.x.isFinite,
               end.y.isFinite,
-              let startCell = cell(for: start, level: level),
-              let endCell = cell(for: end, level: level)
+              let startCell = cell(for: start, scale: scale),
+              let endCell = cell(for: end, scale: scale)
         else {
             return nil
         }
@@ -1175,14 +1310,14 @@ private struct RenderSpatialGrid: Sendable {
         let deltaY = end.y - start.y
         let stepX = deltaX > 0 ? 1 : (deltaX < 0 ? -1 : 0)
         let stepY = deltaY > 0 ? 1 : (deltaY < 0 ? -1 : 0)
-        let tDeltaX = stepX == 0 ? .infinity : currentCellSize / abs(deltaX)
-        let tDeltaY = stepY == 0 ? .infinity : currentCellSize / abs(deltaY)
+        let tDeltaX = stepX == 0 ? .infinity : cellWidth / abs(deltaX)
+        let tDeltaY = stepY == 0 ? .infinity : cellHeight / abs(deltaY)
         let nextX = stepX > 0
-            ? Double(startCell.x + 1) * currentCellSize
-            : Double(startCell.x) * currentCellSize
+            ? Double(startCell.x + 1) * cellWidth
+            : Double(startCell.x) * cellWidth
         let nextY = stepY > 0
-            ? Double(startCell.y + 1) * currentCellSize
-            : Double(startCell.y) * currentCellSize
+            ? Double(startCell.y + 1) * cellHeight
+            : Double(startCell.y) * cellHeight
         var tMaxX = stepX == 0 ? .infinity : (nextX - start.x) / deltaX
         var tMaxY = stepY == 0 ? .infinity : (nextY - start.y) / deltaY
         var current = startCell
@@ -1190,14 +1325,14 @@ private struct RenderSpatialGrid: Sendable {
         while current != endCell {
             if tMaxX < tMaxY {
                 current = RenderGridCell(
-                    level: level,
+                    scale: scale,
                     x: current.x + stepX,
                     y: current.y
                 )
                 tMaxX += tDeltaX
             } else if tMaxY < tMaxX {
                 current = RenderGridCell(
-                    level: level,
+                    scale: scale,
                     x: current.x,
                     y: current.y + stepY
                 )
@@ -1206,7 +1341,7 @@ private struct RenderSpatialGrid: Sendable {
                 if stepX != 0 {
                     result.insert(
                         RenderGridCell(
-                            level: level,
+                            scale: scale,
                             x: current.x + stepX,
                             y: current.y
                         )
@@ -1215,14 +1350,14 @@ private struct RenderSpatialGrid: Sendable {
                 if stepY != 0 {
                     result.insert(
                         RenderGridCell(
-                            level: level,
+                            scale: scale,
                             x: current.x,
                             y: current.y + stepY
                         )
                     )
                 }
                 current = RenderGridCell(
-                    level: level,
+                    scale: scale,
                     x: current.x + stepX,
                     y: current.y + stepY
                 )
@@ -1230,7 +1365,7 @@ private struct RenderSpatialGrid: Sendable {
                 tMaxY += tDeltaY
             }
             result.insert(current)
-            if result.count > maximumCellsPerItem {
+            if result.count > min(limit, maximumCellsPerItem) {
                 return nil
             }
         }
@@ -1246,17 +1381,32 @@ private struct RenderSpatialGrid: Sendable {
         minimumY: Int,
         maximumY: Int
     )? {
+        cellRange(
+            for: rect,
+            scale: RenderGridScale(xLevel: level, yLevel: level)
+        )
+    }
+
+    private static func cellRange(
+        for rect: GraphRect,
+        scale: RenderGridScale
+    ) -> (
+        minimumX: Int,
+        maximumX: Int,
+        minimumY: Int,
+        maximumY: Int
+    )? {
         guard rect.minimumX.isFinite,
               rect.minimumY.isFinite,
               rect.maximumX.isFinite,
               rect.maximumY.isFinite,
               let minimum = cell(
                 for: GraphPoint(x: rect.minimumX, y: rect.minimumY),
-                level: level
+                scale: scale
               ),
               let maximum = cell(
                 for: GraphPoint(x: rect.maximumX, y: rect.maximumY),
-                level: level
+                scale: scale
               )
         else {
             return nil
@@ -1279,6 +1429,24 @@ private struct RenderSpatialGrid: Sendable {
         }
         return nil
     }
+
+    static let adaptiveScales: [RenderGridScale] = {
+        var result: [RenderGridScale] = []
+        result.reserveCapacity(4_096)
+        for total in 0...126 {
+            let minimumXLevel = max(0, total - 63)
+            let maximumXLevel = min(63, total)
+            for xLevel in minimumXLevel...maximumXLevel {
+                result.append(
+                    RenderGridScale(
+                        xLevel: xLevel,
+                        yLevel: total - xLevel
+                    )
+                )
+            }
+        }
+        return result
+    }()
 
     private static func cellCount(
         for range: (
@@ -1320,9 +1488,18 @@ private struct RenderSpatialGrid: Sendable {
         for point: GraphPoint,
         level: Int
     ) -> RenderGridCell? {
-        let currentCellSize = cellSize(for: level)
-        let x = floor(point.x / currentCellSize)
-        let y = floor(point.y / currentCellSize)
+        cell(
+            for: point,
+            scale: RenderGridScale(xLevel: level, yLevel: level)
+        )
+    }
+
+    private static func cell(
+        for point: GraphPoint,
+        scale: RenderGridScale
+    ) -> RenderGridCell? {
+        let x = floor(point.x / cellSize(for: scale.xLevel))
+        let y = floor(point.y / cellSize(for: scale.yLevel))
         guard x.isFinite,
               y.isFinite,
               x >= Double(Int.min),
@@ -1332,7 +1509,7 @@ private struct RenderSpatialGrid: Sendable {
         else {
             return nil
         }
-        return RenderGridCell(level: level, x: Int(x), y: Int(y))
+        return RenderGridCell(scale: scale, x: Int(x), y: Int(y))
     }
 }
 
