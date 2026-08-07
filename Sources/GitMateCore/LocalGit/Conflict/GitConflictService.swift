@@ -68,6 +68,12 @@ public protocol GitConflictServicing: Sendable {
         side: ConflictSide,
         confirmation: RiskConfirmation
     ) async throws
+
+    func wholeFileConfirmation(
+        repositoryURL: URL,
+        path: String,
+        side: ConflictSide
+    ) -> RiskConfirmation
 }
 
 public struct GitConflictService: GitConflictServicing, Sendable {

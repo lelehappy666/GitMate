@@ -9,11 +9,11 @@ struct CommitComposerView: View {
     var body: some View {
         HSplitView {
             stagedFiles
-                .frame(minWidth: 260, idealWidth: 300)
+                .frame(minWidth: 200, idealWidth: 230)
             FileDiffView(viewModel: diffViewModel)
-                .frame(minWidth: 430)
+                .frame(minWidth: 300)
             composer
-                .frame(minWidth: 300, idealWidth: 340)
+                .frame(minWidth: 260, idealWidth: 290)
         }
         .background(.white)
         .accessibilityIdentifier("localGit.commit")

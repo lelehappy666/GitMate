@@ -72,6 +72,16 @@ public protocol GitStashServicing: Sendable {
         id: GitStashID,
         confirmation: RiskConfirmation
     ) async throws
+
+    func popConfirmation(
+        repositoryURL: URL,
+        id: GitStashID
+    ) -> RiskConfirmation
+
+    func dropConfirmation(
+        repositoryURL: URL,
+        id: GitStashID
+    ) -> RiskConfirmation
 }
 
 public struct GitStashService: GitStashServicing, Sendable {

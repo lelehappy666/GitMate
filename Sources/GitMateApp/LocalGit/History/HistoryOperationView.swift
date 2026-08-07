@@ -86,10 +86,10 @@ struct HistoryOperationView: View {
                 Spacer()
             }
             .padding(20)
-            .frame(minWidth: 300, idealWidth: 340)
+            .frame(minWidth: 260, idealWidth: 300)
 
             preflightPanel
-                .frame(minWidth: 500)
+                .frame(minWidth: 400)
         }
     }
 

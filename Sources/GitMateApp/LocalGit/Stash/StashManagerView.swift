@@ -3,7 +3,7 @@ import SwiftUI
 
 struct StashManagerView: View {
     @Bindable var viewModel: StashViewModel
-    let service: GitStashService
+    let service: any GitStashServicing
     let repositoryURL: URL
     var onShowConflicts: () -> Void = {}
 
@@ -12,9 +12,9 @@ struct StashManagerView: View {
     var body: some View {
         HSplitView {
             listPanel
-                .frame(minWidth: 330, idealWidth: 380)
+                .frame(minWidth: 280, idealWidth: 330)
             previewPanel
-                .frame(minWidth: 480)
+                .frame(minWidth: 400)
         }
         .background(.white)
         .accessibilityIdentifier("localGit.stash")

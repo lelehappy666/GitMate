@@ -12,9 +12,9 @@ struct RemoteTransferView: View {
             Divider()
             HSplitView {
                 controls
-                    .frame(minWidth: 340, idealWidth: 380)
+                    .frame(minWidth: 280, idealWidth: 340)
                 activity
-                    .frame(minWidth: 520)
+                    .frame(minWidth: 440)
             }
         }
         .background(.white)

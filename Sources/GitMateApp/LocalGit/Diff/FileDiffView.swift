@@ -50,18 +50,21 @@ struct FileDiffView: View {
                     .foregroundStyle(GitMateTheme.textSecondary)
                 }
             }
-
-            Spacer()
+            .frame(
+                minWidth: 110,
+                maxWidth: .infinity,
+                alignment: .leading
+            )
 
             Picker("差异布局", selection: $layout) {
                 Text("统一").tag(DiffLayout.unified)
                 Text("并排").tag(DiffLayout.sideBySide)
             }
             .pickerStyle(.segmented)
-            .frame(width: 126)
+            .frame(width: 106)
 
             Toggle(
-                "忽略空白",
+                "空白",
                 isOn: Binding(
                     get: { viewModel.options.ignoreWhitespace },
                     set: {
@@ -71,7 +74,8 @@ struct FileDiffView: View {
                 )
             )
             .toggleStyle(.checkbox)
-            .font(.system(size: 11))
+            .font(.system(size: 10))
+            .fixedSize()
         }
         .padding(.horizontal, 16)
         .frame(height: 58)

@@ -3,7 +3,7 @@ import SwiftUI
 
 struct RemoteManagementView: View {
     @Bindable var viewModel: RemoteManagementViewModel
-    let service: GitRemoteService
+    let service: any GitRemoteServicing
     let repositoryURL: URL
     let credentialContext: GitCredentialContext
 
@@ -12,9 +12,9 @@ struct RemoteManagementView: View {
     var body: some View {
         HSplitView {
             remoteList
-                .frame(minWidth: 340, idealWidth: 390)
+                .frame(minWidth: 280, idealWidth: 340)
             editor
-                .frame(minWidth: 480)
+                .frame(minWidth: 400)
         }
         .background(.white)
         .accessibilityIdentifier("localGit.remotes")

@@ -13,9 +13,9 @@ struct WorkingTreeView: View {
 
             HSplitView {
                 fileList
-                    .frame(minWidth: 340, idealWidth: 400)
+                    .frame(minWidth: 280, idealWidth: 340)
                 FileDiffView(viewModel: diffViewModel)
-                    .frame(minWidth: 560)
+                    .frame(minWidth: 420)
             }
         }
         .background(.white)
@@ -47,7 +47,7 @@ struct WorkingTreeView: View {
 
             TextField("搜索文件", text: $searchText)
                 .textFieldStyle(.roundedBorder)
-                .frame(width: 220)
+                .frame(width: 170)
                 .onChange(of: searchText) { _, value in
                     workingTreeViewModel.updateSearch(value)
                 }
@@ -62,14 +62,14 @@ struct WorkingTreeView: View {
                 Text("未暂存").tag(WorkingTreeFilter.unstaged)
                 Text("未跟踪").tag(WorkingTreeFilter.untracked)
             }
-            .frame(width: 118)
+            .frame(width: 105)
 
             Button("取消暂存") {
                 Task { await workingTreeViewModel.unstageSelection() }
             }
             .disabled(workingTreeViewModel.selection.isEmpty)
 
-            Button("暂存所选") {
+            Button("暂存") {
                 Task { await workingTreeViewModel.stageSelection() }
             }
             .buttonStyle(.borderedProminent)

@@ -3,7 +3,7 @@ import SwiftUI
 
 struct ConflictResolverView: View {
     @Bindable var viewModel: ConflictResolutionViewModel
-    let service: GitConflictService
+    let service: any GitConflictServicing
     let repositoryURL: URL
     var onOpenExternalEditor: (URL) -> Void = { _ in }
 
@@ -15,9 +15,9 @@ struct ConflictResolverView: View {
             Divider()
             HSplitView {
                 fileList
-                    .frame(minWidth: 240, idealWidth: 280)
+                    .frame(minWidth: 180, idealWidth: 220)
                 editorArea
-                    .frame(minWidth: 720)
+                    .frame(minWidth: 540)
             }
         }
         .background(.white)
