@@ -354,7 +354,8 @@ struct CommitGraphView: View {
         if viewModel.scene.viewMode == .traditional {
             CommitGraphTraditionalView(
                 layout: viewModel.traditionalLayout,
-                groups: viewModel.scene.groups,
+                groupBadgeByHash: viewModel.traditionalGroupBadgeByHash,
+                groupRevision: viewModel.traditionalGroupRevision,
                 selectedHash: viewModel.selectedHash,
                 focusedHash: viewModel.focusedHash,
                 currentUserLogin: currentUserLogin,

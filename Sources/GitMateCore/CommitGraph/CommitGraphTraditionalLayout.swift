@@ -76,6 +76,25 @@ public struct CommitGraphTraditionalReference:
     }
 }
 
+public struct CommitGraphTraditionalGroupBadge:
+    Equatable,
+    Sendable
+{
+    public let title: String
+    public let isCollapsed: Bool
+    public let groupID: UUID
+
+    public init(
+        title: String,
+        isCollapsed: Bool,
+        groupID: UUID
+    ) {
+        self.title = title
+        self.isCollapsed = isCollapsed
+        self.groupID = groupID
+    }
+}
+
 public struct CommitGraphTraditionalLayoutResult: Equatable, Sendable {
     public let rows: [CommitGraphTraditionalRow]
     public let maximumLane: Int

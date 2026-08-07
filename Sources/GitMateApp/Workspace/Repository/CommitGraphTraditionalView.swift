@@ -2,15 +2,10 @@ import AppKit
 import GitMateCore
 import SwiftUI
 
-struct CommitGraphTraditionalGroupBadge: Equatable {
-    let title: String
-    let isCollapsed: Bool
-    let groupID: UUID
-}
-
 struct CommitGraphTraditionalView: View {
     let layout: CommitGraphTraditionalLayoutResult
-    let groups: [CommitGraphGroup]
+    let groupBadgeByHash: [String: CommitGraphTraditionalGroupBadge]
+    let groupRevision: UInt64
     let selectedHash: String?
     let focusedHash: String?
     let currentUserLogin: String?
@@ -20,8 +15,6 @@ struct CommitGraphTraditionalView: View {
 
     @State private var verticalOffset = 0.0
     @State private var laneHorizontalOffset = 0.0
-    @State private var groupByHash:
-        [String: CommitGraphTraditionalGroupBadge] = [:]
 
     var body: some View {
         GeometryReader { geometry in
@@ -40,7 +33,8 @@ struct CommitGraphTraditionalView: View {
             ZStack(alignment: .topLeading) {
                 CommitGraphTraditionalCanvas(
                     layout: layout,
-                    groupByHash: groupByHash,
+                    groupByHash: groupBadgeByHash,
+                    groupRevision: groupRevision,
                     visibleRows: visibleRows,
                     verticalOffset: verticalOffset,
                     laneHorizontalOffset: laneHorizontalOffset,
@@ -83,7 +77,6 @@ struct CommitGraphTraditionalView: View {
                 )
             }
             .onAppear {
-                rebuildGroupIndex()
                 clampOffsets(width: width, height: height)
                 applyFocusIfNeeded(viewportHeight: height)
             }
@@ -99,9 +92,6 @@ struct CommitGraphTraditionalView: View {
             }
             .onChange(of: focusedHash) { _, _ in
                 applyFocusIfNeeded(viewportHeight: height)
-            }
-            .onChange(of: groups) { _, _ in
-                rebuildGroupIndex()
             }
         }
         .background(.white)
@@ -206,31 +196,15 @@ struct CommitGraphTraditionalView: View {
         guard let focusedHash,
               let row = layout.row(hash: focusedHash)
         else { return }
-        let desired = Double(row.row) * CommitGraphTraditionalMetrics.rowHeight
-            - viewportHeight * 0.5
+        let desired = Double(row.row)
+            * CommitGraphTraditionalMetrics.rowHeight
+            + CommitGraphTraditionalMetrics.rowHeight / 2
+            - viewportHeight / 2
         verticalOffset = clampedVerticalOffset(
             desired,
             viewportHeight: viewportHeight
         )
         consumeFocus(focusedHash)
-    }
-
-    private func rebuildGroupIndex() {
-        var rebuilt: [String: CommitGraphTraditionalGroupBadge] = [:]
-        rebuilt.reserveCapacity(
-            groups.reduce(0) { $0 + $1.memberHashes.count }
-        )
-        for group in groups {
-            let badge = CommitGraphTraditionalGroupBadge(
-                title: group.title,
-                isCollapsed: group.isCollapsed,
-                groupID: group.id
-            )
-            for hash in group.memberHashes {
-                rebuilt[hash] = badge
-            }
-        }
-        groupByHash = rebuilt
     }
 
     private func clampOffsets(width: Double, height: Double) {

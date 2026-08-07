@@ -283,8 +283,18 @@ let commitGraphViewModelTests = [
         await viewModel.loadOlderCommits()
         viewModel.replaceSelection(with: ["hash-a", "hash-b"])
         let groupID = try viewModel.createManualGroup(title: "旧名称")
+        let revisionAfterCreate = viewModel.traditionalGroupRevision
+        try expectEqual(
+            viewModel.traditionalGroupBadgeByHash["hash-a"]?.title,
+            "旧名称",
+            "创建分组必须一次建立传统布局徽标索引"
+        )
 
         try viewModel.renameGroup(id: groupID, title: "v2 修复")
+        try expect(
+            viewModel.traditionalGroupRevision > revisionAfterCreate,
+            "重命名必须使轻量分组版本递增"
+        )
         viewModel.replaceSelection(with: ["hash-c"])
         try viewModel.addSelectedCommits(to: groupID)
 
@@ -298,9 +308,19 @@ let commitGraphViewModelTests = [
             Set(["hash-a", "hash-b", "hash-c"]),
             "添加提交应与已有成员取并集"
         )
+        try expectEqual(
+            viewModel.traditionalGroupBadgeByHash["hash-c"]?.title,
+            "v2 修复",
+            "新成员必须进入传统布局 O(1) 徽标索引"
+        )
 
         try viewModel.deleteGroup(id: groupID)
         try expectEqual(viewModel.scene.groups, [], "删除后不应保留分组")
+        try expectEqual(
+            viewModel.traditionalGroupBadgeByHash,
+            [:],
+            "解散分组必须清理传统布局徽标索引"
+        )
         try expectEqual(
             Set(viewModel.scene.nodePositions.keys),
             Set(["hash-a", "hash-b", "hash-c"]),

@@ -32,6 +32,7 @@ struct CommitGraphTraditionalCanvas: View {
 
     let layout: CommitGraphTraditionalLayoutResult
     let groupByHash: [String: CommitGraphTraditionalGroupBadge]
+    let groupRevision: UInt64
     let visibleRows: Range<Int>
     let verticalOffset: Double
     let laneHorizontalOffset: Double

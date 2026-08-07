@@ -257,6 +257,9 @@ public final class CommitGraphViewModel {
     public private(set) var errorMessage: String?
     public private(set) var traditionalLayout =
         CommitGraphTraditionalLayoutResult(rows: [], maximumLane: 0)
+    public private(set) var traditionalGroupBadgeByHash:
+        [String: CommitGraphTraditionalGroupBadge] = [:]
+    public private(set) var traditionalGroupRevision: UInt64 = 0
     public private(set) var integrityReport: CommitGraphIntegrityReport?
     public private(set) var refreshState: CommitGraphRefreshState = .idle
     public private(set) var focusedHash: String?
@@ -950,6 +953,7 @@ public final class CommitGraphViewModel {
             title: normalizedGroupTitle(title),
             scene: scene
         )
+        rebuildTraditionalGroupBadgeIndex()
         refreshProjection(incrementingPathRevision: false)
         recordSceneMutation()
         scheduleSceneSave()
@@ -965,6 +969,7 @@ public final class CommitGraphViewModel {
             layout: layout,
             scene: scene
         )
+        rebuildTraditionalGroupBadgeIndex()
         selectedHashes.removeAll()
         refreshProjection(incrementingPathRevision: true)
         recordSceneMutation()
@@ -977,6 +982,7 @@ public final class CommitGraphViewModel {
             layout: layout,
             scene: scene
         )
+        rebuildTraditionalGroupBadgeIndex()
         selectedHashes.removeAll()
         refreshProjection(incrementingPathRevision: true)
         recordSceneMutation()
@@ -994,6 +1000,7 @@ public final class CommitGraphViewModel {
             layout: layout,
             scene: scene
         )
+        rebuildTraditionalGroupBadgeIndex()
         selectedHashes.removeAll()
         refreshProjection(incrementingPathRevision: true)
         recordSceneMutation()
@@ -1017,6 +1024,7 @@ public final class CommitGraphViewModel {
             layout: layout,
             scene: scene
         )
+        rebuildTraditionalGroupBadgeIndex()
         groupSuggestions.removeAll { $0.id == id }
         refreshProjection(incrementingPathRevision: true)
         recordSceneMutation()
@@ -1053,6 +1061,7 @@ public final class CommitGraphViewModel {
         }
         guard scene.groups[index].isCollapsed != isCollapsed else { return }
         scene.groups[index].isCollapsed = isCollapsed
+        rebuildTraditionalGroupBadgeIndex()
         refreshProjection(incrementingPathRevision: true)
         recordSceneMutation()
         scheduleSceneSave()
@@ -1330,6 +1339,7 @@ public final class CommitGraphViewModel {
         guard isCurrentRefreshRequest(requestID) else { return false }
         if !didRestoreScene {
             scene = loadedScene.scene
+            rebuildTraditionalGroupBadgeIndex()
             sceneWarningMessage = loadedScene.warningMessage
             scenePersistenceState = loadedScene.persistenceState
             viewport = loadedScene.scene.canvasViewport
@@ -1433,6 +1443,7 @@ public final class CommitGraphViewModel {
         layout = base.canvasLayout
         traditionalLayout = base.traditionalLayout
         scene = derived.scene
+        rebuildTraditionalGroupBadgeIndex()
         viewport = derived.scene.canvasViewport
         integrityReport = base.integrityReport
         projection = derived.projection
@@ -1524,6 +1535,7 @@ public final class CommitGraphViewModel {
         guard let repositoryID, let sceneStore else {
             scenePersistenceState = .writable
             scene = CommitGraphSceneState.defaultState(layout: layout)
+            rebuildTraditionalGroupBadgeIndex()
             refreshProjection(incrementingPathRevision: false)
             return
         }
@@ -1548,6 +1560,7 @@ public final class CommitGraphViewModel {
             sceneWarningMessage = "已使用默认画布布局。"
             scenePersistenceState = .writable
         }
+        rebuildTraditionalGroupBadgeIndex()
         reconcileSceneWithLayout()
     }
 
@@ -1715,6 +1728,25 @@ public final class CommitGraphViewModel {
         if incrementingPathRevision {
             pathRevision &+= 1
         }
+    }
+
+    private func rebuildTraditionalGroupBadgeIndex() {
+        var rebuilt: [String: CommitGraphTraditionalGroupBadge] = [:]
+        rebuilt.reserveCapacity(
+            scene.groups.reduce(0) { $0 + $1.memberHashes.count }
+        )
+        for group in scene.groups {
+            let badge = CommitGraphTraditionalGroupBadge(
+                title: group.title,
+                isCollapsed: group.isCollapsed,
+                groupID: group.id
+            )
+            for hash in group.memberHashes {
+                rebuilt[hash] = badge
+            }
+        }
+        traditionalGroupBadgeByHash = rebuilt
+        traditionalGroupRevision &+= 1
     }
 
     private func recordSceneMutation() {
