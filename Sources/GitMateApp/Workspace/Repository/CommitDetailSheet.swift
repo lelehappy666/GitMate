@@ -6,6 +6,7 @@ struct CommitDetailSheet: View {
     let detail: GitCommitDetail
     let diff: GitDiff?
     let isDiffTruncated: Bool
+    let avatarURL: URL?
     let dismiss: () -> Void
 
     @State private var showsPatch = false
@@ -38,7 +39,7 @@ struct CommitDetailSheet: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            GitMateAvatar(url: nil, size: 42)
+            GitMateAvatar(url: avatarURL, size: 42)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(detail.commit.authorName)

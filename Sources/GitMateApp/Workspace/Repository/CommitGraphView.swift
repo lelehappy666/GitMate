@@ -14,6 +14,8 @@ struct CommitGraphView: View {
     }
 
     @Bindable var viewModel: CommitGraphViewModel
+    var currentUserLogin: String?
+    var currentUserAvatarURL: URL?
     @State private var showsCreateGroup = false
     @State private var newGroupTitle = ""
     @State private var marqueePurpose =
@@ -36,13 +38,17 @@ struct CommitGraphView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            if viewModel.scene.viewMode == .canvas {
+                canvasActionBar
+                Divider()
+            }
             if let message = viewModel.errorMessage {
                 errorBanner(message)
             }
             if let message = viewModel.sceneWarningMessage {
                 sceneWarningBanner(message)
             }
-            graphCanvas
+            graphContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -53,6 +59,7 @@ struct CommitGraphView: View {
                     detail: detail,
                     diff: viewModel.selectedDiff,
                     isDiffTruncated: viewModel.isSelectedDiffTruncated,
+                    avatarURL: avatarURL(for: detail.commit),
                     dismiss: viewModel.dismissDetail
                 )
             }
@@ -167,7 +174,11 @@ struct CommitGraphView: View {
                 Text("提交历史与提交图")
                     .font(.system(size: 23, weight: .bold))
                     .foregroundStyle(GitMateTheme.textPrimary)
-                Text("在无限画布中查看分支、合并和提交详情")
+                Text(
+                    viewModel.scene.viewMode == .traditional
+                        ? "GitKraken 式泳道视图，最新提交在上"
+                        : "在无限画布中查看分支、合并和提交详情"
+                )
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(GitMateTheme.textSecondary)
             }
@@ -182,6 +193,32 @@ struct CommitGraphView: View {
     }
 
     private var graphToolbar: some View {
+        HStack(spacing: 10) {
+            Picker(
+                "布局",
+                selection: Binding(
+                    get: { viewModel.scene.viewMode },
+                    set: { mode in
+                        viewModel.setViewMode(mode)
+                    }
+                )
+            ) {
+                Text("传统布局").tag(CommitGraphViewMode.traditional)
+                Text("画布布局").tag(CommitGraphViewMode.canvas)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 188)
+            .accessibilityIdentifier("workspace.commitGraph.viewMode")
+
+            integrityBadge
+
+            Text("\(viewModel.traditionalLayout.rows.count) 个提交")
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(GitMateTheme.textSecondary)
+        }
+    }
+
+    private var canvasActionBar: some View {
         HStack(spacing: 8) {
             Button {
                 marqueePurpose = .createGroup
@@ -303,10 +340,58 @@ struct CommitGraphView: View {
             }
             .accessibilityLabel("放大提交图")
         }
+        .padding(.horizontal, 18)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .trailing)
+        .background(.white)
         .buttonStyle(.bordered)
         .controlSize(.small)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("workspace.commitGraph.zoom")
+    }
+
+    @ViewBuilder
+    private var graphContent: some View {
+        if viewModel.scene.viewMode == .traditional {
+            CommitGraphTraditionalView(
+                layout: viewModel.traditionalLayout,
+                groups: viewModel.scene.groups,
+                selectedHash: viewModel.selectedHash,
+                focusedHash: viewModel.focusedHash,
+                currentUserLogin: currentUserLogin,
+                currentUserAvatarURL: currentUserAvatarURL,
+                select: { hash in
+                    viewModel.selectForNavigation(hash: hash)
+                    Task {
+                        await viewModel.select(hash: hash)
+                    }
+                },
+                consumeFocus: { hash in
+                    viewModel.consumeFocusedHash(hash)
+                }
+            )
+        } else {
+            graphCanvas
+        }
+    }
+
+    @ViewBuilder
+    private var integrityBadge: some View {
+        if let report = viewModel.integrityReport {
+            switch report.status {
+            case .valid:
+                Label("关系完整", systemImage: "checkmark.shield.fill")
+                    .foregroundStyle(GitMateTheme.success)
+            case .warning:
+                Label("浅克隆边界", systemImage: "exclamationmark.shield.fill")
+                    .foregroundStyle(GitMateTheme.warning)
+            case .invalid:
+                Label("关系异常", systemImage: "xmark.shield.fill")
+                    .foregroundStyle(GitMateTheme.danger)
+            }
+        } else {
+            Label("等待校验", systemImage: "shield")
+                .foregroundStyle(GitMateTheme.textSecondary)
+        }
     }
 
     private var graphCanvas: some View {
@@ -598,6 +683,35 @@ struct CommitGraphView: View {
             return nil
         }
         return name
+    }
+
+    private func avatarURL(for commit: GitCommit) -> URL? {
+        let email = commit.authorEmail.lowercased()
+        if email.hasSuffix("@users.noreply.github.com") {
+            let local = String(
+                email.split(separator: "@", maxSplits: 1)[0]
+            )
+            let login = local.split(
+                separator: "+",
+                maxSplits: 1
+            ).last.map(String.init) ?? local
+            if !login.isEmpty,
+               login.allSatisfy({
+                   $0.isLetter || $0.isNumber || $0 == "-"
+               }) {
+                return URL(
+                    string: "https://github.com/\(login).png?size=128"
+                )
+            }
+        }
+        if let currentUserLogin,
+           commit.authorName.compare(
+               currentUserLogin,
+               options: [.caseInsensitive, .diacriticInsensitive]
+           ) == .orderedSame {
+            return currentUserAvatarURL
+        }
+        return nil
     }
 
     private var loadingState: some View {

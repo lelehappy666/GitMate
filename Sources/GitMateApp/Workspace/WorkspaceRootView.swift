@@ -209,6 +209,8 @@ struct WorkspaceRootView: View {
                     reader: runtime.localGit,
                     repositoryURL: runtime.catalog.localURL(for: repository),
                     repositoryID: repository.id,
+                    currentUserLogin: session.account.login,
+                    currentUserAvatarURL: session.account.avatarURL,
                     sceneStore: runtime.commitGraphSceneStore,
                     refreshCoordinator: runtime.commitGraphRefreshCoordinator,
                     refreshRevision: commitGraphRefreshTrigger.revision(
@@ -878,6 +880,8 @@ private struct CommitGraphPageContainer: View {
         reader: any LocalGitReading,
         repositoryURL: URL,
         repositoryID: Int64,
+        currentUserLogin: String,
+        currentUserAvatarURL: URL?,
         sceneStore: any CommitGraphSceneStoring,
         refreshCoordinator: CommitGraphRefreshCoordinator,
         refreshRevision: Int
@@ -891,13 +895,21 @@ private struct CommitGraphPageContainer: View {
                 refreshCoordinator: refreshCoordinator
             )
         )
+        self.currentUserLogin = currentUserLogin
+        self.currentUserAvatarURL = currentUserAvatarURL
         self.refreshRevision = refreshRevision
     }
 
+    let currentUserLogin: String
+    let currentUserAvatarURL: URL?
     let refreshRevision: Int
 
     var body: some View {
-        CommitGraphView(viewModel: viewModel)
+        CommitGraphView(
+            viewModel: viewModel,
+            currentUserLogin: currentUserLogin,
+            currentUserAvatarURL: currentUserAvatarURL
+        )
             .onAppear {
                 guard presentationLeaseID == nil else { return }
                 presentationLeaseID = viewModel.beginInitialPresentation()
