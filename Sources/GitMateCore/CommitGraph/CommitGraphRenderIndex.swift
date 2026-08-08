@@ -99,7 +99,7 @@ public enum CommitGraphRenderHit: Equatable, Sendable {
 public struct CommitGraphRenderIndex: Sendable {
     private var nodes: [CommitGraphVisibleNode]
     private var groups: [CommitGraphVisibleGroup]
-    private let regions: [CommitGraphRegionMarker]
+    private var regions: [CommitGraphRegionMarker]
     private let shallowBoundaryEndpoints:
         [CommitGraphVisibleShallowBoundaryEndpoint]
     private let edges: [CommitGraphVisibleEdge]
@@ -376,6 +376,18 @@ public struct CommitGraphRenderIndex: Sendable {
         )
     }
 
+    /// 只同步版本区域及其空间网格，不触碰提交、分组和连线索引。
+    public mutating func syncRegions(
+        _ updatedRegions: [CommitGraphRegionMarker]
+    ) {
+        regions = updatedRegions
+        var updatedGrid = RenderSpatialGrid()
+        for (index, region) in updatedRegions.enumerated() {
+            updatedGrid.replace(item: index, rect: region.rect)
+        }
+        regionGrid = updatedGrid
+    }
+
     public mutating func moveNode(
         hash: String,
         to position: GraphPoint
@@ -516,11 +528,8 @@ public struct CommitGraphRenderIndex: Sendable {
     private static func shallowBoundaryRect(
         for endpoint: CommitGraphVisibleShallowBoundaryEndpoint
     ) -> GraphRect {
-        GraphRect(
-            x: endpoint.position.x - 80,
-            y: endpoint.position.y - 18,
-            width: 160,
-            height: 36
+        CommitGraphSceneGeometry.shallowBoundaryRect(
+            center: endpoint.position
         )
     }
 

@@ -121,6 +121,114 @@ let commitGraphRenderIndexTests = [
             "离屏区域不得进入画布绘制集合"
         )
     },
+    TestCase("区域局部同步立即更新空间查询且不重建提交索引") {
+        let node = renderVisibleNode(hash: "stable-node", x: 200, y: 200)
+        let projection = CommitGraphSceneProjection(
+            nodes: [node],
+            groups: [],
+            regions: [],
+            edges: []
+        )
+        var index = CommitGraphRenderIndex(projection: projection)
+        let region = CommitGraphRegionMarker(
+            title: "v3.0",
+            colorHex: "#2F80ED",
+            rect: GraphRect(x: 80, y: 90, width: 320, height: 220)
+        )
+
+        index.syncRegions([region])
+        var visible = index.query(
+            viewport: GraphViewport(),
+            screenSize: GraphSize(width: 800, height: 600),
+            padding: 0
+        )
+        try expectEqual(visible.regions, [region], "新增区域必须立即进入查询")
+        try expectEqual(visible.nodes.map(\.id), ["stable-node"], "区域同步不得丢失提交索引")
+
+        var moved = region
+        moved.rect = GraphRect(x: 20_000, y: 20_000, width: 320, height: 220)
+        index.syncRegions([moved])
+        visible = index.query(
+            viewport: GraphViewport(),
+            screenSize: GraphSize(width: 800, height: 600),
+            padding: 0
+        )
+        try expectEqual(visible.regions, [], "区域移动后必须使用新网格位置")
+        try expectEqual(visible.nodes.map(\.id), ["stable-node"], "区域移动不得重建提交内容")
+
+        index.syncRegions([])
+        visible = index.query(
+            viewport: GraphViewport(offsetX: -20_000, offsetY: -20_000),
+            screenSize: GraphSize(width: 800, height: 600),
+            padding: 0
+        )
+        try expectEqual(visible.regions, [], "删除区域必须从空间网格移除")
+    },
+    TestCase("折叠分组内浅克隆边界仍进入可见索引") {
+        let groupID = UUID(
+            uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"
+        )!
+        let relation = CommitGraphShallowBoundaryRelation(
+            childHash: "boundary-child",
+            missingParentHash: "missing-parent",
+            parentIndex: 0,
+            sourceLane: 0,
+            targetLane: 0,
+            colorIndex: 0
+        )
+        let endpoint = CommitGraphShallowBoundaryEndpoint(
+            relation: relation,
+            x: 180,
+            y: 138
+        )
+        let visibleEndpoint = CommitGraphVisibleShallowBoundaryEndpoint(
+            endpoint: endpoint,
+            position: GraphPoint(x: 212, y: 78)
+        )
+        let edge = CommitGraphVisibleEdge(
+            id: "shallow:\(relation.id)",
+            source: .group(groupID),
+            target: .shallowBoundary(relation.id),
+            kind: .shallowBoundary,
+            colorIndex: 0,
+            ports: CommitGraphEdgePorts(
+                source: PortAnchor(side: .top, offset: 0.5),
+                target: PortAnchor(side: .bottom, offset: 0.5)
+            ),
+            aggregateKey: CollapsedEdgeKey(
+                groupID: groupID,
+                externalNodeID: relation.collapsedExternalNodeID,
+                direction: .leavingGroup
+            ),
+            aggregateCount: 1,
+            originalEdgeIDs: [relation.id]
+        )
+        let projection = CommitGraphSceneProjection(
+            nodes: [],
+            groups: [
+                CommitGraphVisibleGroup(
+                    id: groupID,
+                    title: "浅克隆组",
+                    rect: GraphRect(x: 100, y: 160, width: 224, height: 92),
+                    memberCount: 2,
+                    isCollapsed: true
+                )
+            ],
+            shallowBoundaryEndpoints: [visibleEndpoint],
+            edges: [edge]
+        )
+        let index = CommitGraphRenderIndex(projection: projection)
+
+        let visible = index.query(
+            viewport: GraphViewport(),
+            screenSize: GraphSize(width: 800, height: 600),
+            padding: 0
+        )
+
+        try expectEqual(visible.nodes, [], "边界不得伪装成普通提交")
+        try expectEqual(visible.shallowBoundaryEndpoints.map(\.id), [relation.id], "边界端点必须可见")
+        try expectEqual(visible.edges.map(\.id), [edge.id], "Group 到边界的虚线关系必须进入索引")
+    },
     TestCase("端点离屏但路径穿过视口的连线仍然可见") {
         let edge = renderIndexEdge(
             id: "left->right",

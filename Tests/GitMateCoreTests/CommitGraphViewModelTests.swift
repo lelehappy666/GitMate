@@ -75,25 +75,70 @@ let commitGraphViewModelTests = [
         )
     },
     TestCase("超长历史适配全部时降级到最新提交可见的历史概览") { @MainActor in
-        let viewModel = CommitGraphViewModel(
-            reader: LongHistoryCommitGraphReader(),
-            repositoryURL: commitGraphRepositoryURL,
-            pageSize: 200
+        let count = 200
+        let commits = (0..<count).reversed().map { index in
+            let hash = String(format: "full-%03d", index)
+            return commitGraphCommit(
+                hash: hash,
+                parents: index == 0
+                    ? []
+                    : [String(format: "full-%03d", index - 1)],
+                decorations: index == count - 1 ? ["HEAD -> main"] : []
+            )
+        }
+        let snapshot = commitGraphSnapshot(
+            commits: commits,
+            headHash: "full-199"
         )
-        await viewModel.load()
+        let coordinator = CommitGraphRefreshCoordinator(
+            reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
+            store: InMemoryCommitGraphSnapshotStore(snapshot: snapshot)
+        )
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 990,
+            refreshCoordinator: coordinator
+        )
+        _ = await viewModel.loadCachedSnapshot()
         let screenSize = GraphSize(width: 800, height: 600)
 
         viewModel.fitAll(in: screenSize, padding: 48)
+
+        let latest = try required(
+            viewModel.layout.node(hash: "full-199"),
+            "完整快照必须包含最新提交"
+        )
+        let earliest = try required(
+            viewModel.layout.node(hash: "full-000"),
+            "完整快照必须包含初始提交"
+        )
+        let latestScreenY = latest.y * viewModel.viewport.scale
+            + viewModel.viewport.offsetY
+        let earliestScreenY = earliest.y * viewModel.viewport.scale
+            + viewModel.viewport.offsetY
 
         try expectEqual(
             viewModel.viewport.scale,
             CommitGraphViewportProjector.minimumScale,
             "超长历史必须使用可读的最小安全缩放"
         )
-        try expectEqual(
-            viewModel.viewport.offsetY,
-            48,
-            "无法完整容纳时必须保留最新提交在首屏而不是跳到历史中段"
+        try expect(
+            abs(latestScreenY - screenSize.height / 2) < 0.000_001,
+            "完整 oldest-first 画布降级时必须把底部最新提交放在视口中心"
+        )
+        try expect(
+            earliestScreenY < 0,
+            "超长历史不得继续把顶部最早提交作为适配锚点"
+        )
+        let visible = viewModel.visibleScene(screenSize: screenSize)
+        try expect(
+            visible.nodes.contains { $0.id == "full-199" },
+            "降级后最新提交必须进入可见查询"
+        )
+        try expect(
+            !visible.nodes.contains { $0.id == "full-000" },
+            "降级后最早提交不应伪装成当前焦点"
         )
     },
     TestCase("切换节点时旧详情不得覆盖最新提交") { @MainActor in
@@ -351,9 +396,11 @@ let commitGraphViewModelTests = [
     },
     TestCase("版本区域可创建移动缩放改色和删除") { @MainActor in
         let viewModel = CommitGraphViewModel(
-            reader: StaticCommitGraphReader(),
-            repositoryURL: commitGraphRepositoryURL
+            reader: PagedCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            pageSize: 2
         )
+        await viewModel.load()
         let initialRect = GraphRect(
             x: 100,
             y: 120,
@@ -365,6 +412,13 @@ let commitGraphViewModelTests = [
             title: "v2.0",
             colorHex: "#2F80ED",
             rect: initialRect
+        )
+        try expectEqual(
+            viewModel.visibleScene(
+                screenSize: GraphSize(width: 1_200, height: 800)
+            ).regions.map(\.id),
+            [regionID],
+            "创建区域后无需重建提交图即可立即可见"
         )
         viewModel.moveRegion(
             id: regionID,
@@ -396,9 +450,55 @@ let commitGraphViewModelTests = [
             ),
             "区域应保存编辑后的标题、颜色和范围"
         )
+        try expectEqual(
+            viewModel.visibleScene(
+                screenSize: GraphSize(width: 1_200, height: 800)
+            ).regions.first,
+            viewModel.region(id: regionID),
+            "移动、缩放和改色后可见查询必须使用最新区域"
+        )
 
         viewModel.deleteRegion(id: regionID)
         try expectEqual(viewModel.scene.regions, [], "区域应可独立删除")
+        try expectEqual(
+            viewModel.visibleScene(
+                screenSize: GraphSize(width: 1_200, height: 800)
+            ).regions,
+            [],
+            "删除区域后必须立即从可见索引消失"
+        )
+    },
+    TestCase("同一帧区域拖动与缩放批次同步一次最新矩形") { @MainActor in
+        let viewModel = CommitGraphViewModel(
+            reader: PagedCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            pageSize: 2
+        )
+        await viewModel.load()
+        let regionID = viewModel.createRegion(
+            title: "批量区域",
+            colorHex: "#27AE60",
+            rect: GraphRect(x: 100, y: 120, width: 300, height: 220)
+        )
+
+        viewModel.applyPointerChanges([
+            .moveRegion(
+                id: regionID,
+                translation: GraphPoint(x: 30, y: 20)
+            ),
+            .resizeRegion(
+                id: regionID,
+                translation: GraphPoint(x: 50, y: 40)
+            )
+        ])
+
+        try expectEqual(
+            viewModel.visibleScene(
+                screenSize: GraphSize(width: 1_200, height: 800)
+            ).regions.first?.rect,
+            GraphRect(x: 130, y: 140, width: 350, height: 260),
+            "pointer 批次结束后区域索引必须同步折叠后的最终矩形"
+        )
     },
     TestCase("自动分组建议确认前不创建分组") { @MainActor in
         let viewModel = CommitGraphViewModel(
@@ -1802,24 +1902,6 @@ private actor PagedCommitGraphReader: CommitGraphTestReading {
             ],
             nextCursor: nil
         )
-    }
-}
-
-private actor LongHistoryCommitGraphReader: CommitGraphTestReading {
-    func graph(
-        repositoryURL _: URL,
-        cursor _: String?,
-        limit _: Int
-    ) async throws -> CommitGraphPage {
-        let count = 200
-        let commits = (0..<count).map { index in
-            let hash = String(format: "long-%03d", index)
-            let parent = index + 1 < count
-                ? [String(format: "long-%03d", index + 1)]
-                : []
-            return commitGraphCommit(hash: hash, parents: parent)
-        }
-        return CommitGraphPage(commits: commits, nextCursor: nil)
     }
 }
 

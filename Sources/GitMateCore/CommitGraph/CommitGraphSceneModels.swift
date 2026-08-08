@@ -537,6 +537,53 @@ enum CommitGraphSceneGeometry {
         )
     }
 
+    static func shallowBoundaryPosition(
+        endpoint: CommitGraphShallowBoundaryEndpoint,
+        layout: CommitGraphLayoutResult,
+        scene: CommitGraphSceneState
+    ) -> GraphPoint? {
+        guard let laidOutChild = layout.node(hash: endpoint.childHash) else {
+            return nil
+        }
+        let deltaX = endpoint.x - laidOutChild.x
+        let deltaY = endpoint.y - laidOutChild.y
+        if let group = scene.groups.first(where: {
+            $0.memberHashes.contains(endpoint.childHash)
+        }) {
+            if group.isCollapsed {
+                let groupRect = collapsedGroupRect(group)
+                return GraphPoint(
+                    x: groupRect.midpointX + deltaX,
+                    y: groupRect.minimumY + deltaY
+                )
+            }
+            guard let childPosition = group.absolutePosition(
+                for: endpoint.childHash
+            ) else {
+                return nil
+            }
+            return GraphPoint(
+                x: childPosition.x + deltaX,
+                y: childPosition.y + deltaY
+            )
+        }
+        let childPosition = scene.nodePositions[endpoint.childHash]
+            ?? GraphPoint(x: laidOutChild.x, y: laidOutChild.y)
+        return GraphPoint(
+            x: childPosition.x + deltaX,
+            y: childPosition.y + deltaY
+        )
+    }
+
+    static func shallowBoundaryRect(center: GraphPoint) -> GraphRect {
+        GraphRect(
+            x: center.x - 80,
+            y: center.y - 18,
+            width: 160,
+            height: 36
+        )
+    }
+
     static func collapsedGroupRect(_ group: CommitGraphGroup) -> GraphRect {
         GraphRect(
             x: group.origin.x,

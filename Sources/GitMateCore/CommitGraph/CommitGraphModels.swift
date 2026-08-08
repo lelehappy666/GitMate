@@ -92,6 +92,11 @@ public struct CommitGraphShallowBoundaryRelation:
         "\(childHash)->\(missingParentHash)#\(parentIndex)"
     }
 
+    /// 折叠 Group 的跨边界端口键使用缺失父哈希，避免依赖子节点可见性。
+    public var collapsedExternalNodeID: String {
+        "shallow:\(missingParentHash)"
+    }
+
     public let childHash: String
     public let missingParentHash: String
     public let parentIndex: Int

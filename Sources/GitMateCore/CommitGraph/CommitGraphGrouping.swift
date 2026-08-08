@@ -369,6 +369,30 @@ public enum CommitGraphGrouping {
                 )
             }
         }
+        for endpoint in layout.shallowBoundaryEndpoints {
+            guard let groupID = membership[endpoint.childHash],
+                  let group = scene.groups.first(where: { $0.id == groupID }),
+                  let endpointPosition = CommitGraphSceneGeometry
+                    .shallowBoundaryPosition(
+                        endpoint: endpoint,
+                        layout: layout,
+                        scene: scene
+                    )
+            else {
+                continue
+            }
+            let key = CollapsedEdgeKey(
+                groupID: groupID,
+                externalNodeID: endpoint.relation.collapsedExternalNodeID,
+                direction: .leavingGroup
+            )
+            result[key] = BoundaryRelation(
+                sourceRect: CommitGraphSceneGeometry.collapsedGroupRect(group),
+                targetRect: CommitGraphSceneGeometry.shallowBoundaryRect(
+                    center: endpointPosition
+                )
+            )
+        }
         return result
     }
 

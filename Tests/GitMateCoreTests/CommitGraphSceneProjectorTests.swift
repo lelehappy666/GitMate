@@ -186,6 +186,97 @@ let commitGraphSceneProjectorTests = [
             },
             "画布必须使用独立虚拟关系连接真实子提交和边界端点"
         )
+    },
+    TestCase("折叠分组中的浅克隆子提交仍投影稳定边界关系") {
+        let groupID = UUID(
+            uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"
+        )!
+        let relation = CommitGraphShallowBoundaryRelation(
+            childHash: "boundary-child",
+            missingParentHash: "missing-parent",
+            parentIndex: 0,
+            sourceLane: 0,
+            targetLane: 0,
+            colorIndex: 0
+        )
+        let layout = CommitGraphLayoutResult(
+            nodes: [
+                projectionNode(hash: "boundary-child", x: 180, y: 220),
+                projectionNode(hash: "group-sibling", x: 430, y: 220)
+            ],
+            shallowBoundaryEndpoints: [
+                CommitGraphShallowBoundaryEndpoint(
+                    relation: relation,
+                    x: 180,
+                    y: 138
+                )
+            ]
+        )
+        var scene = CommitGraphSceneState.defaultState(layout: layout)
+        scene.groups = [
+            projectionGroup(
+                id: groupID,
+                members: ["boundary-child", "group-sibling"],
+                origin: GraphPoint(x: 100, y: 160),
+                collapsed: true,
+                layout: layout
+            )
+        ]
+        scene = CommitGraphGrouping.rebuildingBoundaryPorts(
+            layout: layout,
+            scene: scene
+        )
+        let key = CollapsedEdgeKey(
+            groupID: groupID,
+            externalNodeID: relation.collapsedExternalNodeID,
+            direction: .leavingGroup
+        )
+
+        let collapsed = CommitGraphSceneProjector.project(
+            layout: layout,
+            scene: scene
+        )
+
+        try expectEqual(
+            collapsed.nodes,
+            [],
+            "折叠后组内真实提交仍必须隐藏"
+        )
+        try expectEqual(
+            collapsed.shallowBoundaryEndpoints.map(\.id),
+            [relation.id],
+            "边界端点不能依赖真实子节点是否可见"
+        )
+        guard let collapsedEdge = collapsed.edges.first(where: {
+            $0.kind == .shallowBoundary
+        }) else {
+            throw TestFailure(description: "折叠 Group 必须保留浅克隆边界边")
+        }
+        try expectEqual(collapsedEdge.source, .group(groupID), "边必须从折叠 Group 发出")
+        try expectEqual(
+            collapsedEdge.target,
+            .shallowBoundary(relation.id),
+            "边必须连到独立边界端点"
+        )
+        try expectEqual(collapsedEdge.aggregateKey, key, "聚合键必须按 Group 与边界哈希稳定")
+        try expectEqual(
+            collapsedEdge.ports,
+            scene.boundaryPorts[key],
+            "折叠端口必须复用场景中的固定 side 与 offset"
+        )
+
+        scene.groups[0].isCollapsed = false
+        let expanded = CommitGraphSceneProjector.project(
+            layout: layout,
+            scene: scene
+        )
+        try expect(
+            expanded.edges.contains {
+                $0.kind == .shallowBoundary
+                    && $0.source == .node("boundary-child")
+            },
+            "展开后必须恢复真实子提交到边界的关系"
+        )
     }
 ]
 

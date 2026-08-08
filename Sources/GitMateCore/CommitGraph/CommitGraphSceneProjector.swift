@@ -51,23 +51,21 @@ public enum CommitGraphSceneProjector {
             )
         }
 
-        let visibleNodesByHash = Dictionary(
-            uniqueKeysWithValues: visibleNodes.map { ($0.node.hash, $0) }
-        )
         let visibleShallowBoundaryEndpoints = layout.shallowBoundaryEndpoints
             .compactMap {
                 endpoint -> CommitGraphVisibleShallowBoundaryEndpoint? in
-                guard let child = visibleNodesByHash[endpoint.childHash],
-                      let laidOutChild = layout.node(hash: endpoint.childHash)
+                guard let position = CommitGraphSceneGeometry
+                    .shallowBoundaryPosition(
+                        endpoint: endpoint,
+                        layout: layout,
+                        scene: scene
+                    )
                 else {
                     return nil
                 }
                 return CommitGraphVisibleShallowBoundaryEndpoint(
                     endpoint: endpoint,
-                    position: GraphPoint(
-                        x: child.position.x + endpoint.x - laidOutChild.x,
-                        y: child.position.y + endpoint.y - laidOutChild.y
-                    )
+                    position: position
                 )
             }
 
@@ -144,18 +142,43 @@ public enum CommitGraphSceneProjector {
         }
 
         for endpoint in visibleShallowBoundaryEndpoints {
+            let childGroupID = membership[endpoint.endpoint.childHash]
+            let childIsCollapsed = childGroupID.map(
+                collapsedGroupIDs.contains
+            ) ?? false
+            let source: CommitGraphEndpointID
+            let ports: CommitGraphEdgePorts
+            let aggregateKey: CollapsedEdgeKey?
+            if childIsCollapsed, let childGroupID {
+                let key = CollapsedEdgeKey(
+                    groupID: childGroupID,
+                    externalNodeID: endpoint.endpoint.relation
+                        .collapsedExternalNodeID,
+                    direction: .leavingGroup
+                )
+                source = .group(childGroupID)
+                aggregateKey = key
+                ports = scene.boundaryPorts[key] ?? CommitGraphEdgePorts(
+                    source: PortAnchor(side: .top, offset: 0.5),
+                    target: PortAnchor(side: .bottom, offset: 0.5)
+                )
+            } else {
+                source = .node(endpoint.endpoint.childHash)
+                aggregateKey = nil
+                ports = CommitGraphEdgePorts(
+                    source: PortAnchor(side: .top, offset: 0.5),
+                    target: PortAnchor(side: .bottom, offset: 0.5)
+                )
+            }
             ordinaryEdges.append(
                 CommitGraphVisibleEdge(
                     id: "shallow:\(endpoint.id)",
-                    source: .node(endpoint.endpoint.childHash),
+                    source: source,
                     target: .shallowBoundary(endpoint.id),
                     kind: .shallowBoundary,
                     colorIndex: endpoint.endpoint.colorIndex,
-                    ports: CommitGraphEdgePorts(
-                        source: PortAnchor(side: .top, offset: 0.5),
-                        target: PortAnchor(side: .bottom, offset: 0.5)
-                    ),
-                    aggregateKey: nil,
+                    ports: ports,
+                    aggregateKey: aggregateKey,
                     aggregateCount: 1,
                     originalEdgeIDs: [endpoint.id]
                 )
@@ -322,12 +345,10 @@ public enum CommitGraphSceneProjector {
             result[.group(group.id)] = group.rect
         }
         for endpoint in projection.shallowBoundaryEndpoints {
-            result[.shallowBoundary(endpoint.id)] = GraphRect(
-                x: endpoint.position.x - 80,
-                y: endpoint.position.y - 18,
-                width: 160,
-                height: 36
-            )
+            result[.shallowBoundary(endpoint.id)] =
+                CommitGraphSceneGeometry.shallowBoundaryRect(
+                    center: endpoint.position
+                )
         }
         return result
     }

@@ -949,6 +949,7 @@ public final class CommitGraphViewModel {
         scene = updatedScene
         historyMarkersNeedRebuild = historyMarkersNeedRebuild
             || didMoveHistoryGeometry
+        syncRenderRegions()
         updateRenderIndex(
             movedNodeHashes: movedNodeHashes,
             movedGroupIDs: movedGroupIDs
@@ -988,11 +989,16 @@ public final class CommitGraphViewModel {
         )
         let cannotFitEntireHistory = requestedScale
             < CommitGraphViewportProjector.minimumScale
+        let latestHash = currentSnapshot?.commitsNewestFirst.first?.fullHash
+            ?? layout.nodes.last?.hash
+        let latestPosition = latestHash.flatMap(currentPosition(for:))
 
         viewport = GraphViewport(
             offsetX: (screenSize.width - contentWidth * scale) / 2,
             offsetY: cannotFitEntireHistory
-                ? safePadding
+                ? latestPosition.map {
+                    screenSize.height / 2 - $0.y * scale
+                } ?? safePadding
                 : (screenSize.height - contentHeight * scale) / 2,
             scale: scale
         )
@@ -1247,6 +1253,7 @@ public final class CommitGraphViewModel {
             rect: rect
         )
         scene.regions.append(region)
+        syncRenderRegions()
         rebuildHistoryNavigationMarkers()
         recordSceneMutation()
         scheduleSceneSave()
@@ -1269,6 +1276,7 @@ public final class CommitGraphViewModel {
         if let rect {
             scene.regions[index].rect = rect
         }
+        syncRenderRegions()
         rebuildHistoryNavigationMarkers()
         recordSceneMutation()
         scheduleSceneSave()
@@ -1282,6 +1290,7 @@ public final class CommitGraphViewModel {
         )
         guard updated != scene else { return }
         scene = updated
+        syncRenderRegions()
         historyMarkersNeedRebuild = true
         recordSceneMutation()
         scheduleSceneSave()
@@ -1295,6 +1304,7 @@ public final class CommitGraphViewModel {
         )
         guard updated != scene else { return }
         scene = updated
+        syncRenderRegions()
         historyMarkersNeedRebuild = true
         recordSceneMutation()
         scheduleSceneSave()
@@ -1303,6 +1313,7 @@ public final class CommitGraphViewModel {
     public func deleteRegion(id: UUID) {
         guard scene.regions.contains(where: { $0.id == id }) else { return }
         scene.regions.removeAll { $0.id == id }
+        syncRenderRegions()
         rebuildHistoryNavigationMarkers()
         recordSceneMutation()
         scheduleSceneSave()
@@ -1685,6 +1696,18 @@ public final class CommitGraphViewModel {
             guard let position = currentPosition(for: hash) else { continue }
             _ = renderIndex?.moveNode(hash: hash, to: position)
         }
+    }
+
+    private func syncRenderRegions() {
+        renderIndex?.syncRegions(scene.regions)
+        projection = CommitGraphSceneProjection(
+            nodes: projection.nodes,
+            groups: projection.groups,
+            regions: scene.regions,
+            shallowBoundaryEndpoints: projection.shallowBoundaryEndpoints,
+            edges: projection.edges,
+            lineStyle: projection.lineStyle
+        )
     }
 
     private func currentPosition(for hash: String) -> GraphPoint? {
