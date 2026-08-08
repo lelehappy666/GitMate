@@ -2,6 +2,63 @@ import Foundation
 import GitMateCore
 
 let commitGraphSceneReconcilerTests = [
+    TestCase("旧画布算法场景自动迁移到树枝布局且保留分组状态") {
+        let groupID = UUID(uuidString: "ABABABAB-ABAB-ABAB-ABAB-ABABABABABAB")!
+        let scene = CommitGraphSceneState(
+            schemaVersion: 2,
+            layoutAlgorithmVersion: 1,
+            nodePositions: ["main": GraphPoint(x: 100, y: 100)],
+            groups: [CommitGraphGroup(
+                id: groupID,
+                title: "保留的分组",
+                memberHashes: ["left", "right"],
+                source: .manual,
+                origin: GraphPoint(x: 10, y: 20),
+                relativePositions: [
+                    "left": GraphPoint(x: 10, y: 10),
+                    "right": GraphPoint(x: 20, y: 20)
+                ],
+                isCollapsed: true
+            )],
+            regions: [CommitGraphRegionMarker(
+                title: "v2",
+                colorHex: "#2F80ED",
+                rect: GraphRect(x: 1, y: 2, width: 3, height: 4)
+            )]
+        )
+        let defaults = [
+            "main": GraphPoint(x: 600, y: 100),
+            "left": GraphPoint(x: 350, y: 200),
+            "right": GraphPoint(x: 850, y: 300)
+        ]
+
+        let reconciled = CommitGraphSceneReconciler.reconcile(
+            scene: scene,
+            oldSnapshot: reconcileSnapshot(hashes: ["main", "left", "right"]),
+            newSnapshot: reconcileSnapshot(hashes: ["main", "left", "right"]),
+            defaultPositions: defaults
+        )
+
+        try expectEqual(
+            reconciled.layoutAlgorithmVersion,
+            CommitGraphSceneState.currentLayoutAlgorithmVersion,
+            "迁移后必须记录树枝布局版本，避免每次刷新重排"
+        )
+        try expectEqual(reconciled.nodePositions["main"], defaults["main"], "普通节点必须采用新布局")
+        try expectEqual(reconciled.groups.first?.isCollapsed, true, "折叠状态必须保留")
+        try expectEqual(reconciled.groups.first?.title, "保留的分组", "分组名称必须保留")
+        try expectEqual(reconciled.regions, scene.regions, "版本区域必须保留")
+        try expectEqual(
+            reconciled.groups.first?.absolutePosition(for: "left"),
+            defaults["left"],
+            "组内成员也必须迁移到树枝位置"
+        )
+        try expectEqual(
+            reconciled.groups.first?.absolutePosition(for: "right"),
+            defaults["right"],
+            "分组只能有一份位置真值"
+        )
+    },
     TestCase("刷新对账保留场景并安全解散不足两个成员的分组") {
         let groupID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
         let region = CommitGraphRegionMarker(

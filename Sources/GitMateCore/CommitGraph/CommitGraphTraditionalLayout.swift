@@ -1,5 +1,105 @@
 import Foundation
 
+public enum CommitGraphTraditionalLaneGeometry {
+    public static let spacing = 28.0
+    public static let leadingPadding = 32.0
+
+    public static func contentWidth(maximumLane: Int) -> Double {
+        leadingPadding * 2
+            + Double(max(maximumLane, 0)) * spacing
+    }
+
+    public static func viewportWidth(
+        totalWidth: Double,
+        maximumLane: Int
+    ) -> Double {
+        let safeWidth = max(totalWidth.isFinite ? totalWidth : 0, 0)
+        let maximum = min(
+            520,
+            max(safeWidth - 340, 140),
+            safeWidth * 0.48
+        )
+        let desired = max(220, contentWidth(maximumLane: maximumLane) + 12)
+        return min(desired, max(maximum, 120))
+    }
+
+    public static func clampedOffset(
+        _ value: Double,
+        maximumLane: Int,
+        viewportWidth: Double
+    ) -> Double {
+        let maximum = max(
+            contentWidth(maximumLane: maximumLane) - viewportWidth + 12,
+            0
+        )
+        return min(max(value.isFinite ? value : 0, 0), maximum)
+    }
+}
+
+public enum CommitGraphTraditionalRouteSegment: Equatable, Sendable {
+    case line(GraphPoint)
+    case curve(
+        end: GraphPoint,
+        control1: GraphPoint,
+        control2: GraphPoint
+    )
+}
+
+public enum CommitGraphTraditionalRoute {
+    public static func segments(
+        source: GraphPoint,
+        target: GraphPoint,
+        kind: CommitGraphEdgeKind,
+        rowHeight: Double
+    ) -> [CommitGraphTraditionalRouteSegment] {
+        guard source.x != target.x else { return [.line(target)] }
+        let direction = target.y >= source.y ? 1.0 : -1.0
+        let distance = abs(target.y - source.y)
+        let bend = min(max(rowHeight * 0.72, 24), distance / 2)
+
+        switch kind {
+        case .merge:
+            let curveEnd = GraphPoint(
+                x: target.x,
+                y: source.y + direction * bend
+            )
+            return [
+                .curve(
+                    end: curveEnd,
+                    control1: GraphPoint(
+                        x: source.x,
+                        y: source.y + direction * bend * 0.55
+                    ),
+                    control2: GraphPoint(
+                        x: target.x,
+                        y: curveEnd.y - direction * bend * 0.55
+                    )
+                ),
+                .line(target)
+            ]
+        case .parent, .shallowBoundary:
+            let verticalEnd = GraphPoint(
+                x: source.x,
+                y: target.y - direction * bend
+            )
+            return [
+                .line(verticalEnd),
+                .curve(
+                    end: target,
+                    control1: GraphPoint(
+                        x: source.x,
+                        y: verticalEnd.y + direction * bend * 0.55
+                    ),
+                    control2: GraphPoint(
+                        x: target.x,
+                        y: target.y - direction * bend * 0.55
+                    )
+                )
+            ]
+        }
+    }
+}
+
 public struct CommitGraphTraditionalRow:
     Identifiable,
     Equatable,

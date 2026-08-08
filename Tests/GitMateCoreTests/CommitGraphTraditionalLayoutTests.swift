@@ -42,6 +42,61 @@ let commitGraphTraditionalLayoutTests = [
         try expect(summary.hasChanges, "存在变化时必须显示工作区记录")
         try expectEqual(summary.branch, "main", "工作区记录必须保留当前分支")
     },
+    TestCase("传统长分支先沿独立泳道垂直生长再汇入父提交") {
+        let route = CommitGraphTraditionalRoute.segments(
+            source: GraphPoint(x: 96, y: 28),
+            target: GraphPoint(x: 40, y: 588),
+            kind: .parent,
+            rowHeight: 56
+        )
+
+        try expectEqual(route.count, 2, "跨泳道父边必须由直线和短曲线组成")
+        guard case let .line(verticalEnd) = route[0],
+              case let .curve(curveEnd, control1, control2) = route[1]
+        else {
+            throw TestFailure(description: "父边必须先垂直、后汇入")
+        }
+        try expectEqual(verticalEnd.x, 96, "长边主体必须保持在源泳道")
+        try expect(verticalEnd.y > 500, "转弯必须靠近父提交，不能形成跨全图斜线")
+        try expectEqual(curveEnd, GraphPoint(x: 40, y: 588), "曲线必须抵达父节点")
+        try expectEqual(control1.x, 96, "曲线起点切线必须保持垂直")
+        try expectEqual(control2.x, 40, "曲线终点切线必须保持垂直")
+    },
+    TestCase("传统合并边在子提交附近分叉后沿目标泳道生长") {
+        let route = CommitGraphTraditionalRoute.segments(
+            source: GraphPoint(x: 40, y: 28),
+            target: GraphPoint(x: 96, y: 588),
+            kind: .merge,
+            rowHeight: 56
+        )
+
+        try expectEqual(route.count, 2, "合并边必须由短曲线和目标泳道直线组成")
+        guard case let .curve(curveEnd, _, _) = route[0],
+              case let .line(lineEnd) = route[1]
+        else {
+            throw TestFailure(description: "合并边必须先分叉、后垂直")
+        }
+        try expect(curveEnd.y < 100, "分叉必须发生在子提交附近")
+        try expectEqual(curveEnd.x, 96, "分叉后必须进入目标泳道")
+        try expectEqual(lineEnd, GraphPoint(x: 96, y: 588), "目标泳道必须抵达父节点")
+    },
+    TestCase("传统分支区域保持清晰固定间距并在过宽时滚动") {
+        let viewport = CommitGraphTraditionalLaneGeometry.viewportWidth(
+            totalWidth: 1_200,
+            maximumLane: 18
+        )
+        let content = CommitGraphTraditionalLaneGeometry.contentWidth(
+            maximumLane: 18
+        )
+
+        try expectEqual(
+            CommitGraphTraditionalLaneGeometry.spacing,
+            28,
+            "泳道不得为了塞进视口而压缩重叠"
+        )
+        try expect(content > viewport, "分支较多时必须使用可导航横向区域")
+        try expect(viewport <= 520, "泳道区域不得挤占提交信息区域")
+    },
     TestCase("传统布局保持最新在上且与共享泳道一致") {
         let topology = CommitGraphLaneTopology.build(
             snapshot: traditionalBranchingSnapshot()

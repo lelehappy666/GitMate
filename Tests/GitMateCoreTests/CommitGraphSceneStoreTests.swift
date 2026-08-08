@@ -161,6 +161,11 @@ let commitGraphSceneStoreTests = [
             GraphViewport(),
             "schema 1 场景必须补全默认画布视口"
         )
+        try expectEqual(
+            scene.layoutAlgorithmVersion,
+            1,
+            "旧场景必须标记为旧布局，等待有提交默认坐标时迁移"
+        )
     },
     TestCase("未知未来场景版本返回稳定错误") {
         let directory = commitGraphSceneStoreTemporaryDirectory()

@@ -8,6 +8,10 @@ public enum CommitGraphSceneReconciler {
         defaultPositions: [String: GraphPoint]
     ) -> CommitGraphSceneState {
         _ = oldSnapshot
+        let scene = migratingLayoutIfNeeded(
+            scene,
+            defaultPositions: defaultPositions
+        )
         let availableHashes = Set(
             newSnapshot.commitsNewestFirst.map(\.fullHash)
         )
@@ -91,6 +95,8 @@ public enum CommitGraphSceneReconciler {
 
         return CommitGraphSceneState(
             schemaVersion: CommitGraphSceneState.currentSchemaVersion,
+            layoutAlgorithmVersion:
+                CommitGraphSceneState.currentLayoutAlgorithmVersion,
             nodePositions: nodePositions,
             groups: reconciledGroups,
             regions: scene.regions,
@@ -99,6 +105,72 @@ public enum CommitGraphSceneReconciler {
             lineStyle: scene.lineStyle,
             viewMode: scene.viewMode,
             canvasViewport: scene.canvasViewport
+        )
+    }
+
+    private static func migratingLayoutIfNeeded(
+        _ scene: CommitGraphSceneState,
+        defaultPositions: [String: GraphPoint]
+    ) -> CommitGraphSceneState {
+        guard scene.layoutAlgorithmVersion
+                < CommitGraphSceneState.currentLayoutAlgorithmVersion
+        else { return scene }
+
+        let groupedHashes = Set(scene.groups.flatMap(\.memberHashes))
+        var groups: [CommitGraphGroup] = []
+        groups.reserveCapacity(scene.groups.count)
+        for original in scene.groups {
+            let positions: [String: GraphPoint] = Dictionary(
+                uniqueKeysWithValues: original.memberHashes.compactMap { hash in
+                    let fallback = original.absolutePosition(for: hash)
+                    guard let position = defaultPositions[hash] ?? fallback else {
+                        return nil
+                    }
+                    return (hash, position)
+                }
+            )
+            guard !positions.isEmpty else {
+                groups.append(original)
+                continue
+            }
+            let origin = groupOrigin(positions: positions)
+            var group = original
+            group.origin = origin
+            group.relativePositions = positions.mapValues { point in
+                GraphPoint(x: point.x - origin.x, y: point.y - origin.y)
+            }
+            groups.append(group)
+        }
+
+        return CommitGraphSceneState(
+            schemaVersion: CommitGraphSceneState.currentSchemaVersion,
+            layoutAlgorithmVersion:
+                CommitGraphSceneState.currentLayoutAlgorithmVersion,
+            nodePositions: defaultPositions.filter {
+                !groupedHashes.contains($0.key)
+            },
+            groups: groups,
+            regions: scene.regions,
+            edgePorts: [:],
+            boundaryPorts: [:],
+            lineStyle: scene.lineStyle,
+            viewMode: scene.viewMode,
+            canvasViewport: scene.canvasViewport
+        )
+    }
+
+    private static func groupOrigin(
+        positions: [String: GraphPoint]
+    ) -> GraphPoint {
+        let minimumX = positions.values.map(\.x).min() ?? 0
+        let minimumY = positions.values.map(\.y).min() ?? 0
+        return GraphPoint(
+            x: minimumX
+                - CommitGraphSceneGeometry.nodeWidth / 2
+                - CommitGraphSceneGeometry.groupPadding,
+            y: minimumY
+                - CommitGraphSceneGeometry.nodeHeight / 2
+                - CommitGraphSceneGeometry.groupHeaderHeight
         )
     }
 

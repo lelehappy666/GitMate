@@ -30,7 +30,10 @@ struct CommitGraphTraditionalView: View {
             let width = Double(geometry.size.width)
             let height = Double(geometry.size.height)
             let laneWidth = CommitGraphTraditionalMetrics
-                .laneViewportWidth(width)
+                .laneViewportWidth(
+                    width,
+                    maximumLane: layout.maximumLane
+                )
             let visibleRows = CommitGraphTraditionalViewport.visibleRows(
                 totalCount: layout.contentRowCount,
                 rowHeight: CommitGraphTraditionalMetrics.rowHeight,
@@ -84,6 +87,12 @@ struct CommitGraphTraditionalView: View {
                     visibleRows: visibleRows,
                     width: width
                 )
+
+                if CommitGraphTraditionalLaneGeometry.contentWidth(
+                    maximumLane: layout.maximumLane
+                ) > laneWidth {
+                    laneNavigation(width: width)
+                }
             }
             .onAppear {
                 clampOffsets(width: width, height: height)
@@ -285,7 +294,10 @@ struct CommitGraphTraditionalView: View {
         laneHorizontalOffset = clampedLaneOffset(
             laneHorizontalOffset,
             laneViewportWidth: CommitGraphTraditionalMetrics
-                .laneViewportWidth(width)
+                .laneViewportWidth(
+                    width,
+                    maximumLane: layout.maximumLane
+                )
         )
     }
 
@@ -305,14 +317,66 @@ struct CommitGraphTraditionalView: View {
         _ value: Double,
         laneViewportWidth: Double
     ) -> Double {
-        let maximum = max(
-            CommitGraphTraditionalMetrics.laneContentWidth(
-                maximumLane: layout.maximumLane,
-                viewportWidth: laneViewportWidth
-            ) - laneViewportWidth + 20,
-            0
+        CommitGraphTraditionalLaneGeometry.clampedOffset(
+            value,
+            maximumLane: layout.maximumLane,
+            viewportWidth: laneViewportWidth
         )
-        return min(max(value.isFinite ? value : 0, 0), maximum)
+    }
+
+    private func laneNavigation(width: Double) -> some View {
+        let viewportWidth = CommitGraphTraditionalMetrics.laneViewportWidth(
+            width,
+            maximumLane: layout.maximumLane
+        )
+        let contentWidth = CommitGraphTraditionalLaneGeometry.contentWidth(
+            maximumLane: layout.maximumLane
+        )
+        let maximumOffset = max(contentWidth - viewportWidth + 12, 1)
+        let thumbWidth = max(viewportWidth * viewportWidth / contentWidth, 30)
+        let travel = max(viewportWidth - thumbWidth - 24, 1)
+        let progress = min(max(laneHorizontalOffset / maximumOffset, 0), 1)
+
+        return HStack(spacing: 7) {
+            Button {
+                laneHorizontalOffset = clampedLaneOffset(
+                    laneHorizontalOffset - 140,
+                    laneViewportWidth: viewportWidth
+                )
+            } label: {
+                Image(systemName: "chevron.left")
+            }
+            .buttonStyle(.plain)
+
+            ZStack(alignment: .leading) {
+                Capsule().fill(GitMateTheme.border.opacity(0.55))
+                Capsule()
+                    .fill(GitMateTheme.accent.opacity(0.8))
+                    .frame(width: thumbWidth)
+                    .offset(x: progress * travel)
+            }
+            .frame(height: 4)
+
+            Button {
+                laneHorizontalOffset = clampedLaneOffset(
+                    laneHorizontalOffset + 140,
+                    laneViewportWidth: viewportWidth
+                )
+            } label: {
+                Image(systemName: "chevron.right")
+            }
+            .buttonStyle(.plain)
+        }
+        .font(.system(size: 10, weight: .bold))
+        .foregroundStyle(GitMateTheme.textSecondary)
+        .padding(.horizontal, 8)
+        .frame(width: viewportWidth - 12, height: 24)
+        .background(.ultraThinMaterial)
+        .clipShape(Capsule())
+        .padding(.leading, 6)
+        .padding(.bottom, 7)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        .help("查看全部 \(layout.maximumLane + 1) 条本地与远程分支泳道；也可使用 Shift + 滚轮")
     }
 }
 

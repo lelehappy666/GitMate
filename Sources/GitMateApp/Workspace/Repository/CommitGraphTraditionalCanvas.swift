@@ -4,34 +4,16 @@ import SwiftUI
 
 enum CommitGraphTraditionalMetrics {
     static let rowHeight = 56.0
-    static let laneSpacing = 24.0
-    static let laneLeadingPadding = 32.0
     static let avatarSize = 28.0
 
-    static func laneViewportWidth(_ totalWidth: Double) -> Double {
-        let reservedInformationWidth = 300.0
-        let maximum = min(360, max(totalWidth - reservedInformationWidth, 120))
-        return min(max(totalWidth * 0.28, 160), maximum)
-    }
-
-    static func laneSpacing(
-        maximumLane: Int,
-        viewportWidth: Double
+    static func laneViewportWidth(
+        _ totalWidth: Double,
+        maximumLane: Int
     ) -> Double {
-        guard maximumLane > 0 else { return laneSpacing }
-        let available = max(viewportWidth - laneLeadingPadding * 2, 0)
-        return min(laneSpacing, max(available / Double(maximumLane), 8))
-    }
-
-    static func laneContentWidth(
-        maximumLane: Int,
-        viewportWidth: Double
-    ) -> Double {
-        laneLeadingPadding * 2
-            + Double(max(maximumLane, 0)) * laneSpacing(
-                maximumLane: maximumLane,
-                viewportWidth: viewportWidth
-            )
+        CommitGraphTraditionalLaneGeometry.viewportWidth(
+            totalWidth: totalWidth,
+            maximumLane: maximumLane
+        )
     }
 }
 
@@ -58,7 +40,10 @@ struct CommitGraphTraditionalCanvas: View {
     var body: some View {
         Canvas { context, size in
             let laneWidth = CommitGraphTraditionalMetrics
-                .laneViewportWidth(Double(size.width))
+                .laneViewportWidth(
+                    Double(size.width),
+                    maximumLane: layout.maximumLane
+                )
             drawRowBackgrounds(
                 context: &context,
                 size: size,
@@ -156,11 +141,14 @@ struct CommitGraphTraditionalCanvas: View {
                 )
                 var path = Path()
                 path.move(to: source)
-                let middleY = source.y + (target.y - source.y) * 0.5
-                path.addCurve(
-                    to: target,
-                    control1: CGPoint(x: source.x, y: middleY),
-                    control2: CGPoint(x: target.x, y: middleY)
+                appendRoute(
+                    CommitGraphTraditionalRoute.segments(
+                        source: GraphPoint(x: source.x, y: source.y),
+                        target: GraphPoint(x: target.x, y: target.y),
+                        kind: connection.kind,
+                        rowHeight: CommitGraphTraditionalMetrics.rowHeight
+                    ),
+                    to: &path
                 )
                 layer.stroke(
                     path,
@@ -580,18 +568,32 @@ struct CommitGraphTraditionalCanvas: View {
         lane: Int,
         laneWidth: Double
     ) -> CGPoint {
-        let spacing = CommitGraphTraditionalMetrics.laneSpacing(
-            maximumLane: layout.maximumLane,
-            viewportWidth: laneWidth
-        )
         return CGPoint(
-            x: CommitGraphTraditionalMetrics.laneLeadingPadding
-                + Double(lane) * spacing
+            x: CommitGraphTraditionalLaneGeometry.leadingPadding
+                + Double(lane) * CommitGraphTraditionalLaneGeometry.spacing
                 - laneHorizontalOffset,
             y: Double(row) * CommitGraphTraditionalMetrics.rowHeight
                 + CommitGraphTraditionalMetrics.rowHeight / 2
                 - verticalOffset
         )
+    }
+
+    private func appendRoute(
+        _ segments: [CommitGraphTraditionalRouteSegment],
+        to path: inout Path
+    ) {
+        for segment in segments {
+            switch segment {
+            case let .line(point):
+                path.addLine(to: CGPoint(x: point.x, y: point.y))
+            case let .curve(end, control1, control2):
+                path.addCurve(
+                    to: CGPoint(x: end.x, y: end.y),
+                    control1: CGPoint(x: control1.x, y: control1.y),
+                    control2: CGPoint(x: control2.x, y: control2.y)
+                )
+            }
+        }
     }
 
     private func rowRect(_ row: Int, width: Double) -> CGRect {

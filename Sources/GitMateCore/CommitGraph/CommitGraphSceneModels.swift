@@ -168,9 +168,11 @@ public struct CollapsedEdgeKey: Codable, Equatable, Hashable, Sendable {
 }
 
 public struct CommitGraphSceneState: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 2
+    public static let currentSchemaVersion = 3
+    public static let currentLayoutAlgorithmVersion = 2
 
     public var schemaVersion: Int
+    public var layoutAlgorithmVersion: Int
     public var nodePositions: [String: GraphPoint]
     public var groups: [CommitGraphGroup]
     public var regions: [CommitGraphRegionMarker]
@@ -182,6 +184,7 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
 
     public init(
         schemaVersion: Int = currentSchemaVersion,
+        layoutAlgorithmVersion: Int = currentLayoutAlgorithmVersion,
         nodePositions: [String: GraphPoint] = [:],
         groups: [CommitGraphGroup] = [],
         regions: [CommitGraphRegionMarker] = [],
@@ -192,6 +195,7 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
         canvasViewport: GraphViewport = GraphViewport()
     ) {
         self.schemaVersion = schemaVersion
+        self.layoutAlgorithmVersion = layoutAlgorithmVersion
         self.nodePositions = nodePositions
         self.groups = groups
         self.regions = regions
@@ -204,6 +208,7 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
+        case layoutAlgorithmVersion
         case nodePositions
         case groups
         case regions
@@ -240,9 +245,15 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
             Int.self,
             forKey: .schemaVersion
         )
-        schemaVersion = storedSchemaVersion == 1
+        schemaVersion = storedSchemaVersion < Self.currentSchemaVersion
             ? Self.currentSchemaVersion
             : storedSchemaVersion
+        layoutAlgorithmVersion = storedSchemaVersion < 3
+            ? 1
+            : try container.decodeIfPresent(
+                Int.self,
+                forKey: .layoutAlgorithmVersion
+            ) ?? Self.currentLayoutAlgorithmVersion
         nodePositions = try container.decode(
             [String: GraphPoint].self,
             forKey: .nodePositions
@@ -285,6 +296,10 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(
+            layoutAlgorithmVersion,
+            forKey: .layoutAlgorithmVersion
+        )
         try container.encode(nodePositions, forKey: .nodePositions)
         try container.encode(groups, forKey: .groups)
         try container.encode(regions, forKey: .regions)
