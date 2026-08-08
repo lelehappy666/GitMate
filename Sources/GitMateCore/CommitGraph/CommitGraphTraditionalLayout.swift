@@ -121,6 +121,28 @@ public struct CommitGraphTraditionalGroupBadge:
     }
 }
 
+public struct CommitGraphWorkingTreeSummary: Equatable, Sendable {
+    public let branch: String?
+    public let stagedCount: Int
+    public let unstagedCount: Int
+    public let untrackedCount: Int
+    public let conflictCount: Int
+
+    public var totalCount: Int {
+        stagedCount + unstagedCount + untrackedCount + conflictCount
+    }
+
+    public var hasChanges: Bool { totalCount > 0 }
+
+    public init(status: LocalRepositoryStatus) {
+        branch = status.branch
+        stagedCount = status.stagedCount
+        unstagedCount = status.unstagedCount
+        untrackedCount = status.untrackedCount
+        conflictCount = status.conflictCount
+    }
+}
+
 public struct CommitGraphTraditionalLayoutResult: Equatable, Sendable {
     public let rows: [CommitGraphTraditionalRow]
     public let maximumLane: Int
@@ -139,7 +161,8 @@ public struct CommitGraphTraditionalLayoutResult: Equatable, Sendable {
         rows: [CommitGraphTraditionalRow],
         maximumLane: Int,
         shallowBoundaryEndpoints:
-            [CommitGraphTraditionalShallowBoundaryEndpoint] = []
+            [CommitGraphTraditionalShallowBoundaryEndpoint] = [],
+        fingerprint: CommitGraphReferenceFingerprint? = nil
     ) {
         self.rows = rows
         self.maximumLane = max(maximumLane, 0)
@@ -172,13 +195,9 @@ public struct CommitGraphTraditionalLayoutResult: Equatable, Sendable {
         connectionIndex = CommitGraphTraditionalConnectionIndex(
             spans: connectionSpanStorage
         )
-        referencesByHash = Dictionary(
-            uniqueKeysWithValues: rows.map { row in
-                (
-                    row.commit.fullHash,
-                    Self.references(from: row.commit.decorations)
-                )
-            }
+        referencesByHash = Self.buildReferencesByHash(
+            rows: rows,
+            fingerprint: fingerprint
         )
     }
 
@@ -264,6 +283,65 @@ public struct CommitGraphTraditionalLayoutResult: Equatable, Sendable {
             }
         }
         return result
+    }
+
+    private static func buildReferencesByHash(
+        rows: [CommitGraphTraditionalRow],
+        fingerprint: CommitGraphReferenceFingerprint?
+    ) -> [String: [CommitGraphTraditionalReference]] {
+        var result = Dictionary(
+            uniqueKeysWithValues: rows.map { row in
+                (
+                    row.commit.fullHash,
+                    references(from: row.commit.decorations)
+                )
+            }
+        )
+        guard let fingerprint else { return result }
+
+        for reference in fingerprint.references.sorted(by: { $0.name < $1.name }) {
+            let value: CommitGraphTraditionalReference
+            switch reference.kind {
+            case .localBranch:
+                value = CommitGraphTraditionalReference(
+                    name: readableReferenceName(reference.name),
+                    kind: .localBranch
+                )
+            case .remoteBranch:
+                value = CommitGraphTraditionalReference(
+                    name: readableReferenceName(reference.name),
+                    kind: .remoteBranch
+                )
+            }
+            appendReference(value, hash: reference.targetHash, into: &result)
+        }
+        if let headHash = fingerprint.headHash {
+            appendReference(
+                CommitGraphTraditionalReference(name: "HEAD", kind: .head),
+                hash: headHash,
+                into: &result
+            )
+        }
+        return result
+    }
+
+    private static func readableReferenceName(_ name: String) -> String {
+        if name.hasPrefix("refs/heads/") {
+            return String(name.dropFirst("refs/heads/".count))
+        }
+        if name.hasPrefix("refs/remotes/") {
+            return String(name.dropFirst("refs/remotes/".count))
+        }
+        return name
+    }
+
+    private static func appendReference(
+        _ reference: CommitGraphTraditionalReference,
+        hash: String,
+        into result: inout [String: [CommitGraphTraditionalReference]]
+    ) {
+        guard !result[hash, default: []].contains(reference) else { return }
+        result[hash, default: []].append(reference)
     }
 }
 
@@ -418,7 +496,8 @@ public struct CommitGraphTraditionalLayout: Sendable {
     public init() {}
 
     public func layout(
-        topology: CommitGraphLaneTopology
+        topology: CommitGraphLaneTopology,
+        fingerprint: CommitGraphReferenceFingerprint? = nil
     ) -> CommitGraphTraditionalLayoutResult {
         let rows = topology.rowsNewestFirst.enumerated().map { index, row in
             CommitGraphTraditionalRow(
@@ -445,7 +524,8 @@ public struct CommitGraphTraditionalLayout: Sendable {
         return CommitGraphTraditionalLayoutResult(
             rows: rows,
             maximumLane: topology.maximumLane,
-            shallowBoundaryEndpoints: endpoints
+            shallowBoundaryEndpoints: endpoints,
+            fingerprint: fingerprint
         )
     }
 }

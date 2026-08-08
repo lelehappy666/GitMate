@@ -64,9 +64,24 @@ public struct CommitGraphLayout: Sendable {
                 ($0.hash, $0.column)
             }
         )
+        let columns = orderedRows.map { laneRow in
+            frozenColumns[laneRow.commit.fullHash] ?? laneRow.lane
+        }
+        let branchSlots = columns.map(treeBranchSlot)
+        let minimumSlot = min(branchSlots.min() ?? 0, 0)
+        let maximumSlot = max(branchSlots.max() ?? 0, 0)
+        let naturalWidth = 300
+            + Double(maximumSlot - minimumSlot) * horizontalSpacing
+        let contentWidth = max(1_040, naturalWidth)
+        let horizontalCentering = (contentWidth - naturalWidth) / 2
+        let trunkX = 150
+            + Double(-minimumSlot) * horizontalSpacing
+            + horizontalCentering
+
         let nodes = orderedRows.enumerated().map { rowIndex, laneRow in
             let commit = laneRow.commit
             let column = frozenColumns[commit.fullHash] ?? laneRow.lane
+            let branchSlot = treeBranchSlot(column)
             return CommitGraphNode(
                 hash: commit.fullHash,
                 shortHash: commit.shortHash,
@@ -78,7 +93,7 @@ public struct CommitGraphLayout: Sendable {
                 column: column,
                 row: rowIndex,
                 colorIndex: laneRow.colorIndex,
-                x: 150 + Double(column) * horizontalSpacing,
+                x: trunkX + Double(branchSlot) * horizontalSpacing,
                 y: 82 + Double(rowIndex) * verticalSpacing
             )
         }
@@ -103,25 +118,29 @@ public struct CommitGraphLayout: Sendable {
                 }
                 return CommitGraphShallowBoundaryEndpoint(
                     relation: relation,
-                    x: 150 + Double(relation.targetLane)
+                    x: trunkX + Double(treeBranchSlot(relation.targetLane))
                         * horizontalSpacing,
                     y: child.y - verticalSpacing * 0.65
                 )
             }
-        let maximumColumn = nodes.map(\.column).max() ?? 0
         return CommitGraphLayoutResult(
             nodes: nodes,
             edges: edges,
             shallowBoundaryEndpoints: shallowBoundaryEndpoints,
-            contentWidth: max(
-                1_040,
-                300 + Double(maximumColumn) * horizontalSpacing
-            ),
+            contentWidth: contentWidth,
             contentHeight: max(
                 680,
                 164 + Double(max(nodes.count - 1, 0)) * verticalSpacing
             )
         )
+    }
+
+    /// 主分支固定为 0 号树干，其他泳道依次向左、向右展开。
+    /// 只改变画布坐标，不改变共享拓扑中的稳定泳道编号。
+    private func treeBranchSlot(_ column: Int) -> Int {
+        guard column > 0 else { return 0 }
+        let distance = (column + 1) / 2
+        return column.isMultiple(of: 2) ? distance : -distance
     }
 
     private func canonicalNewestFirst(_ commits: [GitCommit]) -> [GitCommit] {

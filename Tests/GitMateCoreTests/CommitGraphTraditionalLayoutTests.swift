@@ -2,6 +2,46 @@ import Foundation
 import GitMateCore
 
 let commitGraphTraditionalLayoutTests = [
+    TestCase("传统布局使用完整引用表显示本地与远程分支") {
+        let snapshot = laneReferenceDisplaySnapshot()
+        let topology = CommitGraphLaneTopology.build(snapshot: snapshot)
+
+        let layout = CommitGraphTraditionalLayout().layout(
+            topology: topology,
+            fingerprint: snapshot.fingerprint
+        )
+
+        try expect(
+            layout.references(hash: "local-tip").contains {
+                $0.name == "feature/local" && $0.kind == .localBranch
+            },
+            "本地分支必须来自完整 refs，而不是依赖日志装饰文本"
+        )
+        try expect(
+            layout.references(hash: "remote-tip").contains {
+                $0.name == "origin/remote-only" && $0.kind == .remoteBranch
+            },
+            "仅远程存在的分支也必须显示"
+        )
+    },
+    TestCase("工作区状态生成独立未提交变更摘要") {
+        let summary = CommitGraphWorkingTreeSummary(
+            status: LocalRepositoryStatus(
+                branch: "main",
+                upstream: "origin/main",
+                ahead: 1,
+                behind: 2,
+                stagedCount: 3,
+                unstagedCount: 4,
+                untrackedCount: 5,
+                conflictCount: 1
+            )
+        )
+
+        try expectEqual(summary.totalCount, 13, "未提交数量必须覆盖四类工作区变化")
+        try expect(summary.hasChanges, "存在变化时必须显示工作区记录")
+        try expectEqual(summary.branch, "main", "工作区记录必须保留当前分支")
+    },
     TestCase("传统布局保持最新在上且与共享泳道一致") {
         let topology = CommitGraphLaneTopology.build(
             snapshot: traditionalBranchingSnapshot()
@@ -177,6 +217,38 @@ private func traditionalBranchingSnapshot() -> CommitGraphSnapshot {
             ],
             headName: "main",
             headHash: "merge",
+            isShallow: false
+        ),
+        commitsNewestFirst: commits,
+        expectedCommitCount: commits.count,
+        shallowBoundaryParentHashes: [],
+        generatedAt: Date(timeIntervalSince1970: 1)
+    )
+}
+
+private func laneReferenceDisplaySnapshot() -> CommitGraphSnapshot {
+    let commits = [
+        traditionalCommit(hash: "local-tip", parents: ["root"]),
+        traditionalCommit(hash: "remote-tip", parents: ["root"]),
+        traditionalCommit(hash: "root")
+    ]
+    return CommitGraphSnapshot(
+        repositoryPath: "/repo",
+        fingerprint: CommitGraphReferenceFingerprint(
+            references: [
+                CommitGraphReference(
+                    name: "refs/heads/feature/local",
+                    targetHash: "local-tip",
+                    kind: .localBranch
+                ),
+                CommitGraphReference(
+                    name: "refs/remotes/origin/remote-only",
+                    targetHash: "remote-tip",
+                    kind: .remoteBranch
+                )
+            ],
+            headName: "feature/local",
+            headHash: "local-tip",
             isShallow: false
         ),
         commitsNewestFirst: commits,

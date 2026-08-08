@@ -132,6 +132,26 @@ let commitGraphLayoutTests = [
             )
         }
     },
+    TestCase("画布布局以主分支为树干并让相邻分支向两侧生长") {
+        let snapshot = layoutTreeBranchSnapshot()
+        let topology = CommitGraphLaneTopology.build(snapshot: snapshot)
+
+        let canvas = CommitGraphLayout().layout(topology: topology)
+        guard let trunk = canvas.nodes.first(where: { $0.column == 0 }),
+              let leftBranch = canvas.nodes.first(where: { $0.column == 1 }),
+              let rightBranch = canvas.nodes.first(where: { $0.column == 2 })
+        else {
+            throw TestFailure(description: "树枝布局必须包含主干和左右分支")
+        }
+
+        try expect(leftBranch.x < trunk.x, "第一条分支必须从主干向左生长")
+        try expect(rightBranch.x > trunk.x, "第二条分支必须从主干向右生长")
+        try expectEqual(
+            trunk.x - leftBranch.x,
+            rightBranch.x - trunk.x,
+            "左右树枝必须围绕主干保持对称间距"
+        )
+    },
     TestCase("画布布局将浅克隆缺失父提交建模为边界端点") {
         let snapshot = shallowBoundarySnapshot()
 
@@ -215,6 +235,44 @@ private func shallowBoundarySnapshot() -> CommitGraphSnapshot {
         commitsNewestFirst: commits,
         expectedCommitCount: commits.count,
         shallowBoundaryParentHashes: ["missing-parent"],
+        generatedAt: Date(timeIntervalSince1970: 1)
+    )
+}
+
+private func layoutTreeBranchSnapshot() -> CommitGraphSnapshot {
+    let commits = [
+        graphCommit(hash: "main", parents: ["root"]),
+        graphCommit(hash: "left", parents: ["root"]),
+        graphCommit(hash: "right", parents: ["root"]),
+        graphCommit(hash: "root")
+    ]
+    return CommitGraphSnapshot(
+        repositoryPath: "/repo",
+        fingerprint: CommitGraphReferenceFingerprint(
+            references: [
+                CommitGraphReference(
+                    name: "refs/heads/main",
+                    targetHash: "main",
+                    kind: .localBranch
+                ),
+                CommitGraphReference(
+                    name: "refs/heads/left",
+                    targetHash: "left",
+                    kind: .localBranch
+                ),
+                CommitGraphReference(
+                    name: "refs/remotes/origin/right",
+                    targetHash: "right",
+                    kind: .remoteBranch
+                )
+            ],
+            headName: "main",
+            headHash: "main",
+            isShallow: false
+        ),
+        commitsNewestFirst: commits,
+        expectedCommitCount: commits.count,
+        shallowBoundaryParentHashes: [],
         generatedAt: Date(timeIntervalSince1970: 1)
     )
 }

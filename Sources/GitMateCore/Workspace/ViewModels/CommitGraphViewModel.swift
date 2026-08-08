@@ -145,7 +145,10 @@ public struct DefaultCommitGraphViewModelDeriver:
             try Task.checkCancellation()
             let canvas = graphLayout.layout(topology: topology)
             try Task.checkCancellation()
-            let traditional = traditionalLayout.layout(topology: topology)
+            let traditional = traditionalLayout.layout(
+                topology: topology,
+                fingerprint: request.snapshot.fingerprint
+            )
             try Task.checkCancellation()
             let defaultPositions = Dictionary(
                 uniqueKeysWithValues: canvas.nodes.map {
@@ -270,6 +273,7 @@ public final class CommitGraphViewModel {
     public private(set) var traditionalGroupBadgeByHash:
         [String: CommitGraphTraditionalGroupBadge] = [:]
     public private(set) var traditionalGroupRevision: UInt64 = 0
+    public private(set) var localStatus: LocalRepositoryStatus?
     public private(set) var integrityReport: CommitGraphIntegrityReport?
     public private(set) var refreshState: CommitGraphRefreshState = .idle
     public private(set) var focusedHash: String?
@@ -548,6 +552,7 @@ public final class CommitGraphViewModel {
             await load()
             return
         }
+        await refreshLocalStatus()
         let requestID = beginRefreshRequest()
         let hadSnapshot = currentSnapshot != nil
         refreshState = .refreshing(usingCachedSnapshot: hadSnapshot)
@@ -782,6 +787,7 @@ public final class CommitGraphViewModel {
     }
 
     public func load() async {
+        await refreshLocalStatus()
         graphTask?.cancel()
         let requestID = UUID()
         graphRequestID = requestID
@@ -822,6 +828,19 @@ public final class CommitGraphViewModel {
             guard graphRequestID == requestID else { return }
             isLoading = false
             errorMessage = "无法读取提交图，请稍后重试。"
+        }
+    }
+
+    private func refreshLocalStatus() async {
+        let reader = reader
+        let repositoryURL = repositoryURL
+        do {
+            localStatus = try await reader.status(repositoryURL: repositoryURL)
+        } catch is CancellationError {
+            return
+        } catch {
+            // 工作区状态失败不应阻断已经可用的提交历史。
+            localStatus = nil
         }
     }
 

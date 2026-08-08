@@ -9,12 +9,29 @@ enum CommitGraphTraditionalMetrics {
     static let avatarSize = 28.0
 
     static func laneViewportWidth(_ totalWidth: Double) -> Double {
-        min(max(totalWidth * 0.28, 220), 360)
+        let reservedInformationWidth = 300.0
+        let maximum = min(360, max(totalWidth - reservedInformationWidth, 120))
+        return min(max(totalWidth * 0.28, 160), maximum)
     }
 
-    static func laneContentWidth(maximumLane: Int) -> Double {
+    static func laneSpacing(
+        maximumLane: Int,
+        viewportWidth: Double
+    ) -> Double {
+        guard maximumLane > 0 else { return laneSpacing }
+        let available = max(viewportWidth - laneLeadingPadding * 2, 0)
+        return min(laneSpacing, max(available / Double(maximumLane), 8))
+    }
+
+    static func laneContentWidth(
+        maximumLane: Int,
+        viewportWidth: Double
+    ) -> Double {
         laneLeadingPadding * 2
-            + Double(max(maximumLane, 0) + 1) * laneSpacing
+            + Double(max(maximumLane, 0)) * laneSpacing(
+                maximumLane: maximumLane,
+                viewportWidth: viewportWidth
+            )
     }
 }
 
@@ -129,11 +146,13 @@ struct CommitGraphTraditionalCanvas: View {
                 let connection = span.connection
                 let source = lanePoint(
                     row: span.sourceRow,
-                    lane: connection.sourceLane
+                    lane: connection.sourceLane,
+                    laneWidth: laneWidth
                 )
                 let target = lanePoint(
                     row: span.targetRow,
-                    lane: connection.targetLane
+                    lane: connection.targetLane,
+                    laneWidth: laneWidth
                 )
                 var path = Path()
                 path.move(to: source)
@@ -165,8 +184,16 @@ struct CommitGraphTraditionalCanvas: View {
                 else {
                     continue
                 }
-                let source = lanePoint(row: child.row, lane: child.lane)
-                let target = lanePoint(row: endpoint.row, lane: endpoint.lane)
+                let source = lanePoint(
+                    row: child.row,
+                    lane: child.lane,
+                    laneWidth: laneWidth
+                )
+                let target = lanePoint(
+                    row: endpoint.row,
+                    lane: endpoint.lane,
+                    laneWidth: laneWidth
+                )
                 var path = Path()
                 path.move(to: source)
                 let middleY = source.y + (target.y - source.y) * 0.5
@@ -211,7 +238,11 @@ struct CommitGraphTraditionalCanvas: View {
             for rowIndex in visibleRows {
                 guard layout.rows.indices.contains(rowIndex) else { continue }
                 let row = layout.rows[rowIndex]
-                let source = lanePoint(row: rowIndex, lane: row.lane)
+                let source = lanePoint(
+                    row: rowIndex,
+                    lane: row.lane,
+                    laneWidth: laneWidth
+                )
 
                 let color = CommitGraphPalette.color(row.colorIndex)
                 let outer = CGRect(
@@ -544,10 +575,18 @@ struct CommitGraphTraditionalCanvas: View {
         context.stroke(path, with: .color(GitMateTheme.border), lineWidth: 1)
     }
 
-    private func lanePoint(row: Int, lane: Int) -> CGPoint {
-        CGPoint(
+    private func lanePoint(
+        row: Int,
+        lane: Int,
+        laneWidth: Double
+    ) -> CGPoint {
+        let spacing = CommitGraphTraditionalMetrics.laneSpacing(
+            maximumLane: layout.maximumLane,
+            viewportWidth: laneWidth
+        )
+        return CGPoint(
             x: CommitGraphTraditionalMetrics.laneLeadingPadding
-                + Double(lane) * CommitGraphTraditionalMetrics.laneSpacing
+                + Double(lane) * spacing
                 - laneHorizontalOffset,
             y: Double(row) * CommitGraphTraditionalMetrics.rowHeight
                 + CommitGraphTraditionalMetrics.rowHeight / 2

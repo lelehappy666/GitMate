@@ -8,6 +8,7 @@ struct CommitGraphTraditionalView: View {
     let groupRevision: UInt64
     let selectedHash: String?
     let focusedHash: String?
+    let localStatus: LocalRepositoryStatus?
     let currentUserLogin: String?
     let currentUserAvatarURL: URL?
     let select: (String) -> Void
@@ -17,7 +18,15 @@ struct CommitGraphTraditionalView: View {
     @State private var laneHorizontalOffset = 0.0
 
     var body: some View {
-        GeometryReader { geometry in
+        VStack(spacing: 0) {
+            if let localStatus {
+                let summary = CommitGraphWorkingTreeSummary(status: localStatus)
+                if summary.hasChanges {
+                    workingTreeRow(summary)
+                    Divider()
+                }
+            }
+            GeometryReader { geometry in
             let width = Double(geometry.size.width)
             let height = Double(geometry.size.height)
             let laneWidth = CommitGraphTraditionalMetrics
@@ -93,8 +102,69 @@ struct CommitGraphTraditionalView: View {
             .onChange(of: focusedHash) { _, _ in
                 applyFocusIfNeeded(viewportHeight: height)
             }
+            }
         }
         .background(.white)
+        .clipped()
+    }
+
+    private func workingTreeRow(
+        _ summary: CommitGraphWorkingTreeSummary
+    ) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().fill(GitMateTheme.warning.opacity(0.13))
+                Image(systemName: "pencil.and.list.clipboard")
+                    .foregroundStyle(GitMateTheme.warning)
+            }
+            .frame(width: 32, height: 32)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 7) {
+                    Text("工作区变更")
+                        .font(.system(size: 13, weight: .bold))
+                    Text(summary.branch ?? "Detached HEAD")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(GitMateTheme.accent)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(GitMateTheme.accent.opacity(0.09))
+                        .clipShape(Capsule())
+                }
+                Text("本地未提交 · 共 \(summary.totalCount) 项")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(GitMateTheme.textSecondary)
+            }
+
+            Spacer(minLength: 12)
+            worktreeCount("暂存", summary.stagedCount, color: GitMateTheme.accent)
+            worktreeCount("修改", summary.unstagedCount, color: GitMateTheme.warning)
+            worktreeCount("未跟踪", summary.untrackedCount, color: .secondary)
+            if summary.conflictCount > 0 {
+                worktreeCount("冲突", summary.conflictCount, color: .red)
+            }
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 58)
+        .background(GitMateTheme.warning.opacity(0.035))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("工作区有 \(summary.totalCount) 项未提交变更")
+    }
+
+    private func worktreeCount(
+        _ title: String,
+        _ count: Int,
+        color: Color
+    ) -> some View {
+        VStack(spacing: 2) {
+            Text("\(count)")
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundStyle(count > 0 ? color : GitMateTheme.textSecondary)
+            Text(title)
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(GitMateTheme.textSecondary)
+        }
+        .frame(minWidth: 38)
     }
 
     private func accessibilityRows(
@@ -237,7 +307,8 @@ struct CommitGraphTraditionalView: View {
     ) -> Double {
         let maximum = max(
             CommitGraphTraditionalMetrics.laneContentWidth(
-                maximumLane: layout.maximumLane
+                maximumLane: layout.maximumLane,
+                viewportWidth: laneViewportWidth
             ) - laneViewportWidth + 20,
             0
         )
@@ -309,11 +380,18 @@ private struct TraditionalInteractionSurface: NSViewRepresentable {
             let horizontalScale: Double = event.hasPreciseScrollingDeltas
                 ? 1
                 : 48
+            let shiftScroll = event.modifierFlags.contains(.shift)
             let horizontal = point.x <= laneViewportWidth
-                ? Double(event.scrollingDeltaX) * horizontalScale
+                ? Double(
+                    shiftScroll
+                        ? event.scrollingDeltaY
+                        : event.scrollingDeltaX
+                ) * horizontalScale
                 : 0
             coordinator?.scroll(
-                Double(event.scrollingDeltaY) * verticalScale,
+                shiftScroll
+                    ? 0
+                    : Double(event.scrollingDeltaY) * verticalScale,
                 horizontal
             )
         }

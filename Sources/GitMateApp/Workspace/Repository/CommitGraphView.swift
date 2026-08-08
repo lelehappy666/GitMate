@@ -405,6 +405,7 @@ struct CommitGraphView: View {
                 groupRevision: viewModel.traditionalGroupRevision,
                 selectedHash: viewModel.selectedHash,
                 focusedHash: viewModel.focusedHash,
+                localStatus: viewModel.localStatus,
                 currentUserLogin: currentUserLogin,
                 currentUserAvatarURL: currentUserAvatarURL,
                 select: { hash in
