@@ -229,6 +229,190 @@ let commitGraphRenderIndexTests = [
         try expectEqual(visible.shallowBoundaryEndpoints.map(\.id), [relation.id], "边界端点必须可见")
         try expectEqual(visible.edges.map(\.id), [edge.id], "Group 到边界的虚线关系必须进入索引")
     },
+    TestCase("普通浅克隆子提交移动时边界端点和目标路径同步") {
+        let child = renderVisibleNode(hash: "plain-child", x: 200, y: 300)
+        let fixture = renderShallowBoundaryFixture(
+            childHash: child.id,
+            source: .node(child.id),
+            position: GraphPoint(x: 200, y: 180)
+        )
+        var index = CommitGraphRenderIndex(
+            projection: CommitGraphSceneProjection(
+                nodes: [child],
+                groups: [],
+                shallowBoundaryEndpoints: [fixture.endpoint],
+                edges: [fixture.edge]
+            )
+        )
+
+        let update = index.moveNode(
+            hash: child.id,
+            to: GraphPoint(x: 600, y: 500)
+        )
+        let oldArea = index.query(
+            viewport: GraphViewport(offsetX: -120, offsetY: -130),
+            screenSize: GraphSize(width: 160, height: 100),
+            padding: 0
+        )
+        let newArea = index.query(
+            viewport: GraphViewport(offsetX: -520, offsetY: -330),
+            screenSize: GraphSize(width: 160, height: 220),
+            padding: 0
+        )
+
+        try expectEqual(
+            oldArea.shallowBoundaryEndpoints,
+            [],
+            "移动后旧位置不得继续返回浅克隆边界端点"
+        )
+        try expectEqual(
+            newArea.shallowBoundaryEndpoints.first?.position,
+            GraphPoint(x: 600, y: 380),
+            "普通子提交移动后边界必须保持原相对位移"
+        )
+        try expectEqual(
+            update.updatedEdgeIDs,
+            [fixture.edge.id],
+            "边界目标变化必须报告对应虚线边"
+        )
+        try expectEqual(
+            newArea.edges.first?.ports,
+            fixture.edge.ports,
+            "局部移动不得改变固定端口"
+        )
+        guard case let .curve(_, _, _, end)? = newArea.edges.first?.path else {
+            throw TestFailure(description: "浅克隆虚线必须生成更新后的曲线路径")
+        }
+        try expectEqual(
+            end,
+            GraphPoint(x: 600, y: 398),
+            "路径终点必须落在移动后边界卡片的固定底部端口"
+        )
+    },
+    TestCase("折叠分组移动时浅克隆边界端点随组同步") {
+        let groupID = UUID(
+            uuidString: "EEEEEEEE-EEEE-EEEE-EEEE-EEEEEEEEEEEE"
+        )!
+        let group = renderVisibleGroup(
+            id: groupID,
+            title: "折叠浅边界组",
+            origin: GraphPoint(x: 100, y: 300),
+            relativePositions: [
+                "collapsed-child": GraphPoint(x: 80, y: 60),
+                "sibling": GraphPoint(x: 300, y: 60)
+            ],
+            isCollapsed: true
+        )
+        let ports = CommitGraphEdgePorts(
+            source: PortAnchor(side: .top, offset: 0.41),
+            target: PortAnchor(side: .bottom, offset: 0.67)
+        )
+        let fixture = renderShallowBoundaryFixture(
+            childHash: "collapsed-child",
+            source: .group(groupID),
+            position: GraphPoint(x: 212, y: 218),
+            ports: ports
+        )
+        var index = CommitGraphRenderIndex(
+            projection: CommitGraphSceneProjection(
+                nodes: [],
+                groups: [group],
+                shallowBoundaryEndpoints: [fixture.endpoint],
+                edges: [fixture.edge]
+            )
+        )
+
+        let update = index.moveGroup(
+            id: groupID,
+            to: GraphPoint(x: 700, y: 800)
+        )
+        let oldArea = index.query(
+            viewport: GraphViewport(offsetX: -130, offsetY: -170),
+            screenSize: GraphSize(width: 160, height: 100),
+            padding: 0
+        )
+        let newArea = index.query(
+            viewport: GraphViewport(offsetX: -730, offsetY: -670),
+            screenSize: GraphSize(width: 160, height: 180),
+            padding: 0
+        )
+
+        try expectEqual(
+            oldArea.shallowBoundaryEndpoints,
+            [],
+            "折叠 Group 移动后旧边界网格必须清除"
+        )
+        try expectEqual(
+            newArea.shallowBoundaryEndpoints.first?.position,
+            GraphPoint(x: 812, y: 718),
+            "折叠 Group 的独立边界端点必须使用相同平移量"
+        )
+        try expectEqual(
+            update.updatedEdgeIDs,
+            [fixture.edge.id],
+            "折叠 Group 移动必须局部更新边界虚线"
+        )
+        try expectEqual(
+            newArea.edges.first?.ports,
+            ports,
+            "折叠 Group 移动不得重新分配边界端口"
+        )
+    },
+    TestCase("展开分组成员移动时其浅克隆边界局部同步") {
+        let groupID = UUID(
+            uuidString: "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"
+        )!
+        let child = renderVisibleNode(hash: "expanded-child", x: 260, y: 340)
+        let group = renderVisibleGroup(
+            id: groupID,
+            title: "展开浅边界组",
+            origin: GraphPoint(x: 100, y: 200),
+            relativePositions: [
+                child.id: GraphPoint(x: 160, y: 140),
+                "expanded-sibling": GraphPoint(x: 420, y: 140)
+            ],
+            isCollapsed: false
+        )
+        let fixture = renderShallowBoundaryFixture(
+            childHash: child.id,
+            source: .node(child.id),
+            position: GraphPoint(x: 260, y: 220)
+        )
+        var index = CommitGraphRenderIndex(
+            projection: CommitGraphSceneProjection(
+                nodes: [child],
+                groups: [group],
+                shallowBoundaryEndpoints: [fixture.endpoint],
+                edges: [fixture.edge]
+            )
+        )
+
+        let update = index.moveNode(
+            hash: child.id,
+            to: GraphPoint(x: 520, y: 640)
+        )
+        let newArea = index.query(
+            viewport: GraphViewport(offsetX: -440, offsetY: -450),
+            screenSize: GraphSize(width: 160, height: 220),
+            padding: 0
+        )
+
+        try expectEqual(
+            newArea.shallowBoundaryEndpoints.first?.position,
+            GraphPoint(x: 520, y: 520),
+            "展开 Group 成员拖动时其边界端点必须跟随成员"
+        )
+        try expectEqual(update.updatedGroupIDs, [groupID], "成员拖动仍需更新展开 Group 矩形")
+        try expectEqual(
+            update.updatedEdgeIDs,
+            [fixture.edge.id],
+            "成员及边界目标变化只能更新相邻边"
+        )
+        guard case let .curve(_, _, _, end)? = newArea.edges.first?.path else {
+            throw TestFailure(description: "展开成员的边界虚线必须保持可见")
+        }
+        try expectEqual(end, GraphPoint(x: 520, y: 538), "边界路径终点必须随成员更新")
+    },
     TestCase("端点离屏但路径穿过视口的连线仍然可见") {
         let edge = renderIndexEdge(
             id: "left->right",
@@ -979,6 +1163,50 @@ private func renderIndexEdge(
         aggregateKey: nil,
         aggregateCount: 1,
         originalEdgeIDs: [id]
+    )
+}
+
+private func renderShallowBoundaryFixture(
+    childHash: String,
+    source: CommitGraphEndpointID,
+    position: GraphPoint,
+    ports: CommitGraphEdgePorts = CommitGraphEdgePorts(
+        source: PortAnchor(side: .top, offset: 0.5),
+        target: PortAnchor(side: .bottom, offset: 0.5)
+    )
+) -> (
+    endpoint: CommitGraphVisibleShallowBoundaryEndpoint,
+    edge: CommitGraphVisibleEdge
+) {
+    let relation = CommitGraphShallowBoundaryRelation(
+        childHash: childHash,
+        missingParentHash: "missing-\(childHash)",
+        parentIndex: 0,
+        sourceLane: 0,
+        targetLane: 0,
+        colorIndex: 0
+    )
+    let endpoint = CommitGraphVisibleShallowBoundaryEndpoint(
+        endpoint: CommitGraphShallowBoundaryEndpoint(
+            relation: relation,
+            x: position.x,
+            y: position.y
+        ),
+        position: position
+    )
+    return (
+        endpoint,
+        CommitGraphVisibleEdge(
+            id: "shallow:\(relation.id)",
+            source: source,
+            target: .shallowBoundary(relation.id),
+            kind: .shallowBoundary,
+            colorIndex: 0,
+            ports: ports,
+            aggregateKey: nil,
+            aggregateCount: 1,
+            originalEdgeIDs: [relation.id]
+        )
     )
 }
 

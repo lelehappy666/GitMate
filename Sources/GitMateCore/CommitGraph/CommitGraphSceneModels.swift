@@ -545,16 +545,24 @@ enum CommitGraphSceneGeometry {
         guard let laidOutChild = layout.node(hash: endpoint.childHash) else {
             return nil
         }
-        let deltaX = endpoint.x - laidOutChild.x
-        let deltaY = endpoint.y - laidOutChild.y
         if let group = scene.groups.first(where: {
             $0.memberHashes.contains(endpoint.childHash)
         }) {
             if group.isCollapsed {
                 let groupRect = collapsedGroupRect(group)
-                return GraphPoint(
-                    x: groupRect.midpointX + deltaX,
-                    y: groupRect.minimumY + deltaY
+                return shallowBoundaryPosition(
+                    originalPosition: GraphPoint(
+                        x: endpoint.x,
+                        y: endpoint.y
+                    ),
+                    originalAnchor: GraphPoint(
+                        x: laidOutChild.x,
+                        y: laidOutChild.y
+                    ),
+                    updatedAnchor: GraphPoint(
+                        x: groupRect.midpointX,
+                        y: groupRect.minimumY
+                    )
                 )
             }
             guard let childPosition = group.absolutePosition(
@@ -562,16 +570,35 @@ enum CommitGraphSceneGeometry {
             ) else {
                 return nil
             }
-            return GraphPoint(
-                x: childPosition.x + deltaX,
-                y: childPosition.y + deltaY
+            return shallowBoundaryPosition(
+                originalPosition: GraphPoint(x: endpoint.x, y: endpoint.y),
+                originalAnchor: GraphPoint(
+                    x: laidOutChild.x,
+                    y: laidOutChild.y
+                ),
+                updatedAnchor: childPosition
             )
         }
         let childPosition = scene.nodePositions[endpoint.childHash]
             ?? GraphPoint(x: laidOutChild.x, y: laidOutChild.y)
+        return shallowBoundaryPosition(
+            originalPosition: GraphPoint(x: endpoint.x, y: endpoint.y),
+            originalAnchor: GraphPoint(
+                x: laidOutChild.x,
+                y: laidOutChild.y
+            ),
+            updatedAnchor: childPosition
+        )
+    }
+
+    static func shallowBoundaryPosition(
+        originalPosition: GraphPoint,
+        originalAnchor: GraphPoint,
+        updatedAnchor: GraphPoint
+    ) -> GraphPoint {
         return GraphPoint(
-            x: childPosition.x + deltaX,
-            y: childPosition.y + deltaY
+            x: originalPosition.x + updatedAnchor.x - originalAnchor.x,
+            y: originalPosition.y + updatedAnchor.y - originalAnchor.y
         )
     }
 

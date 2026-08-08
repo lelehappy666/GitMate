@@ -100,8 +100,12 @@ public struct CommitGraphRenderIndex: Sendable {
     private var nodes: [CommitGraphVisibleNode]
     private var groups: [CommitGraphVisibleGroup]
     private var regions: [CommitGraphRegionMarker]
-    private let shallowBoundaryEndpoints:
-        [CommitGraphVisibleShallowBoundaryEndpoint]
+    private var shallowBoundaryEndpointsByID:
+        [String: CommitGraphVisibleShallowBoundaryEndpoint]
+    private let shallowBoundaryEndpointIDs: [String]
+    private let shallowBoundaryEndpointIndexByID: [String: Int]
+    private let shallowBoundaryIDsByChildHash: [String: [String]]
+    private let shallowBoundaryIDsByGroupID: [UUID: [String]]
     private let edges: [CommitGraphVisibleEdge]
     private var lineStyle: CommitGraphLineStyle
     private let nodeIndexByHash: [String: Int]
@@ -122,7 +126,22 @@ public struct CommitGraphRenderIndex: Sendable {
         nodes = projection.nodes
         groups = projection.groups
         regions = projection.regions
-        shallowBoundaryEndpoints = projection.shallowBoundaryEndpoints
+        shallowBoundaryEndpointIDs = projection.shallowBoundaryEndpoints
+            .map(\.id)
+        shallowBoundaryEndpointsByID = Dictionary(
+            projection.shallowBoundaryEndpoints.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        shallowBoundaryEndpointIndexByID = Dictionary(
+            shallowBoundaryEndpointIDs.enumerated().map {
+                ($0.element, $0.offset)
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+        shallowBoundaryIDsByChildHash = Dictionary(
+            grouping: projection.shallowBoundaryEndpoints,
+            by: { $0.endpoint.childHash }
+        ).mapValues { $0.map(\.id) }
         edges = projection.edges
         lineStyle = projection.lineStyle
         nodeIndexByHash = Dictionary(
@@ -133,12 +152,26 @@ public struct CommitGraphRenderIndex: Sendable {
             projection.groups.enumerated().map { ($0.element.id, $0.offset) },
             uniquingKeysWith: { first, _ in first }
         )
-        groupIndexByMemberHash = Dictionary(
+        let builtGroupIndexByMemberHash = Dictionary(
             projection.groups.enumerated().flatMap { index, group in
                 group.memberHashes.map { ($0, index) }
             },
             uniquingKeysWith: { first, _ in first }
         )
+        groupIndexByMemberHash = builtGroupIndexByMemberHash
+        var builtBoundaryIDsByGroupID: [UUID: [String]] = [:]
+        for endpoint in projection.shallowBoundaryEndpoints {
+            guard let groupIndex = builtGroupIndexByMemberHash[
+                endpoint.endpoint.childHash
+            ] else {
+                continue
+            }
+            builtBoundaryIDsByGroupID[
+                projection.groups[groupIndex].id,
+                default: []
+            ].append(endpoint.id)
+        }
+        shallowBoundaryIDsByGroupID = builtBoundaryIDsByGroupID
         endpointRects = CommitGraphSceneProjector.endpointRects(
             in: projection
         )
@@ -285,12 +318,17 @@ public struct CommitGraphRenderIndex: Sendable {
                     .filter { regions[$0].rect.intersects(bounds) }
                     .map { regions[$0] },
                 shallowBoundaryEndpoints: shallowBoundaryQuery.items.sorted()
-                    .filter {
-                        Self.shallowBoundaryRect(
-                            for: shallowBoundaryEndpoints[$0]
-                        ).intersects(bounds)
+                    .compactMap { index in
+                        guard index < shallowBoundaryEndpointIDs.count else {
+                            return nil
+                        }
+                        return shallowBoundaryEndpointsByID[
+                            shallowBoundaryEndpointIDs[index]
+                        ]
                     }
-                    .map { shallowBoundaryEndpoints[$0] },
+                    .filter {
+                        Self.shallowBoundaryRect(for: $0).intersects(bounds)
+                    },
                 edges: visibleEdges
             ),
             diagnostics: CommitGraphRenderQueryDiagnostics(
@@ -400,6 +438,7 @@ public struct CommitGraphRenderIndex: Sendable {
             return .empty
         }
 
+        let previousPosition = nodes[nodeIndex].position
         nodes[nodeIndex] = CommitGraphVisibleNode(
             node: nodes[nodeIndex].node,
             position: position
@@ -411,6 +450,13 @@ public struct CommitGraphRenderIndex: Sendable {
         var updatedGroupIDs: [UUID] = []
         var affectedEdgeIndices = Set(
             incidentEdgeIndices[.node(hash)] ?? []
+        )
+        affectedEdgeIndices.formUnion(
+            moveShallowBoundaries(
+                ids: shallowBoundaryIDsByChildHash[hash] ?? [],
+                anchorFrom: previousPosition,
+                anchorTo: position
+            )
         )
         if let groupIndex = groupIndexByMemberHash[hash] {
             let group = groups[groupIndex]
@@ -465,6 +511,13 @@ public struct CommitGraphRenderIndex: Sendable {
 
         var updatedNodeHashes: [String] = []
         var affectedEdgeIndices = Set(incidentEdgeIndices[.group(id)] ?? [])
+        affectedEdgeIndices.formUnion(
+            moveShallowBoundaries(
+                ids: shallowBoundaryIDsByGroupID[id] ?? [],
+                anchorFrom: group.origin,
+                anchorTo: origin
+            )
+        )
         for hash in group.memberHashes.sorted() {
             guard let nodeIndex = nodeIndexByHash[hash],
                   let relative = group.relativePositions[hash]
@@ -507,6 +560,39 @@ public struct CommitGraphRenderIndex: Sendable {
             edgeCandidates[edgeIndex] = candidate
             edgeGrid.replace(item: edgeIndex, cells: candidate.indexCells)
         }
+    }
+
+    private mutating func moveShallowBoundaries(
+        ids: [String],
+        anchorFrom previousAnchor: GraphPoint,
+        anchorTo updatedAnchor: GraphPoint
+    ) -> Set<Int> {
+        var affectedEdgeIndices: Set<Int> = []
+        for id in ids {
+            guard let endpoint = shallowBoundaryEndpointsByID[id],
+                  let endpointIndex = shallowBoundaryEndpointIndexByID[id]
+            else {
+                continue
+            }
+            let position = CommitGraphSceneGeometry.shallowBoundaryPosition(
+                originalPosition: endpoint.position,
+                originalAnchor: previousAnchor,
+                updatedAnchor: updatedAnchor
+            )
+            guard position != endpoint.position else { continue }
+            let updated = CommitGraphVisibleShallowBoundaryEndpoint(
+                endpoint: endpoint.endpoint,
+                position: position
+            )
+            shallowBoundaryEndpointsByID[id] = updated
+            let rect = Self.shallowBoundaryRect(for: updated)
+            shallowBoundaryGrid.replace(item: endpointIndex, rect: rect)
+            endpointRects[.shallowBoundary(id)] = rect
+            affectedEdgeIndices.formUnion(
+                incidentEdgeIndices[.shallowBoundary(id)] ?? []
+            )
+        }
+        return affectedEdgeIndices
     }
 
     private static func candidate(
