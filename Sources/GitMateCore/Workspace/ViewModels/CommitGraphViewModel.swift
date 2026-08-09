@@ -1782,7 +1782,10 @@ public final class CommitGraphViewModel {
 
     private func reconcileSceneWithLayout() {
         let defaults = CommitGraphSceneState.defaultState(layout: layout)
+        let availableHashes = Set(defaults.nodePositions.keys)
         let groupedHashes = Set(scene.groups.flatMap(\.memberHashes))
+        scene.manuallyPositionedHashes.formIntersection(availableHashes)
+        scene.manuallyPositionedHashes.subtract(groupedHashes)
         for (hash, position) in defaults.nodePositions
             where !groupedHashes.contains(hash)
                 && scene.nodePositions[hash] == nil {
@@ -1871,6 +1874,7 @@ public final class CommitGraphViewModel {
             where: { $0.memberHashes.contains(hash) }
         ), let position = updated.groups[groupIndex]
             .relativePositions[hash] {
+            updated.manuallyPositionedHashes.remove(hash)
             updated.groups[groupIndex].relativePositions[hash] = GraphPoint(
                 x: position.x + translation.x,
                 y: position.y + translation.y
@@ -1885,6 +1889,7 @@ public final class CommitGraphViewModel {
                 x: position.x + translation.x,
                 y: position.y + translation.y
             )
+            updated.manuallyPositionedHashes.insert(hash)
         }
         return updated
     }

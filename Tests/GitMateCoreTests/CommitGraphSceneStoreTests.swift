@@ -167,6 +167,56 @@ let commitGraphSceneStoreTests = [
             "旧场景必须标记为旧布局，等待有提交默认坐标时迁移"
         )
     },
+    TestCase("schema三场景迁移后补全布局偏好并保留已有内容") {
+        let data = Data(
+            """
+            {
+              "schemaVersion": 3,
+              "layoutAlgorithmVersion": 2,
+              "nodePositions": {"outside":{"x":80,"y":120}},
+              "groups": [],
+              "regions": [],
+              "edgePorts": {},
+              "boundaryPorts": [],
+              "lineStyle": "orthogonal",
+              "viewMode": "canvas",
+              "canvasViewport": {
+                "offsetX": 120,
+                "offsetY": -80,
+                "scale": 1.25
+              }
+            }
+            """.utf8
+        )
+
+        let scene = try JSONDecoder().decode(
+            CommitGraphSceneState.self,
+            from: data
+        )
+
+        try expectEqual(
+            scene.manuallyPositionedHashes,
+            [],
+            "旧场景不得猜测哪些普通节点由用户拖动"
+        )
+        try expectEqual(
+            scene.pinnedTraditionalBranchIDs,
+            [],
+            "旧场景的传统固定分支必须默认为空"
+        )
+        try expectEqual(
+            scene.lastTraditionalBranchID,
+            nil,
+            "旧场景不得虚构最近选择的传统分支"
+        )
+        try expectEqual(
+            scene.nodePositions["outside"],
+            GraphPoint(x: 80, y: 120),
+            "迁移必须保留已有节点坐标"
+        )
+        try expectEqual(scene.lineStyle, .orthogonal, "迁移必须保留线型")
+        try expectEqual(scene.viewMode, .canvas, "迁移必须保留视图模式")
+    },
     TestCase("未知未来场景版本返回稳定错误") {
         let directory = commitGraphSceneStoreTemporaryDirectory()
         try FileManager.default.createDirectory(

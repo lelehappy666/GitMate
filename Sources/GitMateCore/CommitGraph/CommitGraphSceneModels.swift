@@ -168,8 +168,8 @@ public struct CollapsedEdgeKey: Codable, Equatable, Hashable, Sendable {
 }
 
 public struct CommitGraphSceneState: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 3
-    public static let currentLayoutAlgorithmVersion = 2
+    public static let currentSchemaVersion = 4
+    public static let currentLayoutAlgorithmVersion = 3
 
     public var schemaVersion: Int
     public var layoutAlgorithmVersion: Int
@@ -181,6 +181,9 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
     public var lineStyle: CommitGraphLineStyle
     public var viewMode: CommitGraphViewMode
     public var canvasViewport: GraphViewport
+    public var manuallyPositionedHashes: Set<String>
+    public var pinnedTraditionalBranchIDs: Set<String>
+    public var lastTraditionalBranchID: String?
 
     public init(
         schemaVersion: Int = currentSchemaVersion,
@@ -192,7 +195,10 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
         boundaryPorts: [CollapsedEdgeKey: CommitGraphEdgePorts] = [:],
         lineStyle: CommitGraphLineStyle = .curve,
         viewMode: CommitGraphViewMode = .traditional,
-        canvasViewport: GraphViewport = GraphViewport()
+        canvasViewport: GraphViewport = GraphViewport(),
+        manuallyPositionedHashes: Set<String> = [],
+        pinnedTraditionalBranchIDs: Set<String> = [],
+        lastTraditionalBranchID: String? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.layoutAlgorithmVersion = layoutAlgorithmVersion
@@ -204,6 +210,9 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
         self.lineStyle = lineStyle
         self.viewMode = viewMode
         self.canvasViewport = canvasViewport
+        self.manuallyPositionedHashes = manuallyPositionedHashes
+        self.pinnedTraditionalBranchIDs = pinnedTraditionalBranchIDs
+        self.lastTraditionalBranchID = lastTraditionalBranchID
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -217,6 +226,9 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
         case lineStyle
         case viewMode
         case canvasViewport
+        case manuallyPositionedHashes
+        case pinnedTraditionalBranchIDs
+        case lastTraditionalBranchID
     }
 
     private struct CodableViewport: Codable {
@@ -291,6 +303,18 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
                 forKey: .canvasViewport
             ).viewport
         }
+        manuallyPositionedHashes = try container.decodeIfPresent(
+            Set<String>.self,
+            forKey: .manuallyPositionedHashes
+        ) ?? []
+        pinnedTraditionalBranchIDs = try container.decodeIfPresent(
+            Set<String>.self,
+            forKey: .pinnedTraditionalBranchIDs
+        ) ?? []
+        lastTraditionalBranchID = try container.decodeIfPresent(
+            String.self,
+            forKey: .lastTraditionalBranchID
+        )
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -310,6 +334,18 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
         try container.encode(
             CodableViewport(canvasViewport),
             forKey: .canvasViewport
+        )
+        try container.encode(
+            manuallyPositionedHashes,
+            forKey: .manuallyPositionedHashes
+        )
+        try container.encode(
+            pinnedTraditionalBranchIDs,
+            forKey: .pinnedTraditionalBranchIDs
+        )
+        try container.encodeIfPresent(
+            lastTraditionalBranchID,
+            forKey: .lastTraditionalBranchID
         )
     }
 

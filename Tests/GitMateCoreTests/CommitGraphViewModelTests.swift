@@ -340,6 +340,39 @@ let commitGraphViewModelTests = [
             "拖动节点不得重新分配 Group 端口"
         )
     },
+    TestCase("普通节点拖动记录唯一手动位置真值") { @MainActor in
+        let viewModel = CommitGraphViewModel(
+            reader: PagedCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            pageSize: 2
+        )
+        await viewModel.load()
+        await viewModel.loadOlderCommits()
+
+        viewModel.moveNode(
+            hash: "hash-c",
+            by: GraphPoint(x: 18, y: -12)
+        )
+
+        try expectEqual(
+            viewModel.scene.manuallyPositionedHashes,
+            Set(["hash-c"]),
+            "普通节点拖动后必须明确记录为手动定位"
+        )
+
+        viewModel.replaceSelection(with: ["hash-a", "hash-b"])
+        _ = try viewModel.createManualGroup(title: "分组")
+        viewModel.moveNode(
+            hash: "hash-a",
+            by: GraphPoint(x: 8, y: 4)
+        )
+
+        try expectEqual(
+            viewModel.scene.manuallyPositionedHashes,
+            Set(["hash-c"]),
+            "Group 成员只保存相对坐标，不得产生第二份位置真值"
+        )
+    },
     TestCase("分组支持重命名添加成员和安全解散") { @MainActor in
         let viewModel = CommitGraphViewModel(
             reader: PagedCommitGraphReader(),
