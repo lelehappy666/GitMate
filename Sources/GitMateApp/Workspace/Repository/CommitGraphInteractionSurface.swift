@@ -23,10 +23,12 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
     let viewport: GraphViewport
     let marqueePurpose: CommitGraphMarqueePurpose
     let hitTestCanvas: (GraphPoint) -> CommitGraphRenderHit?
+    let hitTestBranchBundle: (GraphPoint) -> String?
     let onViewportChanges: ([GraphViewportChange]) -> Void
     let onPointerChanges: ([CommitGraphPointerChange]) -> Void
     let onNodeClick:
         (String, CommitGraphSelectionModifiers, Bool) -> Void
+    let onBranchBundleClick: (String) -> Void
     let onMarqueeSelectionCompleted:
         (CommitGraphMarqueePurpose, Set<String>, GraphRect) -> Void
     let onContextAction: (CommitGraphContextAction) -> Void
@@ -40,6 +42,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             onViewportChanges: onViewportChanges,
             onPointerChanges: onPointerChanges,
             onNodeClick: onNodeClick,
+            onBranchBundleClick: onBranchBundleClick,
             onMarqueeSelectionCompleted: onMarqueeSelectionCompleted,
             onContextAction: onContextAction,
             onCancelMarqueeMode: onCancelMarqueeMode,
@@ -57,6 +60,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         view.viewport = viewport
         view.marqueePurpose = marqueePurpose
         view.hitTestCanvas = hitTestCanvas
+        view.hitTestBranchBundle = hitTestBranchBundle
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor.clear.cgColor
         view.setAccessibilityElement(false)
@@ -68,6 +72,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             onViewportChanges: onViewportChanges,
             onPointerChanges: onPointerChanges,
             onNodeClick: onNodeClick,
+            onBranchBundleClick: onBranchBundleClick,
             onMarqueeSelectionCompleted: onMarqueeSelectionCompleted,
             onContextAction: onContextAction,
             onCancelMarqueeMode: onCancelMarqueeMode,
@@ -80,6 +85,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         nsView.viewport = viewport
         nsView.marqueePurpose = marqueePurpose
         nsView.hitTestCanvas = hitTestCanvas
+        nsView.hitTestBranchBundle = hitTestBranchBundle
         if nsView.isMarqueeActive {
             nsView.refreshMarquee()
         }
@@ -99,6 +105,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         private var onPointerChanges: ([CommitGraphPointerChange]) -> Void
         private var onNodeClick:
             (String, CommitGraphSelectionModifiers, Bool) -> Void
+        private var onBranchBundleClick: (String) -> Void
         private var onMarqueeSelectionCompleted:
             (CommitGraphMarqueePurpose, Set<String>, GraphRect) -> Void
         private var onContextAction: (CommitGraphContextAction) -> Void
@@ -117,6 +124,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                 CommitGraphSelectionModifiers,
                 Bool
             ) -> Void,
+            onBranchBundleClick: @escaping (String) -> Void,
             onMarqueeSelectionCompleted: @escaping (
                 CommitGraphMarqueePurpose,
                 Set<String>,
@@ -131,6 +139,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             self.onViewportChanges = onViewportChanges
             self.onPointerChanges = onPointerChanges
             self.onNodeClick = onNodeClick
+            self.onBranchBundleClick = onBranchBundleClick
             self.onMarqueeSelectionCompleted =
                 onMarqueeSelectionCompleted
             self.onContextAction = onContextAction
@@ -148,6 +157,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                 CommitGraphSelectionModifiers,
                 Bool
             ) -> Void,
+            onBranchBundleClick: @escaping (String) -> Void,
             onMarqueeSelectionCompleted: @escaping (
                 CommitGraphMarqueePurpose,
                 Set<String>,
@@ -162,6 +172,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             self.onViewportChanges = onViewportChanges
             self.onPointerChanges = onPointerChanges
             self.onNodeClick = onNodeClick
+            self.onBranchBundleClick = onBranchBundleClick
             self.onMarqueeSelectionCompleted =
                 onMarqueeSelectionCompleted
             self.onContextAction = onContextAction
@@ -185,6 +196,10 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             opensDetail: Bool
         ) {
             onNodeClick(hash, modifiers, opensDetail)
+        }
+
+        func branchBundleClick(id: String) {
+            onBranchBundleClick(id)
         }
 
         func groupDoubleClick(id: UUID, isCollapsed: Bool) {
@@ -233,6 +248,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
     final class InteractionView: NSView {
         private enum DragTarget {
             case canvas
+            case branchBundle(String)
             case node(String)
             case group(UUID)
             case region(UUID)
@@ -254,6 +270,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
         var viewport = GraphViewport()
         var marqueePurpose = CommitGraphMarqueePurpose.createGroup
         var hitTestCanvas: (GraphPoint) -> CommitGraphRenderHit? = { _ in nil }
+        var hitTestBranchBundle: (GraphPoint) -> String? = { _ in nil }
         private var dragTarget: DragTarget = .canvas
         private var didDrag = false
         private var accumulatedDistance = 0.0
@@ -318,7 +335,7 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             didDrag = accumulatedDistance >= 2
 
             switch dragTarget {
-            case .canvas:
+            case .canvas, .branchBundle:
                 coordinator?.enqueueViewport(.pan(screenTranslation))
             case let .node(hash):
                 coordinator?.enqueuePointer(
@@ -362,6 +379,8 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
             }
 
             switch dragTarget {
+            case let .branchBundle(id):
+                coordinator?.branchBundleClick(id: id)
             case let .node(hash):
                 let modifiers = selectionModifiers(event.modifierFlags)
                 coordinator?.nodeClick(
@@ -622,6 +641,9 @@ struct CommitGraphInteractionSurface: NSViewRepresentable {
                 screenPoint: screenPoint,
                 viewport: viewport
             )
+            if let bundleID = hitTestBranchBundle(point) {
+                return .branchBundle(bundleID)
+            }
             if let hit = hitTestCanvas(point) {
                 switch hit {
                 case let .node(hash):

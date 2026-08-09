@@ -401,6 +401,9 @@ struct CommitGraphView: View {
         if viewModel.scene.viewMode == .traditional {
             CommitGraphTraditionalView(
                 layout: viewModel.traditionalLayout,
+                branchCatalog: viewModel.branchCatalog,
+                branchProjection: viewModel.traditionalBranchProjection,
+                pinnedBranchIDs: viewModel.scene.pinnedTraditionalBranchIDs,
                 groupBadgeByHash: viewModel.traditionalGroupBadgeByHash,
                 groupRevision: viewModel.traditionalGroupRevision,
                 selectedHash: viewModel.selectedHash,
@@ -413,6 +416,15 @@ struct CommitGraphView: View {
                     Task {
                         await viewModel.select(hash: hash)
                     }
+                },
+                setViewportWidth: { width in
+                    viewModel.setTraditionalViewportWidth(width)
+                },
+                selectBranch: { id in
+                    viewModel.selectTraditionalBranch(id: id)
+                },
+                togglePinnedBranch: { id in
+                    viewModel.togglePinnedTraditionalBranch(id: id)
                 },
                 consumeFocus: { hash in
                     viewModel.consumeFocusedHash(hash)
@@ -455,6 +467,19 @@ struct CommitGraphView: View {
             let levelOfDetail = CommitGraphLevelOfDetail.forScale(
                 viewModel.viewport.scale
             )
+            let bundleViewport = canvasViewportRect(
+                screenSize: screenSize,
+                viewport: viewModel.viewport
+            )
+            let visibleBundles = levelOfDetail == .overview
+                ? viewModel.visibleBranchBundles(in: bundleViewport)
+                : []
+            let hiddenBundleHashes = levelOfDetail == .overview
+                ? viewModel.branchBundleProjection.hiddenMemberHashes
+                : []
+            let hiddenBundleEdges = levelOfDetail == .overview
+                ? viewModel.branchBundleProjection.hiddenInternalEdgeIDs
+                : []
             let navigatorHeight = min(geometry.size.height * 0.64, 480)
             let markerBins = viewModel.historyMarkerBins(
                 pixelHeight: max(Double(navigatorHeight) - 76, 1)
@@ -463,6 +488,9 @@ struct CommitGraphView: View {
                 CommitGraphCanvas(
                     visibleScene: visibleScene,
                     regions: visibleScene.regions,
+                    branchBundles: visibleBundles,
+                    hiddenBundleMemberHashes: hiddenBundleHashes,
+                    hiddenBundleEdgeIDs: hiddenBundleEdges,
                     viewport: viewModel.viewport,
                     levelOfDetail: levelOfDetail,
                     selectedHashes: viewModel.selectedHashes,
@@ -478,6 +506,10 @@ struct CommitGraphView: View {
                     marqueePurpose: marqueePurpose,
                     hitTestCanvas: { point in
                         viewModel.hitTest(canvasPoint: point)
+                    },
+                    hitTestBranchBundle: { point in
+                        guard levelOfDetail == .overview else { return nil }
+                        return viewModel.branchBundle(at: point)?.id
                     },
                     onViewportChanges: { changes in
                         viewModel.applyViewportChanges(changes)
@@ -496,6 +528,9 @@ struct CommitGraphView: View {
                                 await viewModel.select(hash: hash)
                             }
                         }
+                    },
+                    onBranchBundleClick: { id in
+                        viewModel.toggleBranchBundle(id: id)
                     },
                     onMarqueeSelectionCompleted: {
                         purpose,
@@ -614,6 +649,29 @@ struct CommitGraphView: View {
                 cancelMarqueeMode()
             }
         }
+    }
+
+    private func canvasViewportRect(
+        screenSize: GraphSize,
+        viewport: GraphViewport
+    ) -> GraphRect {
+        let first = CommitGraphViewportProjector.canvasPoint(
+            screenPoint: .zero,
+            viewport: viewport
+        )
+        let second = CommitGraphViewportProjector.canvasPoint(
+            screenPoint: GraphPoint(
+                x: screenSize.width,
+                y: screenSize.height
+            ),
+            viewport: viewport
+        )
+        return GraphRect(
+            x: min(first.x, second.x),
+            y: min(first.y, second.y),
+            width: abs(second.x - first.x),
+            height: abs(second.y - first.y)
+        )
     }
 
     private func accessibilityNodes(

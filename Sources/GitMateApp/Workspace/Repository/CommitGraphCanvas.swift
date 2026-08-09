@@ -27,6 +27,9 @@ enum CommitGraphPalette {
 struct CommitGraphCanvas: View {
     let visibleScene: CommitGraphVisibleScene
     let regions: [CommitGraphRegionMarker]
+    let branchBundles: [CommitGraphBranchBundle]
+    let hiddenBundleMemberHashes: Set<String>
+    let hiddenBundleEdgeIDs: Set<String>
     let viewport: GraphViewport
     let levelOfDetail: CommitGraphLevelOfDetail
     let selectedHashes: Set<String>
@@ -40,6 +43,7 @@ struct CommitGraphCanvas: View {
             drawRegions(context: &context, size: size)
             drawExpandedGroups(context: &context, size: size)
             drawVisibleEdges(context: &context, size: size)
+            drawBranchBundles(context: &context, size: size)
             drawShallowBoundaryEndpoints(context: &context, size: size)
             drawVisibleNodes(context: &context, size: size)
             drawCollapsedGroups(context: &context, size: size)
@@ -234,6 +238,7 @@ struct CommitGraphCanvas: View {
         size: CGSize
     ) {
         for edge in visibleScene.edges {
+            guard !hiddenBundleEdgeIDs.contains(edge.id) else { continue }
             guard let generated = edge.path else { continue }
             var path = Path()
             switch generated {
@@ -283,6 +288,99 @@ struct CommitGraphCanvas: View {
                     context: &context
                 )
             }
+        }
+    }
+
+    private func drawBranchBundles(
+        context: inout GraphicsContext,
+        size: CGSize
+    ) {
+        guard levelOfDetail == .overview else { return }
+        for bundle in branchBundles {
+            let rect = screenRect(bundle.rect)
+            guard isVisible(rect, in: size, padding: 80) else { continue }
+            let color = CommitGraphPalette.color(bundle.colorIndex)
+            let centerX = rect.midX
+            let startY = rect.minY + min(18 * viewport.scale, rect.height / 3)
+            let endY = rect.maxY - min(18 * viewport.scale, rect.height / 3)
+            var branch = Path()
+            branch.move(to: CGPoint(x: centerX, y: startY))
+            branch.addCurve(
+                to: CGPoint(x: centerX, y: endY),
+                control1: CGPoint(
+                    x: centerX - 11 * viewport.scale,
+                    y: startY + (endY - startY) * 0.34
+                ),
+                control2: CGPoint(
+                    x: centerX + 11 * viewport.scale,
+                    y: startY + (endY - startY) * 0.66
+                )
+            )
+            context.stroke(
+                branch,
+                with: .color(color.opacity(0.28)),
+                style: StrokeStyle(
+                    lineWidth: max(13 * viewport.scale, 5),
+                    lineCap: .round
+                )
+            )
+            context.stroke(
+                branch,
+                with: .color(color.opacity(0.96)),
+                style: StrokeStyle(
+                    lineWidth: max(3.2 * viewport.scale, 1.6),
+                    lineCap: .round
+                )
+            )
+
+            let cardWidth = max(138 * viewport.scale, 90)
+            let cardHeight = max(40 * viewport.scale, 30)
+            let cardRect = CGRect(
+                x: centerX - cardWidth / 2,
+                y: rect.midY - cardHeight / 2,
+                width: cardWidth,
+                height: cardHeight
+            )
+            let card = Path(
+                roundedRect: cardRect,
+                cornerRadius: max(12 * viewport.scale, 8)
+            )
+            context.fill(card, with: .color(.white.opacity(0.96)))
+            context.stroke(
+                card,
+                with: .color(color.opacity(0.9)),
+                lineWidth: max(1.4 * viewport.scale, 1)
+            )
+            drawFittedText(
+                bundle.branchName,
+                in: CGRect(
+                    x: cardRect.minX + 10 * viewport.scale,
+                    y: cardRect.minY + 3 * viewport.scale,
+                    width: cardRect.width - 20 * viewport.scale,
+                    height: cardRect.height * 0.5
+                ),
+                font: .systemFont(
+                    ofSize: max(11 * viewport.scale, 8),
+                    weight: .bold
+                ),
+                color: NSColor.labelColor,
+                context: &context
+            )
+            drawFittedText(
+                "\(bundle.commitCount) 个提交 · 点击展开",
+                in: CGRect(
+                    x: cardRect.minX + 10 * viewport.scale,
+                    y: cardRect.midY,
+                    width: cardRect.width - 20 * viewport.scale,
+                    height: cardRect.height * 0.42
+                ),
+                font: .systemFont(
+                    ofSize: max(9 * viewport.scale, 7),
+                    weight: .medium
+                ),
+                color: NSColor.secondaryLabelColor,
+                context: &context
+            )
         }
     }
 
@@ -386,6 +484,10 @@ struct CommitGraphCanvas: View {
         size: CGSize
     ) {
         for visibleNode in visibleScene.nodes {
+            if levelOfDetail == .overview,
+               hiddenBundleMemberHashes.contains(visibleNode.node.hash) {
+                continue
+            }
             let rect = screenRect(nodeRect(visibleNode.position))
             guard isVisible(rect, in: size) else { continue }
             drawNode(

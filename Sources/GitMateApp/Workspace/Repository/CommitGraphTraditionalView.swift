@@ -4,6 +4,9 @@ import SwiftUI
 
 struct CommitGraphTraditionalView: View {
     let layout: CommitGraphTraditionalLayoutResult
+    let branchCatalog: CommitGraphBranchCatalog
+    let branchProjection: CommitGraphTraditionalBranchProjection
+    let pinnedBranchIDs: Set<String>
     let groupBadgeByHash: [String: CommitGraphTraditionalGroupBadge]
     let groupRevision: UInt64
     let selectedHash: String?
@@ -12,10 +15,13 @@ struct CommitGraphTraditionalView: View {
     let currentUserLogin: String?
     let currentUserAvatarURL: URL?
     let select: (String) -> Void
+    let setViewportWidth: (Double) -> Void
+    let selectBranch: (String) -> Void
+    let togglePinnedBranch: (String) -> Void
     let consumeFocus: (String) -> Void
 
     @State private var verticalOffset = 0.0
-    @State private var laneHorizontalOffset = 0.0
+    @State private var showsBranchPicker = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,13 +32,15 @@ struct CommitGraphTraditionalView: View {
                     Divider()
                 }
             }
+            branchContextBar
+            Divider()
             GeometryReader { geometry in
             let width = Double(geometry.size.width)
             let height = Double(geometry.size.height)
             let laneWidth = CommitGraphTraditionalMetrics
                 .laneViewportWidth(
                     width,
-                    maximumLane: layout.maximumLane
+                    maximumLane: max(branchProjection.slots.count - 1, 0)
                 )
             let visibleRows = CommitGraphTraditionalViewport.visibleRows(
                 totalCount: layout.contentRowCount,
@@ -45,11 +53,12 @@ struct CommitGraphTraditionalView: View {
             ZStack(alignment: .topLeading) {
                 CommitGraphTraditionalCanvas(
                     layout: layout,
+                    branchCatalog: branchCatalog,
+                    branchProjection: branchProjection,
                     groupByHash: groupBadgeByHash,
                     groupRevision: groupRevision,
                     visibleRows: visibleRows,
                     verticalOffset: verticalOffset,
-                    laneHorizontalOffset: laneHorizontalOffset,
                     selectedHash: selectedHash
                 )
 
@@ -68,12 +77,7 @@ struct CommitGraphTraditionalView: View {
                             verticalOffset - verticalDelta,
                             viewportHeight: height
                         )
-                        if horizontalDelta != 0 {
-                            laneHorizontalOffset = clampedLaneOffset(
-                                laneHorizontalOffset - horizontalDelta,
-                                laneViewportWidth: laneWidth
-                            )
-                        }
+                        _ = horizontalDelta
                     },
                     selectRow: { row in
                         guard layout.rows.indices.contains(row) else { return }
@@ -88,17 +92,14 @@ struct CommitGraphTraditionalView: View {
                     width: width
                 )
 
-                if CommitGraphTraditionalLaneGeometry.contentWidth(
-                    maximumLane: layout.maximumLane
-                ) > laneWidth {
-                    laneNavigation(width: width)
-                }
             }
             .onAppear {
+                setViewportWidth(width)
                 clampOffsets(width: width, height: height)
                 applyFocusIfNeeded(viewportHeight: height)
             }
             .onChange(of: geometry.size) { _, newSize in
+                setViewportWidth(Double(newSize.width))
                 clampOffsets(
                     width: Double(newSize.width),
                     height: Double(newSize.height)
@@ -115,6 +116,125 @@ struct CommitGraphTraditionalView: View {
         }
         .background(.white)
         .clipped()
+    }
+
+    private var branchContextBar: some View {
+        HStack(spacing: 10) {
+            Text("Git 提交历史")
+                .font(.system(size: 11.5, weight: .bold))
+                .foregroundStyle(GitMateTheme.textPrimary)
+            Divider().frame(height: 20)
+            Label(
+                "\(branchProjection.slots.count) / \(branchCatalog.branches.count) 分支",
+                systemImage: "arrow.triangle.branch"
+            )
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(GitMateTheme.textPrimary)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(branchProjection.slots) { slot in
+                        branchSlot(slot)
+                    }
+                }
+            }
+
+            Button {
+                showsBranchPicker = true
+            } label: {
+                Label("查找分支", systemImage: "magnifyingglass")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .popover(isPresented: $showsBranchPicker, arrowEdge: .bottom) {
+                CommitGraphBranchPicker(
+                    catalog: branchCatalog,
+                    projection: branchProjection,
+                    pinnedBranchIDs: pinnedBranchIDs,
+                    selectBranch: selectBranch,
+                    togglePinned: togglePinnedBranch
+                )
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 46)
+        .background(GitMateTheme.panel.opacity(0.34))
+    }
+
+    private func branchSlot(
+        _ slot: CommitGraphTraditionalBranchSlot
+    ) -> some View {
+        Group {
+            if let branchID = slot.branchID {
+                Button {
+                    selectBranch(branchID)
+                } label: {
+                    branchSlotLabel(slot)
+                }
+                .buttonStyle(.plain)
+            } else {
+                Button {
+                    showsBranchPicker = true
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "ellipsis")
+                        if slot.hiddenLocalCount > 0 {
+                            Text("本地 +\(slot.hiddenLocalCount)")
+                        }
+                        if slot.hiddenRemoteCount > 0 {
+                            Text("远程 +\(slot.hiddenRemoteCount)")
+                        }
+                    }
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundStyle(GitMateTheme.textSecondary)
+                    .padding(.horizontal, 9)
+                    .frame(height: 27)
+                    .background(.white)
+                    .clipShape(Capsule())
+                    .overlay {
+                        Capsule().stroke(GitMateTheme.border, lineWidth: 1)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func branchSlotLabel(
+        _ slot: CommitGraphTraditionalBranchSlot
+    ) -> some View {
+        let color = CommitGraphPalette.color(slot.lane)
+        return HStack(spacing: 5) {
+            Circle()
+                .fill(slot.source == .remote ? .white : color)
+                .overlay {
+                    Circle().stroke(
+                        color,
+                        style: StrokeStyle(
+                            lineWidth: 1.4,
+                            dash: slot.source == .remote ? [2, 2] : []
+                        )
+                    )
+                }
+                .frame(width: 7, height: 7)
+            Text(slot.title)
+                .lineLimit(1)
+        }
+        .font(.system(size: 9.5, weight: .semibold))
+        .foregroundStyle(GitMateTheme.textPrimary)
+        .padding(.horizontal, 9)
+        .frame(height: 27)
+        .background(.white)
+        .clipShape(Capsule())
+        .overlay {
+            Capsule().stroke(
+                color.opacity(slot.source == .remote ? 0.8 : 0.3),
+                style: StrokeStyle(
+                    lineWidth: 1,
+                    dash: slot.source == .remote ? [4, 3] : []
+                )
+            )
+        }
     }
 
     private func workingTreeRow(
@@ -287,17 +407,10 @@ struct CommitGraphTraditionalView: View {
     }
 
     private func clampOffsets(width: Double, height: Double) {
+        _ = width
         verticalOffset = clampedVerticalOffset(
             verticalOffset,
             viewportHeight: height
-        )
-        laneHorizontalOffset = clampedLaneOffset(
-            laneHorizontalOffset,
-            laneViewportWidth: CommitGraphTraditionalMetrics
-                .laneViewportWidth(
-                    width,
-                    maximumLane: layout.maximumLane
-                )
         )
     }
 
@@ -313,71 +426,6 @@ struct CommitGraphTraditionalView: View {
         return min(max(value.isFinite ? value : 0, 0), maximum)
     }
 
-    private func clampedLaneOffset(
-        _ value: Double,
-        laneViewportWidth: Double
-    ) -> Double {
-        CommitGraphTraditionalLaneGeometry.clampedOffset(
-            value,
-            maximumLane: layout.maximumLane,
-            viewportWidth: laneViewportWidth
-        )
-    }
-
-    private func laneNavigation(width: Double) -> some View {
-        let viewportWidth = CommitGraphTraditionalMetrics.laneViewportWidth(
-            width,
-            maximumLane: layout.maximumLane
-        )
-        let contentWidth = CommitGraphTraditionalLaneGeometry.contentWidth(
-            maximumLane: layout.maximumLane
-        )
-        let maximumOffset = max(contentWidth - viewportWidth + 12, 1)
-        let thumbWidth = max(viewportWidth * viewportWidth / contentWidth, 30)
-        let travel = max(viewportWidth - thumbWidth - 24, 1)
-        let progress = min(max(laneHorizontalOffset / maximumOffset, 0), 1)
-
-        return HStack(spacing: 7) {
-            Button {
-                laneHorizontalOffset = clampedLaneOffset(
-                    laneHorizontalOffset - 140,
-                    laneViewportWidth: viewportWidth
-                )
-            } label: {
-                Image(systemName: "chevron.left")
-            }
-            .buttonStyle(.plain)
-
-            ZStack(alignment: .leading) {
-                Capsule().fill(GitMateTheme.border.opacity(0.55))
-                Capsule()
-                    .fill(GitMateTheme.accent.opacity(0.8))
-                    .frame(width: thumbWidth)
-                    .offset(x: progress * travel)
-            }
-            .frame(height: 4)
-
-            Button {
-                laneHorizontalOffset = clampedLaneOffset(
-                    laneHorizontalOffset + 140,
-                    laneViewportWidth: viewportWidth
-                )
-            } label: {
-                Image(systemName: "chevron.right")
-            }
-            .buttonStyle(.plain)
-        }
-        .font(.system(size: 10, weight: .bold))
-        .foregroundStyle(GitMateTheme.textSecondary)
-        .padding(.horizontal, 8)
-        .frame(width: viewportWidth - 12, height: 24)
-        .background(.ultraThinMaterial)
-        .clipShape(Capsule())
-        .padding(.leading, 6)
-        .padding(.bottom, 7)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-        .help("查看全部 \(layout.maximumLane + 1) 条本地与远程分支泳道；也可使用 Shift + 滚轮")
-    }
 }
 
 private struct TraditionalInteractionSurface: NSViewRepresentable {
