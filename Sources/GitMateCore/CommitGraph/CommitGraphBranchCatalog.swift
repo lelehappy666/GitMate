@@ -70,15 +70,18 @@ public struct CommitGraphBranchCatalog: Equatable, Sendable {
 
     private let branchIndexByID: [String: Int]
     private let primaryBranchIDByHash: [String: String]
+    private let relatedBranchIDsByBranchID: [String: Set<String>]
 
     public init(
         branches: [CommitGraphBranchDescriptor],
         headBranchID: String?,
-        primaryBranchIDByHash: [String: String]
+        primaryBranchIDByHash: [String: String],
+        relatedBranchIDsByBranchID: [String: Set<String>] = [:]
     ) {
         self.branches = branches
         self.headBranchID = headBranchID
         self.primaryBranchIDByHash = primaryBranchIDByHash
+        self.relatedBranchIDsByBranchID = relatedBranchIDsByBranchID
         branchIndexByID = Dictionary(
             branches.enumerated().map { ($0.element.id, $0.offset) },
             uniquingKeysWith: { first, _ in first }
@@ -95,6 +98,10 @@ public struct CommitGraphBranchCatalog: Equatable, Sendable {
         return branch(id: id)
     }
 
+    public func relatedBranchIDs(to branchID: String) -> Set<String> {
+        relatedBranchIDsByBranchID[branchID] ?? []
+    }
+
     public static func build(
         topology: CommitGraphLaneTopology,
         fingerprint: CommitGraphReferenceFingerprint
@@ -104,7 +111,8 @@ public struct CommitGraphBranchCatalog: Equatable, Sendable {
             return CommitGraphBranchCatalog(
                 branches: [],
                 headBranchID: nil,
-                primaryBranchIDByHash: [:]
+                primaryBranchIDByHash: [:],
+                relatedBranchIDsByBranchID: [:]
             )
         }
 
@@ -219,10 +227,24 @@ public struct CommitGraphBranchCatalog: Equatable, Sendable {
                 primaryByHash[row.commit.fullHash] = primary.id
             }
         }
+        var related: [String: Set<String>] = [:]
+        for row in rows {
+            guard let sourceID = primaryByHash[row.commit.fullHash] else {
+                continue
+            }
+            for connection in row.connections {
+                guard let targetID = primaryByHash[connection.parentHash],
+                      targetID != sourceID
+                else { continue }
+                related[sourceID, default: []].insert(targetID)
+                related[targetID, default: []].insert(sourceID)
+            }
+        }
         return CommitGraphBranchCatalog(
             branches: descriptors,
             headBranchID: headBranchID,
-            primaryBranchIDByHash: primaryByHash
+            primaryBranchIDByHash: primaryByHash,
+            relatedBranchIDsByBranchID: related
         )
     }
 
