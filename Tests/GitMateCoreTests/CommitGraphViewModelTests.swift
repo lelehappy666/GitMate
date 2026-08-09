@@ -2462,7 +2462,15 @@ private actor AvailableHashesProbeDeriver:
             canvasLayout: derived.canvasLayout,
             traditionalLayout: derived.traditionalLayout,
             defaultPositions: derived.defaultPositions,
-            availableHashes: availableHashes
+            availableHashes: availableHashes,
+            branchCatalog: derived.branchCatalog,
+            searchIndex: derived.searchIndex,
+            traditionalBranchProjection:
+                derived.traditionalBranchProjection,
+            traditionalSegmentProjection:
+                derived.traditionalSegmentProjection,
+            traditionalPublicationIndex:
+                derived.traditionalPublicationIndex
         )
     }
 
