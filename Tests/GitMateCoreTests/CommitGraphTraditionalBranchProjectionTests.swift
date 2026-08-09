@@ -13,6 +13,11 @@ let commitGraphTraditionalBranchProjectionTests = [
                         projectionBranch("local:feature/ui", "feature/ui", .local, 80, "feature")
                     ]
                 ),
+                topology: projectionTopology([
+                    "local-main": ["remote-main"],
+                    "remote-main": [],
+                    "feature": ["remote-main"]
+                ]),
                 totalWidth: 620,
                 selectedHash: nil,
                 pinnedBranchIDs: [],
@@ -49,6 +54,11 @@ let commitGraphTraditionalBranchProjectionTests = [
                         projectionBranch("remote:upstream/docs", "upstream/docs", .remote, 300, "docs")
                     ]
                 ),
+                topology: projectionTopology([
+                    "feature": ["main"],
+                    "main": [],
+                    "docs": []
+                ]),
                 totalWidth: 400,
                 selectedHash: nil,
                 pinnedBranchIDs: [],
@@ -67,7 +77,7 @@ let commitGraphTraditionalBranchProjectionTests = [
             "非 main 的当前 HEAD 必须紧随主分支"
         )
     },
-    TestCase("没有main时当前HEAD作为默认最左泳道") {
+    TestCase("没有main时第零泳道保持空白") {
         let projection = CommitGraphTraditionalBranchProjector.project(
             CommitGraphTraditionalBranchProjectionInput(
                 catalog: projectionCatalog(
@@ -78,6 +88,11 @@ let commitGraphTraditionalBranchProjectionTests = [
                         projectionBranch("remote:origin/release", "origin/release", .remote, 400, "release")
                     ]
                 ),
+                topology: projectionTopology([
+                    "feature": ["develop"],
+                    "develop": [],
+                    "release": []
+                ]),
                 totalWidth: 400,
                 selectedHash: nil,
                 pinnedBranchIDs: [],
@@ -86,9 +101,18 @@ let commitGraphTraditionalBranchProjectionTests = [
         )
 
         try expectEqual(
-            projection.slots.first?.branchIDs,
-            ["local:develop"],
-            "仓库没有 main 时必须使用真实 HEAD，不能虚构 main"
+            projection.slots.first?.logicalIdentity,
+            "main",
+            "第零泳道必须永久保留给 main"
+        )
+        try expect(
+            projection.slots.first?.isPlaceholder == true,
+            "仓库没有 main 时必须显示空主干槽"
+        )
+        try expectEqual(
+            projection.displayLane(for: "local:develop"),
+            1,
+            "当前 HEAD 不得递补到最左侧 main 泳道"
         )
     },
     TestCase("同名分支合并多个远端并优先origin标签") {
@@ -103,6 +127,12 @@ let commitGraphTraditionalBranchProjectionTests = [
                         projectionBranch("remote:origin/release/v2", "origin/release/v2", .remote, 200, "origin-release")
                     ]
                 ),
+                topology: projectionTopology([
+                    "main": [],
+                    "local-release": ["origin-release"],
+                    "origin-release": ["upstream-release"],
+                    "upstream-release": []
+                ]),
                 totalWidth: 320,
                 selectedHash: nil,
                 pinnedBranchIDs: [],
@@ -129,6 +159,49 @@ let commitGraphTraditionalBranchProjectionTests = [
             release.id,
             "任一远端标签都必须回到同一逻辑泳道"
         )
+    },
+    TestCase("同名本地远程真正分叉时拆为相邻泳道") {
+        let projection = CommitGraphTraditionalBranchProjector.project(
+            CommitGraphTraditionalBranchProjectionInput(
+                catalog: projectionCatalog(
+                    headBranchID: "local:main",
+                    branches: [
+                        projectionBranch("local:main", "main", .local, 500, "main", true),
+                        projectionBranch("remote:origin/main", "origin/main", .remote, 490, "origin-main"),
+                        projectionBranch("local:feature/a", "feature/a", .local, 400, "local-feature"),
+                        projectionBranch("remote:origin/feature/a", "origin/feature/a", .remote, 390, "remote-feature")
+                    ]
+                ),
+                topology: projectionTopology([
+                    "main": ["root"],
+                    "origin-main": ["root"],
+                    "local-feature": ["root"],
+                    "remote-feature": ["root"],
+                    "root": []
+                ]),
+                totalWidth: 420,
+                selectedHash: nil,
+                pinnedBranchIDs: [],
+                lastSelectedBranchID: nil
+            )
+        )
+
+        try expectEqual(
+            projection.displayLane(for: "local:main"),
+            0,
+            "本地 main 必须继续占用第零泳道"
+        )
+        try expectEqual(
+            projection.displayLane(for: "remote:origin/main"),
+            1,
+            "已经分叉的远程 main 必须使用相邻独立泳道"
+        )
+        guard let localLane = projection.displayLane(for: "local:feature/a"),
+              let remoteLane = projection.displayLane(for: "remote:origin/feature/a")
+        else {
+            throw TestFailure(description: "本地与远程 feature 必须存在")
+        }
+        try expectEqual(abs(localLane - remoteLane), 1, "分叉的同名引用必须相邻")
     },
     TestCase("所有本地远程独有分支均进入投影且无聚合槽") {
         var branches = [
@@ -159,6 +232,11 @@ let commitGraphTraditionalBranchProjectionTests = [
                 catalog: projectionCatalog(
                     headBranchID: "local:main",
                     branches: branches
+                ),
+                topology: projectionTopology(
+                    Dictionary(
+                        uniqueKeysWithValues: branches.map { ($0.tipHash, []) }
+                    )
                 ),
                 totalWidth: 260,
                 selectedHash: nil,
@@ -191,6 +269,7 @@ let commitGraphTraditionalBranchProjectionTests = [
                         projectionBranch("synthetic:b", "未命名分支", .synthetic, 10, "b")
                     ]
                 ),
+                topology: projectionTopology(["a": [], "b": []]),
                 totalWidth: 300,
                 selectedHash: nil,
                 pinnedBranchIDs: [],
@@ -198,7 +277,7 @@ let commitGraphTraditionalBranchProjectionTests = [
             )
         )
 
-        try expectEqual(projection.slots.count, 2, "synthetic 分支不得因同名被错误合并")
+        try expectEqual(projection.slots.count, 3, "空 main 槽之外 synthetic 分支必须各自独立")
         try expect(
             projection.displayLane(for: "synthetic:a")
                 != projection.displayLane(for: "synthetic:b"),
@@ -217,6 +296,33 @@ private func projectionCatalog(
         primaryBranchIDByHash: Dictionary(
             uniqueKeysWithValues: branches.map { ($0.tipHash, $0.id) }
         )
+    )
+}
+
+private func projectionTopology(
+    _ parentsByHash: [String: [String]]
+) -> CommitGraphLaneTopology {
+    CommitGraphLaneTopology(
+        rowsNewestFirst: parentsByHash.keys.sorted().map { hash in
+            GitCommit(
+                shortHash: String(hash.prefix(7)),
+                fullHash: hash,
+                subject: hash,
+                authorName: "Lele",
+                authorEmail: "lele@example.com",
+                authoredAt: Date(timeIntervalSince1970: 1),
+                parentHashes: parentsByHash[hash] ?? [],
+                decorations: []
+            )
+        }.map { commit in
+            CommitGraphLaneRow(
+                commit: commit,
+                lane: 0,
+                colorIndex: 0,
+                connections: []
+            )
+        },
+        maximumLane: 0
     )
 }
 
