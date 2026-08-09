@@ -36,6 +36,8 @@ struct GitMateCoreTestsMain {
             + repositoryCoverViewportSchedulerTests
             + readmeBlockParserTests
             + repositoryCoverExtractorTests
+            + commitGraphBranchCatalogTests
+            + commitGraphBranchBundleTests
             + commitGraphLayoutTests
             + commitGraphLaneTopologyTests
             + commitGraphTraditionalLayoutTests
