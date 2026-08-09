@@ -109,7 +109,8 @@ public enum CommitGraphSceneReconciler {
                 .intersection(availableHashes)
                 .subtracting(claimedHashes),
             pinnedTraditionalBranchIDs: scene.pinnedTraditionalBranchIDs,
-            lastTraditionalBranchID: scene.lastTraditionalBranchID
+            lastTraditionalBranchID: scene.lastTraditionalBranchID,
+            traditionalDividerWidth: scene.traditionalDividerWidth
         )
     }
 
@@ -173,7 +174,8 @@ public enum CommitGraphSceneReconciler {
             canvasViewport: scene.canvasViewport,
             manuallyPositionedHashes: survivingManualHashes,
             pinnedTraditionalBranchIDs: scene.pinnedTraditionalBranchIDs,
-            lastTraditionalBranchID: scene.lastTraditionalBranchID
+            lastTraditionalBranchID: scene.lastTraditionalBranchID,
+            traditionalDividerWidth: scene.traditionalDividerWidth
         )
     }
 

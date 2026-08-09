@@ -99,9 +99,7 @@ struct CommitGraphBranchPicker: View {
     private func branchRow(
         _ branch: CommitGraphBranchDescriptor
     ) -> some View {
-        let isVisible = projection.visibleBranches.contains {
-            $0.id == branch.id
-        }
+        let isVisible = projection.slot(forBranchID: branch.id) != nil
         let isPinned = pinnedBranchIDs.contains(branch.id)
         let color = CommitGraphPalette.color(branch.lane)
 

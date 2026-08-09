@@ -41,6 +41,8 @@ public struct CommitGraphGitDerivedBase: Sendable {
     public let availableHashes: Set<String>
     public let branchCatalog: CommitGraphBranchCatalog
     public let searchIndex: CommitGraphSearchIndex
+    public let traditionalPublicationIndex:
+        CommitGraphTraditionalPublicationIndex
 
     public init(
         integrityReport: CommitGraphIntegrityReport,
@@ -53,7 +55,9 @@ public struct CommitGraphGitDerivedBase: Sendable {
             headBranchID: nil,
             primaryBranchIDByHash: [:]
         ),
-        searchIndex: CommitGraphSearchIndex = .empty
+        searchIndex: CommitGraphSearchIndex = .empty,
+        traditionalPublicationIndex:
+            CommitGraphTraditionalPublicationIndex = .empty
     ) {
         self.integrityReport = integrityReport
         self.canvasLayout = canvasLayout
@@ -62,6 +66,7 @@ public struct CommitGraphGitDerivedBase: Sendable {
         self.availableHashes = availableHashes
         self.branchCatalog = branchCatalog
         self.searchIndex = searchIndex
+        self.traditionalPublicationIndex = traditionalPublicationIndex
     }
 }
 
@@ -178,6 +183,11 @@ public struct DefaultCommitGraphViewModelDeriver:
                 fingerprint: request.snapshot.fingerprint
             )
             try Task.checkCancellation()
+            let publicationIndex =
+                CommitGraphTraditionalPublicationIndex.build(
+                    snapshot: request.snapshot
+                )
+            try Task.checkCancellation()
             let canvas = graphLayout.layout(topology: topology)
             try Task.checkCancellation()
             let traditional = traditionalLayout.layout(
@@ -201,7 +211,8 @@ public struct DefaultCommitGraphViewModelDeriver:
                 defaultPositions: defaultPositions,
                 availableHashes: availableHashes,
                 branchCatalog: branchCatalog,
-                searchIndex: searchIndex
+                searchIndex: searchIndex,
+                traditionalPublicationIndex: publicationIndex
             )
         }
         return try await withTaskCancellationHandler {
@@ -476,6 +487,8 @@ public final class CommitGraphViewModel {
         CommitGraphBranchBundleProjection()
     public private(set) var traditionalBranchProjection =
         CommitGraphTraditionalBranchProjection.empty
+    public private(set) var traditionalPublicationIndex =
+        CommitGraphTraditionalPublicationIndex.empty
     public private(set) var expandedBranchBundleIDs: Set<String> = []
     public private(set) var branchProjectionRevision: UInt64 = 0
 
@@ -898,6 +911,15 @@ public final class CommitGraphViewModel {
         guard normalized != traditionalViewportWidth else { return }
         traditionalViewportWidth = normalized
         rebuildTraditionalBranchProjection()
+    }
+
+    /// 分割线拖动结束时提交一次最终值；pointermove 只更新视图本地状态。
+    public func setTraditionalDividerWidth(_ width: Double) {
+        guard width.isFinite, width > 0 else { return }
+        guard scene.traditionalDividerWidth != width else { return }
+        scene.traditionalDividerWidth = width
+        recordSceneMutation()
+        scheduleSceneSave()
     }
 
     public func selectTraditionalBranch(id: String) {
@@ -1946,6 +1968,7 @@ public final class CommitGraphViewModel {
         traditionalLayout = base.traditionalLayout
         branchCatalog = base.branchCatalog
         searchIndex = base.searchIndex
+        traditionalPublicationIndex = base.traditionalPublicationIndex
         scene = derived.scene
         cancelBranchBundleProjectionRebuild()
         branchBundleProjection = derived.branchBundleProjection

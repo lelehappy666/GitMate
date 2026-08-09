@@ -2,150 +2,54 @@ import Foundation
 import GitMateCore
 
 let commitGraphTraditionalBranchProjectionTests = [
-    TestCase("传统布局根据窗口宽度稳定限制四到八条泳道") {
-        try expectEqual(
-            CommitGraphTraditionalLaneCapacity.visibleCount(totalWidth: 760),
-            4,
-            "窄窗口至少显示四条上下文泳道"
-        )
-        try expectEqual(
-            CommitGraphTraditionalLaneCapacity.visibleCount(totalWidth: 1_520),
-            8,
-            "宽窗口最多显示八条上下文泳道"
-        )
-        try expectEqual(
-            CommitGraphTraditionalLaneCapacity.visibleCount(totalWidth: 10_000),
-            8,
-            "分支再多也不得让图轨无限变宽"
-        )
-        try expectEqual(
-            CommitGraphTraditionalLaneCapacity.visibleCount(totalWidth: .nan),
-            4,
-            "无效窗口宽度必须安全退化到最小泳道数"
-        )
-    },
-    TestCase("传统分支投影按HEAD选择固定和相关关系排序") {
-        let catalog = traditionalProjectionCatalog()
-
+    TestCase("传统投影把本地main与origin main合并为第零泳道") {
         let projection = CommitGraphTraditionalBranchProjector.project(
             CommitGraphTraditionalBranchProjectionInput(
-                catalog: catalog,
-                totalWidth: 760,
-                selectedHash: "selected-hash",
-                pinnedBranchIDs: ["local:pinned"],
-                lastSelectedBranchID: nil
-            )
-        )
-
-        try expectEqual(
-            Array(projection.visibleBranches.prefix(3).map(\.id)),
-            ["local:main", "local:selected", "local:pinned"],
-            "HEAD、当前选择和固定分支必须依次占据最高优先级"
-        )
-        try expect(
-            projection.hiddenLocalCount > 0,
-            "超出容量的本地分支必须进入本地聚合入口"
-        )
-        try expect(
-            projection.hiddenRemoteCount > 0,
-            "超出容量的远程分支必须进入远程聚合入口"
-        )
-        try expect(
-            projection.slots.count <= projection.capacity + 2,
-            "真实分支容量之外最多只能增加本地与远程两个聚合入口"
-        )
-    },
-    TestCase("选择隐藏分支只替换临时泳道并保留本地远程来源") {
-        let catalog = traditionalProjectionCatalog()
-        let projection = CommitGraphTraditionalBranchProjector.project(
-            CommitGraphTraditionalBranchProjectionInput(
-                catalog: catalog,
-                totalWidth: 760,
+                catalog: projectionCatalog(
+                    headBranchID: "local:main",
+                    branches: [
+                        projectionBranch("local:main", "main", .local, 100, "local-main", true),
+                        projectionBranch("remote:origin/main", "origin/main", .remote, 90, "remote-main"),
+                        projectionBranch("local:feature/ui", "feature/ui", .local, 80, "feature")
+                    ]
+                ),
+                totalWidth: 620,
                 selectedHash: nil,
-                pinnedBranchIDs: ["local:pinned"],
-                lastSelectedBranchID: "remote:origin/hidden"
-            )
-        )
-
-        try expect(
-            projection.visibleBranches.contains {
-                $0.id == "remote:origin/hidden"
-            },
-            "用户从浮层选择的隐藏远程分支必须立即进入可见槽"
-        )
-        try expect(
-            projection.visibleBranches.contains { $0.id == "local:main" },
-            "临时替换不得移除 HEAD 主干"
-        )
-        try expect(
-            projection.visibleBranches.contains { $0.id == "local:pinned" },
-            "临时替换不得移除仍有容量的固定分支"
-        )
-        try expectEqual(
-            projection.slot(forBranchID: "remote:origin/hidden")?.source,
-            .remote,
-            "显示槽必须保留远程来源供 UI 使用虚线"
-        )
-        try expect(
-            projection.displayLane(for: "local:old") != nil,
-            "隐藏分支必须映射到本地聚合槽，不能从拓扑中消失"
-        )
-    },
-    TestCase("固定分支超过容量时按最近活跃时间稳定选择") {
-        let catalog = traditionalProjectionCatalog()
-        let projection = CommitGraphTraditionalBranchProjector.project(
-            CommitGraphTraditionalBranchProjectionInput(
-                catalog: catalog,
-                totalWidth: 760,
-                selectedHash: nil,
-                pinnedBranchIDs: [
-                    "local:pinned",
-                    "local:old",
-                    "remote:origin/recent",
-                    "remote:origin/hidden"
-                ],
-                lastSelectedBranchID: nil
-            )
-        )
-
-        let visiblePinned = projection.visibleBranches
-            .filter {
-                [
-                    "local:pinned",
-                    "local:old",
-                    "remote:origin/recent",
-                    "remote:origin/hidden"
-                ].contains($0.id)
-            }
-            .map(\.id)
-        try expect(
-            visiblePinned.first == "remote:origin/recent",
-            "固定分支超量时必须优先最近活跃分支"
-        )
-    },
-    TestCase("浮层选择隐藏分支优先于已选提交上下文") {
-        let projection = CommitGraphTraditionalBranchProjector.project(
-            CommitGraphTraditionalBranchProjectionInput(
-                catalog: traditionalProjectionCatalog(),
-                totalWidth: 760,
-                selectedHash: "selected-hash",
                 pinnedBranchIDs: [],
-                lastSelectedBranchID: "remote:origin/hidden"
+                lastSelectedBranchID: nil
             )
         )
 
-        try expect(
-            projection.visibleBranches.contains {
-                $0.id == "remote:origin/hidden"
-            },
-            "用户显式选择隐藏分支后必须立即替换临时槽"
+        try expectEqual(projection.slots.count, 2, "同名本地与远程分支不得重复占泳道")
+        try expectEqual(projection.slots.first?.lane, 0, "main 必须位于最左侧零号泳道")
+        try expectEqual(
+            projection.slots.first?.branchIDs,
+            ["local:main", "remote:origin/main"],
+            "main 逻辑泳道必须保留本地与远程两个真实身份"
+        )
+        try expectEqual(
+            projection.slots.first?.referenceTitles,
+            ["main", "origin/main"],
+            "main 逻辑泳道必须保留全部可见标签"
+        )
+        try expectEqual(
+            projection.displayLane(for: "remote:origin/main"),
+            0,
+            "远程 main 身份必须映射到同一逻辑泳道"
         )
     },
-    TestCase("可见分支容量与本地远程聚合槽分别计算") {
+    TestCase("只有origin main时仍固定为第零泳道") {
         let projection = CommitGraphTraditionalBranchProjector.project(
             CommitGraphTraditionalBranchProjectionInput(
-                catalog: traditionalProjectionCatalog(),
-                totalWidth: 760,
+                catalog: projectionCatalog(
+                    headBranchID: "local:feature/ui",
+                    branches: [
+                        projectionBranch("local:feature/ui", "feature/ui", .local, 200, "feature", true),
+                        projectionBranch("remote:origin/main", "origin/main", .remote, 100, "main"),
+                        projectionBranch("remote:upstream/docs", "upstream/docs", .remote, 300, "docs")
+                    ]
+                ),
+                totalWidth: 400,
                 selectedHash: nil,
                 pinnedBranchIDs: [],
                 lastSelectedBranchID: nil
@@ -153,103 +57,186 @@ let commitGraphTraditionalBranchProjectionTests = [
         )
 
         try expectEqual(
-            projection.visibleBranches.count,
-            projection.capacity,
-            "四到八条容量应完整用于真实可见分支"
+            projection.slots.first?.branchIDs,
+            ["remote:origin/main"],
+            "没有本地 main 时 origin/main 必须优先于当前 HEAD"
         )
-        try expect(
-            projection.slots.contains { $0.kind == .hiddenLocalBranches },
-            "本地隐藏分支必须拥有独立聚合槽"
+        try expectEqual(
+            projection.slots.dropFirst().first?.branchIDs,
+            ["local:feature/ui"],
+            "非 main 的当前 HEAD 必须紧随主分支"
         )
+    },
+    TestCase("没有main时当前HEAD作为默认最左泳道") {
+        let projection = CommitGraphTraditionalBranchProjector.project(
+            CommitGraphTraditionalBranchProjectionInput(
+                catalog: projectionCatalog(
+                    headBranchID: "local:develop",
+                    branches: [
+                        projectionBranch("local:feature/new", "feature/new", .local, 300, "feature"),
+                        projectionBranch("local:develop", "develop", .local, 100, "develop", true),
+                        projectionBranch("remote:origin/release", "origin/release", .remote, 400, "release")
+                    ]
+                ),
+                totalWidth: 400,
+                selectedHash: nil,
+                pinnedBranchIDs: [],
+                lastSelectedBranchID: nil
+            )
+        )
+
+        try expectEqual(
+            projection.slots.first?.branchIDs,
+            ["local:develop"],
+            "仓库没有 main 时必须使用真实 HEAD，不能虚构 main"
+        )
+    },
+    TestCase("同名分支合并多个远端并优先origin标签") {
+        let projection = CommitGraphTraditionalBranchProjector.project(
+            CommitGraphTraditionalBranchProjectionInput(
+                catalog: projectionCatalog(
+                    headBranchID: "local:main",
+                    branches: [
+                        projectionBranch("local:main", "main", .local, 500, "main", true),
+                        projectionBranch("local:release/v2", "release/v2", .local, 400, "local-release"),
+                        projectionBranch("remote:upstream/release/v2", "upstream/release/v2", .remote, 300, "upstream-release"),
+                        projectionBranch("remote:origin/release/v2", "origin/release/v2", .remote, 200, "origin-release")
+                    ]
+                ),
+                totalWidth: 320,
+                selectedHash: nil,
+                pinnedBranchIDs: [],
+                lastSelectedBranchID: nil
+            )
+        )
+
+        guard let release = projection.slot(
+            forBranchID: "local:release/v2"
+        ) else {
+            throw TestFailure(description: "release/v2 必须存在")
+        }
+        try expectEqual(
+            release.branchIDs,
+            [
+                "local:release/v2",
+                "remote:origin/release/v2",
+                "remote:upstream/release/v2"
+            ],
+            "同名远端必须稳定合并且 origin 排在其他远端之前"
+        )
+        try expectEqual(
+            projection.slot(forBranchID: "remote:upstream/release/v2")?.id,
+            release.id,
+            "任一远端标签都必须回到同一逻辑泳道"
+        )
+    },
+    TestCase("所有本地远程独有分支均进入投影且无聚合槽") {
+        var branches = [
+            projectionBranch("local:main", "main", .local, 1_000, "main", true)
+        ]
+        for index in 0..<20 {
+            branches.append(
+                projectionBranch(
+                    "local:feature/\(index)",
+                    "feature/\(index)",
+                    .local,
+                    TimeInterval(900 - index),
+                    "local-\(index)"
+                )
+            )
+            branches.append(
+                projectionBranch(
+                    "remote:origin/remote-only-\(index)",
+                    "origin/remote-only-\(index)",
+                    .remote,
+                    TimeInterval(500 - index),
+                    "remote-\(index)"
+                )
+            )
+        }
+        let projection = CommitGraphTraditionalBranchProjector.project(
+            CommitGraphTraditionalBranchProjectionInput(
+                catalog: projectionCatalog(
+                    headBranchID: "local:main",
+                    branches: branches
+                ),
+                totalWidth: 260,
+                selectedHash: nil,
+                pinnedBranchIDs: [],
+                lastSelectedBranchID: nil
+            )
+        )
+
+        try expectEqual(projection.slots.count, 41, "窄窗口也必须保留全部逻辑分支")
+        try expectEqual(projection.capacity, 41, "容量必须等于真实逻辑泳道数")
+        try expectEqual(projection.hiddenLocalCount, 0, "不得再隐藏本地分支")
+        try expectEqual(projection.hiddenRemoteCount, 0, "不得再隐藏远程分支")
         try expect(
-            projection.slots.contains { $0.kind == .hiddenRemoteBranches },
-            "远程隐藏分支必须拥有独立聚合槽"
+            projection.slots.allSatisfy { $0.kind == .branch },
+            "不得生成其他本地或其他远程聚合入口"
+        )
+        try expectEqual(
+            projection.displayLane(for: "remote:origin/remote-only-19"),
+            40,
+            "最后一条远程分支也必须拥有可导航的真实泳道"
+        )
+    },
+    TestCase("同名未命名分支仍保持各自独立身份") {
+        let projection = CommitGraphTraditionalBranchProjector.project(
+            CommitGraphTraditionalBranchProjectionInput(
+                catalog: projectionCatalog(
+                    headBranchID: "synthetic:a",
+                    branches: [
+                        projectionBranch("synthetic:a", "未命名分支", .synthetic, 20, "a", true),
+                        projectionBranch("synthetic:b", "未命名分支", .synthetic, 10, "b")
+                    ]
+                ),
+                totalWidth: 300,
+                selectedHash: nil,
+                pinnedBranchIDs: [],
+                lastSelectedBranchID: nil
+            )
+        )
+
+        try expectEqual(projection.slots.count, 2, "synthetic 分支不得因同名被错误合并")
+        try expect(
+            projection.displayLane(for: "synthetic:a")
+                != projection.displayLane(for: "synthetic:b"),
+            "每条未命名分支必须保留独立可导航泳道"
         )
     }
 ]
 
-private func traditionalProjectionCatalog() -> CommitGraphBranchCatalog {
-    let branches = [
-        traditionalDescriptor(
-            id: "local:main",
-            source: .local,
-            lane: 0,
-            time: 100,
-            hash: "head-hash",
-            isHead: true
-        ),
-        traditionalDescriptor(
-            id: "local:selected",
-            source: .local,
-            lane: 1,
-            time: 90,
-            hash: "selected-hash"
-        ),
-        traditionalDescriptor(
-            id: "local:pinned",
-            source: .local,
-            lane: 2,
-            time: 80,
-            hash: "pinned-hash"
-        ),
-        traditionalDescriptor(
-            id: "local:related",
-            source: .local,
-            lane: 3,
-            time: 70,
-            hash: "related-hash"
-        ),
-        traditionalDescriptor(
-            id: "local:old",
-            source: .local,
-            lane: 4,
-            time: 10,
-            hash: "old-hash"
-        ),
-        traditionalDescriptor(
-            id: "remote:origin/recent",
-            source: .remote,
-            lane: 5,
-            time: 95,
-            hash: "remote-recent-hash"
-        ),
-        traditionalDescriptor(
-            id: "remote:origin/hidden",
-            source: .remote,
-            lane: 6,
-            time: 20,
-            hash: "remote-hidden-hash"
-        )
-    ]
-    return CommitGraphBranchCatalog(
+private func projectionCatalog(
+    headBranchID: String?,
+    branches: [CommitGraphBranchDescriptor]
+) -> CommitGraphBranchCatalog {
+    CommitGraphBranchCatalog(
         branches: branches,
-        headBranchID: "local:main",
+        headBranchID: headBranchID,
         primaryBranchIDByHash: Dictionary(
             uniqueKeysWithValues: branches.map { ($0.tipHash, $0.id) }
-        ),
-        relatedBranchIDsByBranchID: [
-            "local:selected": ["local:related"]
-        ]
+        )
     )
 }
 
-private func traditionalDescriptor(
-    id: String,
-    source: CommitGraphBranchSource,
-    lane: Int,
-    time: TimeInterval,
-    hash: String,
-    isHead: Bool = false
+private func projectionBranch(
+    _ id: String,
+    _ displayName: String,
+    _ source: CommitGraphBranchSource,
+    _ activity: TimeInterval,
+    _ tipHash: String,
+    _ isHead: Bool = false
 ) -> CommitGraphBranchDescriptor {
     CommitGraphBranchDescriptor(
         id: id,
-        displayName: String(id.split(separator: ":").last ?? "branch"),
+        displayName: displayName,
         source: source,
-        side: lane == 0 ? .trunk : (lane.isMultiple(of: 2) ? .right : .left),
-        lane: lane,
-        tipHash: hash,
-        latestActivity: Date(timeIntervalSince1970: time),
-        memberHashes: [hash],
+        side: isHead ? .trunk : .right,
+        lane: 0,
+        tipHash: tipHash,
+        latestActivity: Date(timeIntervalSince1970: activity),
+        memberHashes: [tipHash],
         isHead: isHead,
         isMerged: false
     )

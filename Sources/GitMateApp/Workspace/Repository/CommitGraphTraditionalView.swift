@@ -6,23 +6,27 @@ struct CommitGraphTraditionalView: View {
     let layout: CommitGraphTraditionalLayoutResult
     let branchCatalog: CommitGraphBranchCatalog
     let branchProjection: CommitGraphTraditionalBranchProjection
+    let publicationIndex: CommitGraphTraditionalPublicationIndex
     let pinnedBranchIDs: Set<String>
     let groupBadgeByHash: [String: CommitGraphTraditionalGroupBadge]
     let groupRevision: UInt64
     let selectedHash: String?
     let focusedHash: String?
     let localStatus: LocalRepositoryStatus?
+    let storedDividerWidth: Double?
     let currentUserLogin: String?
     let currentUserName: String?
     let currentUserAvatarURL: URL?
     let select: (String) -> Void
     let setViewportWidth: (Double) -> Void
+    let commitDividerWidth: (Double) -> Void
     let selectBranch: (String) -> Void
     let togglePinnedBranch: (String) -> Void
     let consumeFocus: (String) -> Void
 
     @State private var verticalOffset = 0.0
-    @State private var horizontalOffset = 0.0
+    @State private var laneHorizontalOffset = 0.0
+    @State private var dividerWidth = 0.0
     @State private var showsBranchPicker = false
 
     var body: some View {
@@ -39,17 +43,11 @@ struct CommitGraphTraditionalView: View {
             GeometryReader { geometry in
                 let width = Double(geometry.size.width)
                 let height = Double(geometry.size.height)
-                let maximumLane = max(branchProjection.slots.count - 1, 0)
-                let contentWidth = CommitGraphTraditionalContentViewport
+                let splitWidth = resolvedDividerWidth(viewportWidth: width)
+                let laneContentWidth = CommitGraphTraditionalLaneGeometry
                     .contentWidth(
-                        viewportWidth: width,
-                        maximumLane: maximumLane
-                    )
-                let laneWidth = CommitGraphTraditionalMetrics
-                    .laneViewportWidth(
-                        contentWidth,
-                        maximumLane: maximumLane
-                    )
+                        maximumLane: max(branchProjection.slots.count - 1, 0)
+                    ) + 12
                 let canvasVisibleRows = CommitGraphTraditionalViewport
                     .visibleRows(
                         totalCount: layout.contentRowCount,
@@ -67,50 +65,47 @@ struct CommitGraphTraditionalView: View {
                     )
 
                 ZStack(alignment: .topLeading) {
-                    ZStack(alignment: .topLeading) {
-                        CommitGraphTraditionalCanvas(
-                            layout: layout,
-                            branchCatalog: branchCatalog,
-                            branchProjection: branchProjection,
-                            groupByHash: groupBadgeByHash,
-                            groupRevision: groupRevision,
-                            visibleRows: canvasVisibleRows,
-                            verticalOffset: verticalOffset,
-                            selectedHash: selectedHash
-                        )
-                        .frame(width: contentWidth, height: height)
-
-                        avatarLayer(
-                            visibleRows: overlayVisibleRows,
-                            laneWidth: laneWidth
-                        )
-
-                        accessibilityRows(
-                            visibleRows: overlayVisibleRows,
-                            width: contentWidth
-                        )
-                    }
-                    .frame(
-                        width: contentWidth,
-                        height: height,
-                        alignment: .topLeading
+                    CommitGraphTraditionalCanvas(
+                        layout: layout,
+                        branchCatalog: branchCatalog,
+                        branchProjection: branchProjection,
+                        publicationIndex: publicationIndex,
+                        groupByHash: groupBadgeByHash,
+                        groupRevision: groupRevision,
+                        visibleRows: canvasVisibleRows,
+                        verticalOffset: verticalOffset,
+                        laneViewportWidth: splitWidth,
+                        laneHorizontalOffset: laneHorizontalOffset,
+                        selectedHash: selectedHash
                     )
-                    .offset(x: -horizontalOffset)
+                    .frame(width: width, height: height)
+
+                    avatarLayer(
+                        visibleRows: overlayVisibleRows,
+                        dividerWidth: splitWidth
+                    )
+
+                    accessibilityRows(
+                        visibleRows: overlayVisibleRows,
+                        width: width
+                    )
 
                     TraditionalInteractionSurface(
                         rowCount: layout.rows.count,
                         rowHeight: CommitGraphTraditionalMetrics.rowHeight,
                         verticalOffset: verticalOffset,
+                        dividerWidth: splitWidth,
                         scroll: { verticalDelta, horizontalDelta in
                             verticalOffset = clampedVerticalOffset(
                                 verticalOffset - verticalDelta,
                                 viewportHeight: height
                             )
-                            horizontalOffset = CommitGraphTraditionalContentViewport
-                                .clampedHorizontalOffset(
-                                    horizontalOffset - horizontalDelta,
-                                    contentWidth: contentWidth,
-                                    viewportWidth: width
+                            laneHorizontalOffset =
+                                CommitGraphTraditionalSplitLayout
+                                .clampedLaneOffset(
+                                    laneHorizontalOffset - horizontalDelta,
+                                    laneContentWidth: laneContentWidth,
+                                    dividerWidth: splitWidth
                                 )
                         },
                         selectRow: { row in
@@ -121,6 +116,40 @@ struct CommitGraphTraditionalView: View {
                     .frame(width: width, height: height)
                     .accessibilityHidden(true)
                     .accessibilityIdentifier("workspace.commitGraph.traditional")
+
+                    CommitGraphTraditionalDividerHandle(
+                        currentWidth: splitWidth,
+                        viewportWidth: width,
+                        onChange: { proposed in
+                            dividerWidth = CommitGraphTraditionalSplitLayout
+                                .clampedDividerWidth(
+                                    proposed,
+                                    viewportWidth: width
+                                )
+                            laneHorizontalOffset =
+                                CommitGraphTraditionalSplitLayout
+                                .clampedLaneOffset(
+                                    laneHorizontalOffset,
+                                    laneContentWidth: laneContentWidth,
+                                    dividerWidth: dividerWidth
+                                )
+                        },
+                        onCommit: { proposed in
+                            let finalWidth = CommitGraphTraditionalSplitLayout
+                                .clampedDividerWidth(
+                                    proposed,
+                                    viewportWidth: width
+                                )
+                            dividerWidth = finalWidth
+                            commitDividerWidth(finalWidth)
+                        }
+                    )
+                    .frame(width: 10, height: height)
+                    .offset(x: splitWidth - 5)
+                    .accessibilityLabel("调整分支图宽度")
+                    .accessibilityIdentifier(
+                        "workspace.commitGraph.traditional.divider"
+                    )
                 }
                 .frame(
                     width: geometry.size.width,
@@ -130,22 +159,48 @@ struct CommitGraphTraditionalView: View {
                 .clipped()
                 .onAppear {
                     setViewportWidth(width)
-                    clampOffsets(width: width, height: height)
+                    dividerWidth = CommitGraphTraditionalSplitLayout
+                        .clampedDividerWidth(
+                            storedDividerWidth,
+                            viewportWidth: width
+                        )
+                    clampOffsets(
+                        viewportWidth: width,
+                        viewportHeight: height
+                    )
                     applyFocusIfNeeded(viewportHeight: height)
                 }
                 .onChange(of: geometry.size) { _, newSize in
-                    setViewportWidth(Double(newSize.width))
+                    let newWidth = Double(newSize.width)
+                    setViewportWidth(newWidth)
+                    dividerWidth = CommitGraphTraditionalSplitLayout
+                        .clampedDividerWidth(
+                            dividerWidth > 0 ? dividerWidth : storedDividerWidth,
+                            viewportWidth: newWidth
+                        )
                     clampOffsets(
-                        width: Double(newSize.width),
-                        height: Double(newSize.height)
+                        viewportWidth: newWidth,
+                        viewportHeight: Double(newSize.height)
                     )
                 }
+                .onChange(of: storedDividerWidth) { _, newWidth in
+                    dividerWidth = CommitGraphTraditionalSplitLayout
+                        .clampedDividerWidth(
+                            newWidth,
+                            viewportWidth: width
+                        )
+                    clampLaneOffset(dividerWidth: dividerWidth)
+                }
                 .onChange(of: layout.contentRowCount) { _, _ in
-                    clampOffsets(width: width, height: height)
+                    clampOffsets(
+                        viewportWidth: width,
+                        viewportHeight: height
+                    )
                     applyFocusIfNeeded(viewportHeight: height)
                 }
                 .onChange(of: branchProjection.slots.count) { _, _ in
-                    clampOffsets(width: width, height: height)
+                    laneHorizontalOffset = 0
+                    clampLaneOffset(dividerWidth: splitWidth)
                 }
                 .onChange(of: focusedHash) { _, _ in
                     applyFocusIfNeeded(viewportHeight: height)
@@ -163,7 +218,7 @@ struct CommitGraphTraditionalView: View {
                 .foregroundStyle(GitMateTheme.textPrimary)
             Divider().frame(height: 20)
             Label(
-                "\(branchProjection.slots.count) / \(branchCatalog.branches.count) 分支",
+                "\(branchProjection.slots.count) 条逻辑分支 · \(branchCatalog.branches.count) 个引用",
                 systemImage: "arrow.triangle.branch"
             )
             .font(.system(size: 11, weight: .bold))
@@ -202,77 +257,40 @@ struct CommitGraphTraditionalView: View {
     private func branchSlot(
         _ slot: CommitGraphTraditionalBranchSlot
     ) -> some View {
-        Group {
+        Button {
             if let branchID = slot.branchID {
-                Button {
-                    selectBranch(branchID)
-                } label: {
-                    branchSlotLabel(slot)
+                selectBranch(branchID)
+            }
+        } label: {
+            let color = CommitGraphPalette.color(slot.lane)
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 7, height: 7)
+                Text(slot.title)
+                    .lineLimit(1)
+                if slot.referenceTitles.count > 1 {
+                    Text("+\(slot.referenceTitles.count - 1)")
+                        .foregroundStyle(GitMateTheme.textSecondary)
                 }
-                .buttonStyle(.plain)
-            } else {
-                Button {
-                    showsBranchPicker = true
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "ellipsis")
-                        if slot.hiddenLocalCount > 0 {
-                            Text("本地 +\(slot.hiddenLocalCount)")
-                        }
-                        if slot.hiddenRemoteCount > 0 {
-                            Text("远程 +\(slot.hiddenRemoteCount)")
-                        }
-                    }
-                    .font(.system(size: 9.5, weight: .bold))
-                    .foregroundStyle(GitMateTheme.textSecondary)
-                    .padding(.horizontal, 9)
-                    .frame(height: 27)
-                    .background(.white)
-                    .clipShape(Capsule())
-                    .overlay {
-                        Capsule().stroke(GitMateTheme.border, lineWidth: 1)
-                    }
+                if slot.branchIDs.allSatisfy({ $0.hasPrefix("remote:") }) {
+                    Image(systemName: "icloud")
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundStyle(GitMateTheme.textSecondary)
                 }
-                .buttonStyle(.plain)
+            }
+            .font(.system(size: 9.5, weight: .semibold))
+            .foregroundStyle(GitMateTheme.textPrimary)
+            .padding(.horizontal, 9)
+            .frame(height: 27)
+            .background(.white)
+            .clipShape(Capsule())
+            .overlay {
+                Capsule().stroke(color.opacity(0.34), lineWidth: 1)
             }
         }
-    }
-
-    private func branchSlotLabel(
-        _ slot: CommitGraphTraditionalBranchSlot
-    ) -> some View {
-        let color = CommitGraphPalette.color(slot.lane)
-        return HStack(spacing: 5) {
-            Circle()
-                .fill(slot.source == .remote ? .white : color)
-                .overlay {
-                    Circle().stroke(
-                        color,
-                        style: StrokeStyle(
-                            lineWidth: 1.4,
-                            dash: slot.source == .remote ? [2, 2] : []
-                        )
-                    )
-                }
-                .frame(width: 7, height: 7)
-            Text(slot.title)
-                .lineLimit(1)
-        }
-        .font(.system(size: 9.5, weight: .semibold))
-        .foregroundStyle(GitMateTheme.textPrimary)
-        .padding(.horizontal, 9)
-        .frame(height: 27)
-        .background(.white)
-        .clipShape(Capsule())
-        .overlay {
-            Capsule().stroke(
-                color.opacity(slot.source == .remote ? 0.8 : 0.3),
-                style: StrokeStyle(
-                    lineWidth: 1,
-                    dash: slot.source == .remote ? [4, 3] : []
-                )
-            )
-        }
+        .buttonStyle(.plain)
+        .help(slot.referenceTitles.joined(separator: " · "))
     }
 
     private func workingTreeRow(
@@ -298,7 +316,7 @@ struct CommitGraphTraditionalView: View {
                         .background(GitMateTheme.accent.opacity(0.09))
                         .clipShape(Capsule())
                 }
-                Text("本地未提交 · 共 \(summary.totalCount) 项")
+                Text("工作区未提交 · 共 \(summary.totalCount) 项")
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(GitMateTheme.textSecondary)
             }
@@ -377,7 +395,7 @@ struct CommitGraphTraditionalView: View {
 
     private func avatarLayer(
         visibleRows: Range<Int>,
-        laneWidth: Double
+        dividerWidth: Double
     ) -> some View {
         ForEach(Array(visibleRows), id: \.self) { rowIndex in
             if layout.rows.indices.contains(rowIndex) {
@@ -396,7 +414,8 @@ struct CommitGraphTraditionalView: View {
                     fallbackColorIndex: identity.fallbackColorIndex
                 )
                 .position(
-                    x: laneWidth + 18
+                    x: CommitGraphTraditionalContentViewport
+                        .informationOriginX(dividerWidth: dividerWidth)
                         + CommitGraphTraditionalMetrics.avatarSize / 2,
                     y: Double(rowIndex)
                         * CommitGraphTraditionalMetrics.rowHeight
@@ -406,6 +425,15 @@ struct CommitGraphTraditionalView: View {
                 .allowsHitTesting(false)
             }
         }
+    }
+
+    private func resolvedDividerWidth(
+        viewportWidth: Double
+    ) -> Double {
+        CommitGraphTraditionalSplitLayout.clampedDividerWidth(
+            dividerWidth > 0 ? dividerWidth : storedDividerWidth,
+            viewportWidth: viewportWidth
+        )
     }
 
     private func applyFocusIfNeeded(viewportHeight: Double) {
@@ -423,21 +451,36 @@ struct CommitGraphTraditionalView: View {
         consumeFocus(focusedHash)
     }
 
-    private func clampOffsets(width: Double, height: Double) {
+    private func clampOffsets(
+        viewportWidth: Double,
+        viewportHeight: Double
+    ) {
         verticalOffset = clampedVerticalOffset(
             verticalOffset,
-            viewportHeight: height
+            viewportHeight: viewportHeight
         )
-        let contentWidth = CommitGraphTraditionalContentViewport.contentWidth(
-            viewportWidth: width,
-            maximumLane: max(branchProjection.slots.count - 1, 0)
-        )
-        horizontalOffset = CommitGraphTraditionalContentViewport
-            .clampedHorizontalOffset(
-                horizontalOffset,
-                contentWidth: contentWidth,
-                viewportWidth: width
+        let splitWidth = resolvedDividerWidth(viewportWidth: viewportWidth)
+        laneHorizontalOffset = CommitGraphTraditionalSplitLayout
+            .clampedLaneOffset(
+                laneHorizontalOffset,
+                laneContentWidth: laneContentWidth,
+                dividerWidth: splitWidth
             )
+    }
+
+    private func clampLaneOffset(dividerWidth: Double) {
+        laneHorizontalOffset = CommitGraphTraditionalSplitLayout
+            .clampedLaneOffset(
+                laneHorizontalOffset,
+                laneContentWidth: laneContentWidth,
+                dividerWidth: dividerWidth
+            )
+    }
+
+    private var laneContentWidth: Double {
+        CommitGraphTraditionalLaneGeometry.contentWidth(
+            maximumLane: max(branchProjection.slots.count - 1, 0)
+        ) + 12
     }
 
     private func clampedVerticalOffset(
@@ -451,13 +494,13 @@ struct CommitGraphTraditionalView: View {
         )
         return min(max(value.isFinite ? value : 0, 0), maximum)
     }
-
 }
 
 private struct TraditionalInteractionSurface: NSViewRepresentable {
     let rowCount: Int
     let rowHeight: Double
     let verticalOffset: Double
+    let dividerWidth: Double
     let scroll: (Double, Double) -> Void
     let selectRow: (Int) -> Void
 
@@ -468,18 +511,21 @@ private struct TraditionalInteractionSurface: NSViewRepresentable {
     func makeNSView(context: Context) -> InteractionView {
         let view = InteractionView()
         view.coordinator = context.coordinator
-        view.rowCount = rowCount
-        view.rowHeight = rowHeight
-        view.verticalOffset = verticalOffset
+        update(view)
         return view
     }
 
     func updateNSView(_ view: InteractionView, context: Context) {
         context.coordinator.scroll = scroll
         context.coordinator.selectRow = selectRow
+        update(view)
+    }
+
+    private func update(_ view: InteractionView) {
         view.rowCount = rowCount
         view.rowHeight = rowHeight
         view.verticalOffset = verticalOffset
+        view.dividerWidth = dividerWidth
     }
 
     @MainActor
@@ -502,15 +548,14 @@ private struct TraditionalInteractionSurface: NSViewRepresentable {
         var rowCount = 0
         var rowHeight = CommitGraphTraditionalMetrics.rowHeight
         var verticalOffset = 0.0
-        private var mouseDownPoint: NSPoint?
-        private var lastDragPoint: NSPoint?
+        var dividerWidth = 0.0
         private var mouseDownRow: Int?
-        private var isHorizontalDragging = false
 
         override var isFlipped: Bool { true }
         override var acceptsFirstResponder: Bool { true }
 
         override func scrollWheel(with event: NSEvent) {
+            let point = convert(event.locationInWindow, from: nil)
             let verticalScale: Double = event.hasPreciseScrollingDeltas
                 ? 1
                 : rowHeight * 3
@@ -518,11 +563,14 @@ private struct TraditionalInteractionSurface: NSViewRepresentable {
                 ? 1
                 : 48
             let shiftScroll = event.modifierFlags.contains(.shift)
-            let horizontal = Double(
-                shiftScroll
-                    ? event.scrollingDeltaY
-                    : event.scrollingDeltaX
-            ) * horizontalScale
+            let isInsideLaneViewport = Double(point.x) <= dividerWidth
+            let horizontal = isInsideLaneViewport
+                ? Double(
+                    shiftScroll
+                        ? event.scrollingDeltaY
+                        : event.scrollingDeltaX
+                ) * horizontalScale
+                : 0
             coordinator?.scroll(
                 shiftScroll
                     ? 0
@@ -532,43 +580,18 @@ private struct TraditionalInteractionSurface: NSViewRepresentable {
         }
 
         override func mouseDown(with event: NSEvent) {
-            let point = convert(event.locationInWindow, from: nil)
-            mouseDownPoint = point
-            lastDragPoint = point
-            isHorizontalDragging = false
-            mouseDownRow = row(at: point)
-        }
-
-        override func mouseDragged(with event: NSEvent) {
-            guard let mouseDownPoint,
-                  let lastDragPoint
-            else {
-                return
-            }
-            let point = convert(event.locationInWindow, from: nil)
-            if !isHorizontalDragging {
-                isHorizontalDragging = CommitGraphTraditionalHorizontalDrag
-                    .isDragging(
-                        horizontalDistance: Double(point.x - mouseDownPoint.x)
-                    )
-            }
-            if isHorizontalDragging {
-                coordinator?.scroll(0, Double(point.x - lastDragPoint.x))
-                NSCursor.closedHand.set()
-            }
-            self.lastDragPoint = point
+            mouseDownRow = row(
+                at: convert(event.locationInWindow, from: nil)
+            )
         }
 
         override func mouseUp(with event: NSEvent) {
-            if !isHorizontalDragging,
-               let mouseDownRow {
+            let point = convert(event.locationInWindow, from: nil)
+            if let mouseDownRow,
+               row(at: point) == mouseDownRow {
                 coordinator?.selectRow(mouseDownRow)
             }
-            mouseDownPoint = nil
-            lastDragPoint = nil
             mouseDownRow = nil
-            isHorizontalDragging = false
-            window?.invalidateCursorRects(for: self)
         }
 
         private func row(at point: NSPoint) -> Int? {
@@ -577,11 +600,6 @@ private struct TraditionalInteractionSurface: NSViewRepresentable {
                 floor((Double(point.y) + verticalOffset) / rowHeight)
             )
             return row >= 0 && row < rowCount ? row : nil
-        }
-
-        override func resetCursorRects() {
-            super.resetCursorRects()
-            addCursorRect(bounds, cursor: .openHand)
         }
     }
 }

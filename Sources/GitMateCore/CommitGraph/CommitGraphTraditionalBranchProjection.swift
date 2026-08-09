@@ -1,13 +1,12 @@
 import Foundation
 
+/// 传统布局不再按窗口宽度隐藏分支；该类型保留用于兼容旧调用方。
 public enum CommitGraphTraditionalLaneCapacity {
-    public static let minimum = 4
-    public static let maximum = 8
+    public static let minimum = 0
+    public static let maximum = Int.max
 
-    public static func visibleCount(totalWidth: Double) -> Int {
-        guard totalWidth.isFinite, totalWidth > 0 else { return minimum }
-        let computed = Int(floor((totalWidth - 400) / 100))
-        return min(max(computed, minimum), maximum)
+    public static func visibleCount(totalWidth _: Double) -> Int {
+        Int.max
     }
 }
 
@@ -28,6 +27,8 @@ public struct CommitGraphTraditionalBranchSlot:
     public let title: String
     public let source: CommitGraphBranchSource
     public let branchID: String?
+    public let branchIDs: [String]
+    public let referenceTitles: [String]
     public let hiddenLocalCount: Int
     public let hiddenRemoteCount: Int
 
@@ -38,6 +39,8 @@ public struct CommitGraphTraditionalBranchSlot:
         title: String,
         source: CommitGraphBranchSource,
         branchID: String?,
+        branchIDs: [String]? = nil,
+        referenceTitles: [String]? = nil,
         hiddenLocalCount: Int = 0,
         hiddenRemoteCount: Int = 0
     ) {
@@ -47,6 +50,10 @@ public struct CommitGraphTraditionalBranchSlot:
         self.title = title
         self.source = source
         self.branchID = branchID
+        self.branchIDs = branchIDs
+            ?? branchID.map { [$0] }
+            ?? []
+        self.referenceTitles = referenceTitles ?? [title]
         self.hiddenLocalCount = max(hiddenLocalCount, 0)
         self.hiddenRemoteCount = max(hiddenRemoteCount, 0)
     }
@@ -97,10 +104,7 @@ public struct CommitGraphTraditionalBranchProjection:
         slots: [CommitGraphTraditionalBranchSlot],
         slotByBranchID: [String: CommitGraphTraditionalBranchSlot]
     ) {
-        self.capacity = min(
-            max(capacity, CommitGraphTraditionalLaneCapacity.minimum),
-            CommitGraphTraditionalLaneCapacity.maximum
-        )
+        self.capacity = max(capacity, slots.count)
         self.visibleBranches = visibleBranches
         self.hiddenLocalBranches = hiddenLocalBranches
         self.hiddenRemoteBranches = hiddenRemoteBranches
@@ -109,7 +113,7 @@ public struct CommitGraphTraditionalBranchProjection:
     }
 
     public static let empty = CommitGraphTraditionalBranchProjection(
-        capacity: CommitGraphTraditionalLaneCapacity.minimum,
+        capacity: 0,
         visibleBranches: [],
         hiddenLocalBranches: [],
         hiddenRemoteBranches: [],
@@ -132,163 +136,164 @@ public enum CommitGraphTraditionalBranchProjector {
     public static func project(
         _ input: CommitGraphTraditionalBranchProjectionInput
     ) -> CommitGraphTraditionalBranchProjection {
-        let capacity = CommitGraphTraditionalLaneCapacity.visibleCount(
-            totalWidth: input.totalWidth
-        )
-        guard !input.catalog.branches.isEmpty else {
-            return CommitGraphTraditionalBranchProjection(
-                capacity: capacity,
-                visibleBranches: [],
-                hiddenLocalBranches: [],
-                hiddenRemoteBranches: [],
-                slots: [],
-                slotByBranchID: [:]
-            )
-        }
+        guard !input.catalog.branches.isEmpty else { return .empty }
 
-        let selectedBranchID = input.lastSelectedBranchID.flatMap {
-            input.catalog.branch(id: $0)?.id
-        } ?? input.selectedHash.flatMap {
-            input.catalog.branch(containing: $0)?.id
-        }
-        let relatedIDs = selectedBranchID.map {
-            input.catalog.relatedBranchIDs(to: $0)
-        } ?? []
-        let ordered = input.catalog.branches.sorted {
-            priority(
-                $0,
-                headBranchID: input.catalog.headBranchID,
-                selectedBranchID: selectedBranchID,
-                pinnedBranchIDs: input.pinnedBranchIDs,
-                relatedBranchIDs: relatedIDs
-            ) < priority(
-                $1,
-                headBranchID: input.catalog.headBranchID,
-                selectedBranchID: selectedBranchID,
-                pinnedBranchIDs: input.pinnedBranchIDs,
-                relatedBranchIDs: relatedIDs
-            )
-        }
-        let visible = Array(ordered.prefix(capacity))
-        let visibleIDs = Set(visible.map(\.id))
-        let hidden = ordered.filter { !visibleIDs.contains($0.id) }
-        let hiddenLocal = hidden.filter { $0.source != .remote }
-        let hiddenRemote = hidden.filter { $0.source == .remote }
+        let groups = logicalGroups(catalog: input.catalog)
+            .sorted { priority($0, headBranchID: input.catalog.headBranchID)
+                < priority($1, headBranchID: input.catalog.headBranchID) }
 
-        var slots: [CommitGraphTraditionalBranchSlot] = visible.enumerated().map {
-            index,
-            branch in
-            CommitGraphTraditionalBranchSlot(
-                id: "branch:\(branch.id)",
-                lane: index,
+        var representatives: [CommitGraphBranchDescriptor] = []
+        var slots: [CommitGraphTraditionalBranchSlot] = []
+        var slotByBranchID: [String: CommitGraphTraditionalBranchSlot] = [:]
+        representatives.reserveCapacity(groups.count)
+        slots.reserveCapacity(groups.count)
+
+        for (lane, group) in groups.enumerated() {
+            let branches = group.orderedBranches
+            guard let representative = branches.first else { continue }
+            let branchIDs = branches.map(\.id)
+            let referenceTitles = branches.map(\.displayName)
+            let primary = branches.first(where: { $0.source == .local })
+                ?? branches.first(where: { isOrigin($0) })
+                ?? representative
+            let slot = CommitGraphTraditionalBranchSlot(
+                id: "logical:\(group.identity)",
+                lane: lane,
                 kind: .branch,
-                title: branch.displayName,
-                source: branch.source,
-                branchID: branch.id
+                title: primary.source == .remote
+                    ? primary.displayName
+                    : group.identity,
+                source: primary.source,
+                branchID: primary.id,
+                branchIDs: branchIDs,
+                referenceTitles: referenceTitles
             )
-        }
-        if !hiddenLocal.isEmpty {
-            slots.append(
-                CommitGraphTraditionalBranchSlot(
-                    id: "hidden:local",
-                    lane: slots.count,
-                    kind: .hiddenLocalBranches,
-                    title: "其他本地分支",
-                    source: .local,
-                    branchID: nil,
-                    hiddenLocalCount: hiddenLocal.count
-                )
-            )
-        }
-        if !hiddenRemote.isEmpty {
-            slots.append(
-                CommitGraphTraditionalBranchSlot(
-                    id: "hidden:remote",
-                    lane: slots.count,
-                    kind: .hiddenRemoteBranches,
-                    title: "其他远程分支",
-                    source: .remote,
-                    branchID: nil,
-                    hiddenRemoteCount: hiddenRemote.count
-                )
-            )
-        }
-        var slotByBranchID = Dictionary(
-            uniqueKeysWithValues: zip(visible, slots).map {
-                ($0.0.id, $0.1)
-            }
-        )
-        if let aggregate = slots.first(where: {
-            $0.kind == .hiddenLocalBranches
-        }) {
-            for branch in hiddenLocal {
-                slotByBranchID[branch.id] = aggregate
+            representatives.append(primary)
+            slots.append(slot)
+            for branchID in branchIDs {
+                slotByBranchID[branchID] = slot
             }
         }
-        if let aggregate = slots.first(where: {
-            $0.kind == .hiddenRemoteBranches
-        }) {
-            for branch in hiddenRemote {
-                slotByBranchID[branch.id] = aggregate
-            }
-        }
+
         return CommitGraphTraditionalBranchProjection(
-            capacity: capacity,
-            visibleBranches: visible,
-            hiddenLocalBranches: hiddenLocal,
-            hiddenRemoteBranches: hiddenRemote,
+            capacity: slots.count,
+            visibleBranches: representatives,
+            hiddenLocalBranches: [],
+            hiddenRemoteBranches: [],
             slots: slots,
             slotByBranchID: slotByBranchID
         )
     }
 
-    private struct Priority: Comparable {
+    private struct LogicalGroup {
+        let identity: String
+        let branches: [CommitGraphBranchDescriptor]
+
+        var orderedBranches: [CommitGraphBranchDescriptor] {
+            branches.sorted { first, second in
+                let firstRank = sourceRank(first)
+                let secondRank = sourceRank(second)
+                if firstRank != secondRank { return firstRank < secondRank }
+                return first.id < second.id
+            }
+        }
+
+        var latestActivity: Date {
+            branches.map(\.latestActivity).max() ?? .distantPast
+        }
+
+        var hasLocal: Bool {
+            branches.contains { $0.source == .local }
+        }
+
+        var isMain: Bool { identity == "main" }
+
+        func containsBranch(id: String?) -> Bool {
+            guard let id else { return false }
+            return branches.contains { $0.id == id }
+        }
+
+        private func sourceRank(
+            _ branch: CommitGraphBranchDescriptor
+        ) -> Int {
+            switch branch.source {
+            case .local: 0
+            case .remote:
+                CommitGraphTraditionalBranchProjector.isOrigin(branch) ? 1 : 2
+            case .detached: 3
+            case .synthetic: 4
+            }
+        }
+    }
+
+    private struct GroupPriority: Comparable {
         let group: Int
         let activity: Date
-        let source: Int
-        let id: String
+        let identity: String
 
-        static func < (first: Priority, second: Priority) -> Bool {
+        static func < (first: GroupPriority, second: GroupPriority) -> Bool {
             if first.group != second.group { return first.group < second.group }
             if first.activity != second.activity {
                 return first.activity > second.activity
             }
-            if first.source != second.source { return first.source < second.source }
-            return first.id < second.id
+            return first.identity < second.identity
+        }
+    }
+
+    private static func logicalGroups(
+        catalog: CommitGraphBranchCatalog
+    ) -> [LogicalGroup] {
+        var grouped: [String: [CommitGraphBranchDescriptor]] = [:]
+        for branch in catalog.branches {
+            grouped[logicalIdentity(for: branch), default: []].append(branch)
+        }
+        return grouped.map { identity, branches in
+            LogicalGroup(identity: identity, branches: branches)
         }
     }
 
     private static func priority(
-        _ branch: CommitGraphBranchDescriptor,
-        headBranchID: String?,
-        selectedBranchID: String?,
-        pinnedBranchIDs: Set<String>,
-        relatedBranchIDs: Set<String>
-    ) -> Priority {
-        let group: Int
-        if branch.id == headBranchID {
-            group = 0
-        } else if branch.id == selectedBranchID {
-            group = 1
-        } else if pinnedBranchIDs.contains(branch.id) {
-            group = 2
-        } else if relatedBranchIDs.contains(branch.id) {
-            group = 3
-        } else if branch.source == .local {
-            group = 4
-        } else if branch.source == .remote {
-            group = 5
+        _ group: LogicalGroup,
+        headBranchID: String?
+    ) -> GroupPriority {
+        let rank: Int
+        if group.isMain {
+            rank = 0
+        } else if group.containsBranch(id: headBranchID) {
+            rank = 1
+        } else if group.hasLocal {
+            rank = 2
+        } else if group.branches.allSatisfy({ $0.source == .remote }) {
+            rank = 3
         } else {
-            group = 6
+            rank = 4
         }
-        let source: Int = branch.source == .local
-            ? 0
-            : (branch.source == .remote ? 1 : 2)
-        return Priority(
-            group: group,
-            activity: branch.latestActivity,
-            source: source,
-            id: branch.id
+        return GroupPriority(
+            group: rank,
+            activity: group.latestActivity,
+            identity: group.identity
         )
+    }
+
+    private static func logicalIdentity(
+        for branch: CommitGraphBranchDescriptor
+    ) -> String {
+        switch branch.source {
+        case .local:
+            return branch.displayName
+        case .remote:
+            let components = branch.displayName.split(separator: "/")
+            guard components.count > 1 else { return branch.displayName }
+            return components.dropFirst().joined(separator: "/")
+        case .detached, .synthetic:
+            return branch.id
+        }
+    }
+
+    private static func isOrigin(
+        _ branch: CommitGraphBranchDescriptor
+    ) -> Bool {
+        branch.source == .remote
+            && branch.displayName.hasPrefix("origin/")
     }
 }

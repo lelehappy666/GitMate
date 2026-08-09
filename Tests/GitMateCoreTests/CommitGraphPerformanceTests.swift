@@ -226,6 +226,21 @@ let commitGraphPerformanceTests = [
                 lastSelectedBranchID: nil
             )
         )
+        var publicationIndex: CommitGraphTraditionalPublicationIndex?
+        let publicationDuration = clock.measure {
+            publicationIndex = CommitGraphTraditionalPublicationIndex.build(
+                snapshot: snapshot
+            )
+        }
+        guard let publicationIndex else {
+            throw TestFailure(description: "三百分支发布状态索引未生成")
+        }
+        let visibleLaneRange = CommitGraphTraditionalSplitLayout
+            .visibleLaneRange(
+                slotCount: traditional.slots.count,
+                horizontalOffset: 2_800,
+                dividerWidth: 380
+            )
         let localBundles = bundles.visibleBundles(
             in: GraphRect(
                 x: 0,
@@ -240,18 +255,29 @@ let commitGraphPerformanceTests = [
             300,
             "本地与远程引用都必须进入分支目录"
         )
-        try expect(
-            (4...8).contains(traditional.visibleBranches.count),
-            "传统视图在三百分支下仍只能显示四到八条真实分支泳道"
+        try expectEqual(
+            traditional.slots.count,
+            299,
+            "main 本地远程成对合并后仍必须保留其余全部逻辑分支"
+        )
+        try expectEqual(
+            traditional.capacity,
+            traditional.slots.count,
+            "传统分支容量必须等于真实逻辑泳道数"
+        )
+        try expectEqual(
+            traditional.hiddenLocalCount + traditional.hiddenRemoteCount,
+            0,
+            "三百引用下也不得隐藏真实分支"
         )
         try expect(
-            traditional.slots.count <= traditional.capacity + 2,
-            "真实分支之外最多只能增加本地与远程两个聚合槽"
+            visibleLaneRange.count < 30,
+            "左侧分支视口只应绘制当前窗口附近的泳道"
         )
-        try expect(
-            traditional.hiddenLocalCount > 0
-                && traditional.hiddenRemoteCount > 0,
-            "本地与远程隐藏分支必须分别聚合"
+        try expectEqual(
+            publicationIndex.state(for: "commit-49999"),
+            .remoteKnown,
+            "远端 main 可达的最新提交必须保持实线状态"
         )
         try expect(
             localBundles.count < 500,
@@ -263,6 +289,7 @@ let commitGraphPerformanceTests = [
                 + "拓扑 \(topologyDuration)，"
                 + "分支目录 \(catalogDuration)，"
                 + "分支束 \(bundleDuration)；"
+                + "发布索引 \(publicationDuration)；"
                 + "传统槽位 \(traditional.slots.count)，"
                 + "局部分支束 \(localBundles.count)"
         )

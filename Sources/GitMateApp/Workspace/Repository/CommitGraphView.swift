@@ -404,12 +404,14 @@ struct CommitGraphView: View {
                 layout: viewModel.traditionalLayout,
                 branchCatalog: viewModel.branchCatalog,
                 branchProjection: viewModel.traditionalBranchProjection,
+                publicationIndex: viewModel.traditionalPublicationIndex,
                 pinnedBranchIDs: viewModel.scene.pinnedTraditionalBranchIDs,
                 groupBadgeByHash: viewModel.traditionalGroupBadgeByHash,
                 groupRevision: viewModel.traditionalGroupRevision,
                 selectedHash: viewModel.selectedHash,
                 focusedHash: viewModel.focusedHash,
                 localStatus: viewModel.localStatus,
+                storedDividerWidth: viewModel.scene.traditionalDividerWidth,
                 currentUserLogin: currentUserLogin,
                 currentUserName: currentUserName,
                 currentUserAvatarURL: currentUserAvatarURL,
@@ -421,6 +423,9 @@ struct CommitGraphView: View {
                 },
                 setViewportWidth: { width in
                     viewModel.setTraditionalViewportWidth(width)
+                },
+                commitDividerWidth: { width in
+                    viewModel.setTraditionalDividerWidth(width)
                 },
                 selectBranch: { id in
                     viewModel.selectTraditionalBranch(id: id)

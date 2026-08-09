@@ -1944,6 +1944,38 @@ let commitGraphViewModelTests = [
             manualPosition,
             "自动布局不得覆盖用户手动移动的普通节点"
         )
+    },
+    TestCase("传统分割线只接受拖动结束提交的有限最终宽度") { @MainActor in
+        let snapshot = branchProjectionViewModelSnapshot()
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 954,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: CommitGraphRefreshCoordinator(
+                reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
+                store: InMemoryCommitGraphSnapshotStore()
+            )
+        )
+        await viewModel.refresh(source: .toolbar)
+
+        viewModel.setTraditionalDividerWidth(372.5)
+        try expectEqual(
+            viewModel.scene.traditionalDividerWidth,
+            372.5,
+            "一次拖动结束必须只记录最终分割线宽度"
+        )
+        viewModel.setTraditionalDividerWidth(.nan)
+        try expectEqual(
+            viewModel.scene.traditionalDividerWidth,
+            372.5,
+            "无效 pointer 值不得污染仓库场景"
+        )
+        try expectEqual(
+            viewModel.traditionalPublicationIndex.state(for: "hash-e"),
+            .localUnpushed,
+            "没有远程引用的本地提交必须在 ViewModel 中可直接查询为未推送"
+        )
     }
 ]
 

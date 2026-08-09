@@ -5,16 +5,6 @@ import SwiftUI
 enum CommitGraphTraditionalMetrics {
     static let rowHeight = 56.0
     static let avatarSize = 28.0
-
-    static func laneViewportWidth(
-        _ totalWidth: Double,
-        maximumLane: Int
-    ) -> Double {
-        CommitGraphTraditionalLaneGeometry.viewportWidth(
-            totalWidth: totalWidth,
-            maximumLane: maximumLane
-        )
-    }
 }
 
 struct CommitGraphTraditionalCanvas: View {
@@ -32,38 +22,36 @@ struct CommitGraphTraditionalCanvas: View {
     let layout: CommitGraphTraditionalLayoutResult
     let branchCatalog: CommitGraphBranchCatalog
     let branchProjection: CommitGraphTraditionalBranchProjection
+    let publicationIndex: CommitGraphTraditionalPublicationIndex
     let groupByHash: [String: CommitGraphTraditionalGroupBadge]
     let groupRevision: UInt64
     let visibleRows: Range<Int>
     let verticalOffset: Double
+    let laneViewportWidth: Double
+    let laneHorizontalOffset: Double
     let selectedHash: String?
 
     var body: some View {
         Canvas { context, size in
-            let laneWidth = CommitGraphTraditionalMetrics
-                .laneViewportWidth(
-                    Double(size.width),
-                    maximumLane: max(branchProjection.slots.count - 1, 0)
-                )
             drawRowBackgrounds(
                 context: &context,
                 size: size,
-                laneWidth: laneWidth
+                laneWidth: laneViewportWidth
             )
             drawLanes(
                 context: &context,
                 size: size,
-                laneWidth: laneWidth
+                laneWidth: laneViewportWidth
             )
             drawInformation(
                 context: &context,
                 size: size,
-                laneWidth: laneWidth
+                laneWidth: laneViewportWidth
             )
             drawDivider(
                 context: &context,
                 size: size,
-                laneWidth: laneWidth
+                laneWidth: laneViewportWidth
             )
         }
         .background(.white)
@@ -146,11 +134,14 @@ struct CommitGraphTraditionalCanvas: View {
                     ),
                     laneWidth: laneWidth
                 )
-                let branch = branchCatalog.branch(
-                    containing: connection.childHash
+                guard laneSpanIntersectsViewport(
+                    sourceX: source.x,
+                    targetX: target.x,
+                    laneWidth: laneWidth
+                ) else { continue }
+                let isLocalUnpushed = publicationIndex.isDashed(
+                    childHash: connection.childHash
                 )
-                let isRemote = branch?.source == .remote
-                let isMergedBranch = branch?.isMerged == true
                 var path = Path()
                 path.move(to: source)
                 appendRoute(
@@ -167,15 +158,13 @@ struct CommitGraphTraditionalCanvas: View {
                     with: .color(
                         CommitGraphPalette.color(
                             connection.colorIndex
-                        ).opacity(isMergedBranch ? 0.48 : 0.9)
+                        ).opacity(connection.kind == .merge ? 0.78 : 0.9)
                     ),
                     style: StrokeStyle(
                         lineWidth: connection.kind == .merge ? 2.2 : 2,
                         lineCap: .round,
                         lineJoin: .round,
-                        dash: isRemote || connection.kind == .merge
-                            ? [6, 4]
-                            : []
+                        dash: isLocalUnpushed ? [6, 4] : []
                     )
                 )
             }
@@ -256,11 +245,12 @@ struct CommitGraphTraditionalCanvas: View {
                 )
 
                 let color = CommitGraphPalette.color(row.colorIndex)
-                let branch = branchCatalog.branch(
-                    containing: row.commit.fullHash
+                guard source.x >= -12, source.x <= laneWidth + 12 else {
+                    continue
+                }
+                let isLocalUnpushed = publicationIndex.isDashed(
+                    childHash: row.commit.fullHash
                 )
-                let isRemote = branch?.source == .remote
-                let isMergedBranch = branch?.isMerged == true
                 let outer = CGRect(
                     x: source.x - 6,
                     y: source.y - 6,
@@ -270,10 +260,10 @@ struct CommitGraphTraditionalCanvas: View {
                 layer.fill(Path(ellipseIn: outer), with: .color(.white))
                 layer.stroke(
                     Path(ellipseIn: outer),
-                    with: .color(color.opacity(isMergedBranch ? 0.55 : 1)),
+                    with: .color(color),
                     style: StrokeStyle(
                         lineWidth: 2.4,
-                        dash: isRemote ? [3, 2] : []
+                        dash: isLocalUnpushed ? [3, 2] : []
                     )
                 )
                 if row.commit.fullHash == selectedHash {
@@ -308,12 +298,18 @@ struct CommitGraphTraditionalCanvas: View {
         context: inout GraphicsContext,
         laneWidth: Double
     ) {
-        for branch in branchProjection.visibleBranches {
+        let visibleLanes = CommitGraphTraditionalSplitLayout.visibleLaneRange(
+            slotCount: branchProjection.slots.count,
+            horizontalOffset: laneHorizontalOffset,
+            dividerWidth: laneWidth
+        )
+        for branch in branchCatalog.branches {
             guard let row = layout.row(hash: branch.tipHash),
                   visibleRows.contains(row.row),
                   let displayLane = branchProjection.displayLane(
-                    for: branch.id
-                  )
+                      for: branch.id
+                  ),
+                  visibleLanes.contains(displayLane)
             else { continue }
             let primary = branchCatalog.branch(containing: branch.tipHash)
             guard primary?.id != branch.id else { continue }
@@ -331,17 +327,20 @@ struct CommitGraphTraditionalCanvas: View {
                 laneWidth: laneWidth
             )
             let color = CommitGraphPalette.color(branch.lane)
+            let isLocalUnpushed = publicationIndex.isDashed(
+                childHash: branch.tipHash
+            )
             if source.x != target.x {
                 var connector = Path()
                 connector.move(to: source)
                 connector.addLine(to: target)
                 context.stroke(
                     connector,
-                    with: .color(color.opacity(branch.isMerged ? 0.4 : 0.72)),
+                    with: .color(color.opacity(branch.isMerged ? 0.52 : 0.76)),
                     style: StrokeStyle(
                         lineWidth: 1.4,
                         lineCap: .round,
-                        dash: branch.source == .remote ? [4, 3] : []
+                        dash: isLocalUnpushed ? [4, 3] : []
                     )
                 )
             }
@@ -360,7 +359,10 @@ struct CommitGraphTraditionalCanvas: View {
                 context.stroke(
                     shape,
                     with: .color(color),
-                    style: StrokeStyle(lineWidth: 1.8, dash: [3, 2])
+                    style: StrokeStyle(
+                        lineWidth: 1.8,
+                        dash: isLocalUnpushed ? [3, 2] : []
+                    )
                 )
             } else {
                 context.fill(
@@ -370,7 +372,10 @@ struct CommitGraphTraditionalCanvas: View {
                 context.stroke(
                     Path(ellipseIn: marker),
                     with: .color(color),
-                    lineWidth: 1.8
+                    style: StrokeStyle(
+                        lineWidth: 1.8,
+                        dash: isLocalUnpushed ? [3, 2] : []
+                    )
                 )
             }
         }
@@ -485,6 +490,15 @@ struct CommitGraphTraditionalCanvas: View {
         for row: CommitGraphTraditionalRow
     ) -> [Badge] {
         var result: [Badge] = []
+        if publicationIndex.state(for: row.commit.fullHash)
+            == .localUnpushed {
+            result.append(
+                Badge(
+                    text: "未推送",
+                    color: GitMateTheme.warning
+                )
+            )
+        }
         if let group = groupByHash[row.commit.fullHash] {
             result.append(
                 Badge(
@@ -677,23 +691,26 @@ struct CommitGraphTraditionalCanvas: View {
         laneWidth: Double
     ) -> CGPoint {
         let slotCount = max(branchProjection.slots.count, 1)
-        let usableWidth = max(
-            laneWidth - CommitGraphTraditionalLaneGeometry.leadingPadding * 2,
-            1
-        )
-        let spacing = slotCount > 1
-            ? min(
-                CommitGraphTraditionalLaneGeometry.spacing,
-                usableWidth / Double(slotCount - 1)
-            )
-            : 0
         return CGPoint(
             x: CommitGraphTraditionalLaneGeometry.leadingPadding
-                + Double(min(max(lane, 0), slotCount - 1)) * spacing,
+                + Double(min(max(lane, 0), slotCount - 1))
+                    * CommitGraphTraditionalLaneGeometry.spacing
+                - laneHorizontalOffset,
             y: Double(row) * CommitGraphTraditionalMetrics.rowHeight
                 + CommitGraphTraditionalMetrics.rowHeight / 2
                 - verticalOffset
         )
+    }
+
+    private func laneSpanIntersectsViewport(
+        sourceX: Double,
+        targetX: Double,
+        laneWidth: Double
+    ) -> Bool {
+        let padding = CommitGraphTraditionalLaneGeometry.spacing
+        let minimum = min(sourceX, targetX)
+        let maximum = max(sourceX, targetX)
+        return maximum >= -padding && minimum <= laneWidth + padding
     }
 
     private func displayLane(
