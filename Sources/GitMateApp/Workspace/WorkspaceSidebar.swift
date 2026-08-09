@@ -7,6 +7,7 @@ struct WorkspaceSidebar: View {
     let selectionGate: RepositorySelectionGate
     let account: GitHubAccount
     let onCommitGraphRequested: (Int64) -> Void
+    let onOpenRepositoryTools: (Int64) -> Void
     @State private var currentRepositoryID: Int64?
 
     init(
@@ -14,13 +15,15 @@ struct WorkspaceSidebar: View {
         repositories: [Repository],
         selectionGate: RepositorySelectionGate,
         account: GitHubAccount,
-        onCommitGraphRequested: @escaping (Int64) -> Void
+        onCommitGraphRequested: @escaping (Int64) -> Void,
+        onOpenRepositoryTools: @escaping (Int64) -> Void = { _ in }
     ) {
         _selection = selection
         self.repositories = repositories
         self.selectionGate = selectionGate
         self.account = account
         self.onCommitGraphRequested = onCommitGraphRequested
+        self.onOpenRepositoryTools = onOpenRepositoryTools
         _currentRepositoryID = State(
             initialValue: selection.wrappedValue.route.repositoryID
                 ?? repositories.first?.id
@@ -94,6 +97,13 @@ struct WorkspaceSidebar: View {
                         onCommitGraphRequested(currentRepositoryID)
                     }
                 )
+                actionButton(
+                    title: "分支、标签与议题",
+                    symbol: "arrow.triangle.branch"
+                ) {
+                    guard let currentRepositoryID else { return }
+                    onOpenRepositoryTools(currentRepositoryID)
+                }
             }
             .padding(.horizontal, 10)
             .opacity(currentRepositoryID == nil ? 0.45 : 1)
@@ -228,6 +238,28 @@ struct WorkspaceSidebar: View {
                     : .clear
             )
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func actionButton(
+        title: String,
+        symbol: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol)
+                    .frame(width: 17)
+                Text(title)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(GitMateTheme.textSecondary)
+            .padding(.horizontal, 10)
+            .frame(height: 36)
         }
         .buttonStyle(.plain)
     }

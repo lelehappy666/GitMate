@@ -5,6 +5,9 @@ enum GitMateTheme {
     static let background = Color.white
     static let canvas = Color(red: 0.965, green: 0.975, blue: 0.988)
     static let panel = Color(red: 0.975, green: 0.982, blue: 0.992)
+    static let sidebar = Color(red: 0.952, green: 0.965, blue: 0.98)
+    static let surfaceMuted = Color(red: 0.945, green: 0.958, blue: 0.976)
+    static let selection = Color(red: 0.865, green: 0.925, blue: 0.995)
     static let textPrimary = Color(red: 0.075, green: 0.105, blue: 0.16)
     static let textSecondary = Color(red: 0.25, green: 0.31, blue: 0.39)
     static let textTertiary = Color(red: 0.42, green: 0.47, blue: 0.54)
@@ -18,6 +21,10 @@ enum GitMateTheme {
     static let cornerRadius: CGFloat = 16
     static let compactCornerRadius: CGFloat = 11
     static let contentMaxWidth: CGFloat = 1_080
+    static let workspaceSidebarWidth: CGFloat = 240
+    static let workspaceHeaderHeight: CGFloat = 66
+    static let workspaceListWidth: CGFloat = 520
+    static let workspaceRowHeight: CGFloat = 64
 }
 
 struct GitMateAvatar: View {

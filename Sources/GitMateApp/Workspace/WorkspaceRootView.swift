@@ -19,6 +19,7 @@ struct WorkspaceRootView: View {
     let onReauthorize: (WorkspaceRoute) -> Void
     let onDownloadRepository:
         (Repository, RepositorySyncMode) -> Void
+    let onOpenRepositoryTools: (Repository) -> Void
 
     init(
         session: WorkspaceSession,
@@ -27,7 +28,9 @@ struct WorkspaceRootView: View {
         onResync: @escaping () -> Void,
         onReauthorize: @escaping (WorkspaceRoute) -> Void,
         onDownloadRepository:
-            @escaping (Repository, RepositorySyncMode) -> Void = { _, _ in }
+            @escaping (Repository, RepositorySyncMode) -> Void = { _, _ in },
+        onOpenRepositoryTools:
+            @escaping (Repository) -> Void = { _ in }
     ) {
         var initialSession = session
         let importedRepositories = (
@@ -90,6 +93,7 @@ struct WorkspaceRootView: View {
         self.onResync = onResync
         self.onReauthorize = onReauthorize
         self.onDownloadRepository = onDownloadRepository
+        self.onOpenRepositoryTools = onOpenRepositoryTools
     }
 
     var body: some View {
@@ -99,7 +103,13 @@ struct WorkspaceRootView: View {
                 repositories: repositoryGroups.local,
                 selectionGate: repositorySelectionGate,
                 account: session.account,
-                onCommitGraphRequested: requestCommitGraphRefresh
+                onCommitGraphRequested: requestCommitGraphRefresh,
+                onOpenRepositoryTools: { repositoryID in
+                    guard let repository = repository(repositoryID) else {
+                        return
+                    }
+                    onOpenRepositoryTools(repository)
+                }
             )
         } detail: {
             if apiAuthorizationRequired {

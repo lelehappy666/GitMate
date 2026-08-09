@@ -7,6 +7,8 @@ import SwiftUI
 struct GitMateApp: App {
     @State private var viewModel: OnboardingViewModel
     private let workspaceRuntime: WorkspaceRuntimeDependencies
+    private let repositoryWorkspaceFactory:
+        RepositoryWorkspaceRuntimeFactory?
     private let workspacePreview: WorkspaceRootView?
 
     init() {
@@ -38,6 +40,7 @@ struct GitMateApp: App {
                 cacheDirectory: FileManager.default.temporaryDirectory,
                 credentialStore: InMemoryCredentialStore()
             )
+            repositoryWorkspaceFactory = nil
             workspacePreview = page >= 10
                 ? WorkspacePreviewFactory.make(
                     page: page,
@@ -54,6 +57,12 @@ struct GitMateApp: App {
                 path: "Workspace",
                 directoryHint: .isDirectory
             )
+        )
+        let repositoryCatalog = LocalRepositoryCatalog(
+            rootDirectoryProvider: {
+                syncDestinationStore.destination()
+                    ?? syncDestination
+            }
         )
         let dependencies = OnboardingDependencies(
             apiProvider: DefaultGitHubAPIProvider(githubDotComAPI: api),
@@ -74,13 +83,12 @@ struct GitMateApp: App {
             syncDestination: syncDestination,
             cacheDirectory: cacheDirectory,
             credentialStore: credentialStore,
-            catalog: LocalRepositoryCatalog(
-                rootDirectoryProvider: {
-                    syncDestinationStore.destination()
-                        ?? syncDestination
-                }
-            ),
+            catalog: repositoryCatalog,
             cache: workspaceCache
+        )
+        repositoryWorkspaceFactory = RepositoryWorkspaceRuntimeFactory(
+            credentialStore: credentialStore,
+            catalog: repositoryCatalog
         )
         workspacePreview = nil
     }
@@ -115,7 +123,9 @@ struct GitMateApp: App {
             } else {
                 GitMateRootView(
                     onboarding: viewModel,
-                    runtime: workspaceRuntime
+                    runtime: workspaceRuntime,
+                    repositoryWorkspaceFactory:
+                        repositoryWorkspaceFactory
                 )
             }
         }
