@@ -39,19 +39,26 @@ public struct CommitGraphGitDerivedBase: Sendable {
     public let traditionalLayout: CommitGraphTraditionalLayoutResult
     public let defaultPositions: [String: GraphPoint]
     public let availableHashes: Set<String>
+    public let branchCatalog: CommitGraphBranchCatalog
 
     public init(
         integrityReport: CommitGraphIntegrityReport,
         canvasLayout: CommitGraphLayoutResult,
         traditionalLayout: CommitGraphTraditionalLayoutResult,
         defaultPositions: [String: GraphPoint],
-        availableHashes: Set<String>
+        availableHashes: Set<String>,
+        branchCatalog: CommitGraphBranchCatalog = CommitGraphBranchCatalog(
+            branches: [],
+            headBranchID: nil,
+            primaryBranchIDByHash: [:]
+        )
     ) {
         self.integrityReport = integrityReport
         self.canvasLayout = canvasLayout
         self.traditionalLayout = traditionalLayout
         self.defaultPositions = defaultPositions
         self.availableHashes = availableHashes
+        self.branchCatalog = branchCatalog
     }
 }
 
@@ -60,17 +67,23 @@ public struct CommitGraphSceneDerivationRequest: Sendable {
     public let previousSnapshot: CommitGraphSnapshot?
     public let scene: CommitGraphSceneState
     public let base: CommitGraphGitDerivedBase
+    public let forcedVisibleHashes: Set<String>
+    public let expandedBundleIDs: Set<String>
 
     public init(
         snapshot: CommitGraphSnapshot,
         previousSnapshot: CommitGraphSnapshot?,
         scene: CommitGraphSceneState,
-        base: CommitGraphGitDerivedBase
+        base: CommitGraphGitDerivedBase,
+        forcedVisibleHashes: Set<String> = [],
+        expandedBundleIDs: Set<String> = []
     ) {
         self.snapshot = snapshot
         self.previousSnapshot = previousSnapshot
         self.scene = scene
         self.base = base
+        self.forcedVisibleHashes = forcedVisibleHashes
+        self.expandedBundleIDs = expandedBundleIDs
     }
 }
 
@@ -78,15 +91,19 @@ public struct CommitGraphSceneDerivedState: Sendable {
     public let scene: CommitGraphSceneState
     public let projection: CommitGraphSceneProjection
     public let renderIndex: CommitGraphRenderIndex
+    public let branchBundleProjection: CommitGraphBranchBundleProjection
 
     public init(
         scene: CommitGraphSceneState,
         projection: CommitGraphSceneProjection,
-        renderIndex: CommitGraphRenderIndex
+        renderIndex: CommitGraphRenderIndex,
+        branchBundleProjection: CommitGraphBranchBundleProjection =
+            CommitGraphBranchBundleProjection()
     ) {
         self.scene = scene
         self.projection = projection
         self.renderIndex = renderIndex
+        self.branchBundleProjection = branchBundleProjection
     }
 }
 
@@ -135,12 +152,22 @@ public struct DefaultCommitGraphViewModelDeriver:
                         maximumLane: 0
                     ),
                     defaultPositions: [:],
-                    availableHashes: []
+                    availableHashes: [],
+                    branchCatalog: CommitGraphBranchCatalog(
+                        branches: [],
+                        headBranchID: nil,
+                        primaryBranchIDByHash: [:]
+                    )
                 )
             }
 
             let topology = CommitGraphLaneTopology.build(
                 snapshot: request.snapshot
+            )
+            try Task.checkCancellation()
+            let branchCatalog = CommitGraphBranchCatalog.build(
+                topology: topology,
+                fingerprint: request.snapshot.fingerprint
             )
             try Task.checkCancellation()
             let canvas = graphLayout.layout(topology: topology)
@@ -164,7 +191,8 @@ public struct DefaultCommitGraphViewModelDeriver:
                 canvasLayout: canvas,
                 traditionalLayout: traditional,
                 defaultPositions: defaultPositions,
-                availableHashes: availableHashes
+                availableHashes: availableHashes,
+                branchCatalog: branchCatalog
             )
         }
         return try await withTaskCancellationHandler {
@@ -185,6 +213,21 @@ public struct DefaultCommitGraphViewModelDeriver:
                 newSnapshot: request.snapshot,
                 defaultPositions: request.base.defaultPositions
             )
+            reconciled.manuallyPositionedHashes.formIntersection(
+                request.base.availableHashes
+            )
+            let groupedHashes = Set(reconciled.groups.flatMap(\.memberHashes))
+            reconciled.manuallyPositionedHashes.subtract(groupedHashes)
+            let availableBranchIDs = Set(
+                request.base.branchCatalog.branches.map(\.id)
+            )
+            reconciled.pinnedTraditionalBranchIDs.formIntersection(
+                availableBranchIDs
+            )
+            if let last = reconciled.lastTraditionalBranchID,
+               !availableBranchIDs.contains(last) {
+                reconciled.lastTraditionalBranchID = nil
+            }
             try Task.checkCancellation()
             let provisionalProjection = CommitGraphSceneProjector.project(
                 layout: request.base.canvasLayout,
@@ -203,10 +246,19 @@ public struct DefaultCommitGraphViewModelDeriver:
             try Task.checkCancellation()
             let renderIndex = CommitGraphRenderIndex(projection: projection)
             try Task.checkCancellation()
+            let branchBundleProjection = branchBundleProjection(
+                layout: request.base.canvasLayout,
+                scene: reconciled,
+                catalog: request.base.branchCatalog,
+                forcedVisibleHashes: request.forcedVisibleHashes,
+                expandedBundleIDs: request.expandedBundleIDs
+            )
+            try Task.checkCancellation()
             return CommitGraphSceneDerivedState(
                 scene: reconciled,
                 projection: projection,
-                renderIndex: renderIndex
+                renderIndex: renderIndex,
+                branchBundleProjection: branchBundleProjection
             )
         }
         return try await withTaskCancellationHandler {
@@ -214,6 +266,61 @@ public struct DefaultCommitGraphViewModelDeriver:
         } onCancel: {
             task.cancel()
         }
+    }
+
+    private func branchBundleProjection(
+        layout: CommitGraphLayoutResult,
+        scene: CommitGraphSceneState,
+        catalog: CommitGraphBranchCatalog,
+        forcedVisibleHashes: Set<String>,
+        expandedBundleIDs: Set<String>
+    ) -> CommitGraphBranchBundleProjection {
+        let groupHashes = Set(scene.groups.flatMap(\.memberHashes))
+        var regionHashes = Set<String>()
+        for node in layout.nodes {
+            let position = scenePosition(
+                for: node.hash,
+                fallback: GraphPoint(x: node.x, y: node.y),
+                scene: scene
+            )
+            if scene.regions.contains(where: { contains($0.rect, position) }) {
+                regionHashes.insert(node.hash)
+            }
+        }
+        return CommitGraphBranchBundleBuilder.build(
+            input: CommitGraphBranchBundleInput(
+                catalog: catalog,
+                layout: layout,
+                edges: layout.edges,
+                forcedVisibleHashes: forcedVisibleHashes,
+                groupBoundaryHashes: groupHashes,
+                regionBoundaryHashes: regionHashes,
+                shallowBoundaryHashes: Set(
+                    layout.shallowBoundaryEndpoints.map(\.childHash)
+                ),
+                expandedBundleIDs: expandedBundleIDs
+            )
+        )
+    }
+
+    private func scenePosition(
+        for hash: String,
+        fallback: GraphPoint,
+        scene: CommitGraphSceneState
+    ) -> GraphPoint {
+        if let group = scene.groups.first(
+            where: { $0.memberHashes.contains(hash) }
+        ), let position = group.absolutePosition(for: hash) {
+            return position
+        }
+        return scene.nodePositions[hash] ?? fallback
+    }
+
+    private func contains(_ rect: GraphRect, _ point: GraphPoint) -> Bool {
+        point.x >= rect.minimumX
+            && point.x <= rect.maximumX
+            && point.y >= rect.minimumY
+            && point.y <= rect.maximumY
     }
 }
 
@@ -262,6 +369,8 @@ public final class CommitGraphViewModel {
         didSet {
             guard selectedHash != oldValue else { return }
             rebuildSelectionHighlight()
+            rebuildBranchBundleProjection()
+            rebuildTraditionalBranchProjection()
         }
     }
     public private(set) var isLoading = false
@@ -281,6 +390,17 @@ public final class CommitGraphViewModel {
     public private(set) var historyMarkerRevision: UInt64 = 0
     public private(set) var highlightedEdgeIDs: Set<String> = []
     public private(set) var highlightedNodeHashes: Set<String> = []
+    public private(set) var branchCatalog = CommitGraphBranchCatalog(
+        branches: [],
+        headBranchID: nil,
+        primaryBranchIDByHash: [:]
+    )
+    public private(set) var branchBundleProjection =
+        CommitGraphBranchBundleProjection()
+    public private(set) var traditionalBranchProjection =
+        CommitGraphTraditionalBranchProjection.empty
+    public private(set) var expandedBranchBundleIDs: Set<String> = []
+    public private(set) var branchProjectionRevision: UInt64 = 0
 
     @ObservationIgnored
     private let reader: any LocalGitReading
@@ -378,6 +498,9 @@ public final class CommitGraphViewModel {
 
     @ObservationIgnored
     private var initialPresentationLeases: Set<UUID> = []
+
+    @ObservationIgnored
+    private var traditionalViewportWidth = 1_040.0
 
     public init(
         reader: any LocalGitReading,
@@ -633,8 +756,12 @@ public final class CommitGraphViewModel {
 
     public func selectForNavigation(hash: String) {
         guard layout.node(hash: hash) != nil else { return }
+        if let bundle = branchBundleProjection.bundle(containing: hash) {
+            expandedBranchBundleIDs.insert(bundle.id)
+        }
         selectedHash = hash
         selectedHashes = [hash]
+        rebuildBranchBundleProjection()
         focusedHash = hash
     }
 
@@ -651,6 +778,64 @@ public final class CommitGraphViewModel {
             screenSize: screenSize,
             padding: 180
         ) ?? CommitGraphVisibleScene(nodes: [], groups: [], edges: [])
+    }
+
+    public func visibleBranchBundles(
+        in canvasRect: GraphRect
+    ) -> [CommitGraphBranchBundle] {
+        branchBundleProjection.visibleBundles(in: canvasRect)
+    }
+
+    public func branchBundle(at canvasPoint: GraphPoint) -> CommitGraphBranchBundle? {
+        branchBundleProjection.visibleBundles(
+            in: GraphRect(
+                x: canvasPoint.x - 2,
+                y: canvasPoint.y - 2,
+                width: 4,
+                height: 4
+            )
+        ).last
+    }
+
+    public func toggleBranchBundle(id: String) {
+        if expandedBranchBundleIDs.contains(id) {
+            expandedBranchBundleIDs.remove(id)
+        } else {
+            guard branchBundleProjection.bundles.contains(where: {
+                $0.id == id
+            }) else { return }
+            expandedBranchBundleIDs.insert(id)
+        }
+        rebuildBranchBundleProjection()
+    }
+
+    public func setTraditionalViewportWidth(_ width: Double) {
+        guard width.isFinite, width > 0 else { return }
+        let normalized = width.rounded()
+        guard normalized != traditionalViewportWidth else { return }
+        traditionalViewportWidth = normalized
+        rebuildTraditionalBranchProjection()
+    }
+
+    public func selectTraditionalBranch(id: String) {
+        guard branchCatalog.branch(id: id) != nil else { return }
+        guard scene.lastTraditionalBranchID != id else { return }
+        scene.lastTraditionalBranchID = id
+        rebuildTraditionalBranchProjection()
+        recordSceneMutation()
+        scheduleSceneSave()
+    }
+
+    public func togglePinnedTraditionalBranch(id: String) {
+        guard branchCatalog.branch(id: id) != nil else { return }
+        if scene.pinnedTraditionalBranchIDs.contains(id) {
+            scene.pinnedTraditionalBranchIDs.remove(id)
+        } else {
+            scene.pinnedTraditionalBranchIDs.insert(id)
+        }
+        rebuildTraditionalBranchProjection()
+        recordSceneMutation()
+        scheduleSceneSave()
     }
 
     public var historyCommitCount: Int {
@@ -1038,9 +1223,16 @@ public final class CommitGraphViewModel {
             scene.groups.flatMap(\.memberHashes)
         )
         var updatedScene = scene
+        let manuallyPositioned = updatedScene.nodePositions.filter {
+            updatedScene.manuallyPositionedHashes.contains($0.key)
+        }
         updatedScene.nodePositions = defaults.nodePositions.filter {
             !groupedHashes.contains($0.key)
         }
+        updatedScene.nodePositions.merge(
+            manuallyPositioned,
+            uniquingKeysWith: { _, manual in manual }
+        )
         updatedScene.edgePorts = defaults.edgePorts
 
         layout = updatedLayout
@@ -1109,6 +1301,7 @@ public final class CommitGraphViewModel {
         } else {
             selectedHashes = [hash]
         }
+        rebuildBranchBundleProjection()
     }
 
     public func appendSelection(hash: String) {
@@ -1117,11 +1310,13 @@ public final class CommitGraphViewModel {
 
     public func clearCanvasSelection() {
         selectedHashes.removeAll()
+        rebuildBranchBundleProjection()
     }
 
     public func replaceSelection(with hashes: Set<String>) {
         let availableHashes = Set(layout.nodes.map(\.hash))
         selectedHashes = hashes.intersection(availableHashes)
+        rebuildBranchBundleProjection()
     }
 
     public func validateManualGroupSelection() throws {
@@ -1158,6 +1353,7 @@ public final class CommitGraphViewModel {
             layout: layout,
             scene: scene
         )
+        scene.manuallyPositionedHashes.subtract(selectedHashes)
         rebuildTraditionalGroupBadgeIndex()
         selectedHashes.removeAll()
         refreshProjection(incrementingPathRevision: true)
@@ -1166,11 +1362,13 @@ public final class CommitGraphViewModel {
     }
 
     public func deleteGroup(id: UUID) throws {
+        let formerMembers = group(id: id)?.memberHashes ?? []
         scene = try CommitGraphGrouping.removingGroup(
             id: id,
             layout: layout,
             scene: scene
         )
+        scene.manuallyPositionedHashes.formUnion(formerMembers)
         rebuildTraditionalGroupBadgeIndex()
         selectedHashes.removeAll()
         refreshProjection(incrementingPathRevision: true)
@@ -1189,6 +1387,7 @@ public final class CommitGraphViewModel {
             layout: layout,
             scene: scene
         )
+        scene.manuallyPositionedHashes.subtract(selectedHashes)
         rebuildTraditionalGroupBadgeIndex()
         selectedHashes.removeAll()
         refreshProjection(incrementingPathRevision: true)
@@ -1213,6 +1412,7 @@ public final class CommitGraphViewModel {
             layout: layout,
             scene: scene
         )
+        scene.manuallyPositionedHashes.subtract(suggestion.memberHashes)
         rebuildTraditionalGroupBadgeIndex()
         groupSuggestions.removeAll { $0.id == id }
         refreshProjection(incrementingPathRevision: true)
@@ -1371,6 +1571,7 @@ public final class CommitGraphViewModel {
 
     public func persistSceneImmediately() async {
         synchronizeCanvasViewportIfNeeded()
+        rebuildBranchBundleProjection()
         if historyMarkersNeedRebuild {
             rebuildHistoryNavigationMarkers()
         }
@@ -1455,6 +1656,8 @@ public final class CommitGraphViewModel {
         selectedCommit = nil
         selectedDiff = nil
         isSelectedDiffTruncated = false
+        rebuildBranchBundleProjection()
+        rebuildTraditionalBranchProjection()
     }
 
     private struct LoadedScene: Sendable {
@@ -1589,7 +1792,11 @@ public final class CommitGraphViewModel {
                 snapshot: snapshot,
                 previousSnapshot: currentSnapshot,
                 scene: scene,
-                base: base
+                base: base,
+                forcedVisibleHashes: selectedHashes.union(
+                    selectedHash.map { [$0] } ?? []
+                ),
+                expandedBundleIDs: expandedBranchBundleIDs
             )
             let deriver = deriver
             let task = Task {
@@ -1644,8 +1851,12 @@ public final class CommitGraphViewModel {
         installedSnapshotIdentity = CommitGraphSnapshotIdentity(snapshot)
         layout = base.canvasLayout
         traditionalLayout = base.traditionalLayout
+        branchCatalog = base.branchCatalog
         scene = derived.scene
+        branchBundleProjection = derived.branchBundleProjection
+        branchProjectionRevision &+= 1
         rebuildTraditionalGroupBadgeIndex()
+        rebuildTraditionalBranchProjection()
         rebuildHistoryNavigationMarkers()
         viewport = derived.scene.canvasViewport
         integrityReport = base.integrityReport
@@ -1948,11 +2159,73 @@ public final class CommitGraphViewModel {
             scene: scene
         )
         renderIndex = CommitGraphRenderIndex(projection: projection)
+        rebuildBranchBundleProjection()
         rebuildSelectionHighlight()
         rebuildHistoryNavigationMarkers()
         if incrementingPathRevision {
             pathRevision &+= 1
         }
+    }
+
+    private func rebuildBranchBundleProjection() {
+        guard !layout.nodes.isEmpty, !branchCatalog.branches.isEmpty else {
+            if !branchBundleProjection.bundles.isEmpty {
+                branchBundleProjection = CommitGraphBranchBundleProjection()
+                branchProjectionRevision &+= 1
+            }
+            return
+        }
+        var forcedHashes = selectedHashes
+            .union(scene.manuallyPositionedHashes)
+        if let selectedHash {
+            forcedHashes.insert(selectedHash)
+        }
+        let groupHashes = Set(scene.groups.flatMap(\.memberHashes))
+        var regionHashes = Set<String>()
+        for node in layout.nodes {
+            let position = currentPosition(for: node.hash)
+                ?? GraphPoint(x: node.x, y: node.y)
+            if scene.regions.contains(where: { region in
+                position.x >= region.rect.minimumX
+                    && position.x <= region.rect.maximumX
+                    && position.y >= region.rect.minimumY
+                    && position.y <= region.rect.maximumY
+            }) {
+                regionHashes.insert(node.hash)
+            }
+        }
+        branchBundleProjection = CommitGraphBranchBundleBuilder.build(
+            input: CommitGraphBranchBundleInput(
+                catalog: branchCatalog,
+                layout: layout,
+                edges: layout.edges,
+                forcedVisibleHashes: forcedHashes,
+                groupBoundaryHashes: groupHashes,
+                regionBoundaryHashes: regionHashes,
+                shallowBoundaryHashes: Set(
+                    layout.shallowBoundaryEndpoints.map(\.childHash)
+                ),
+                expandedBundleIDs: expandedBranchBundleIDs
+            )
+        )
+        let availableBundleIDs = Set(
+            branchBundleProjection.bundles.map(\.id)
+        ).union(expandedBranchBundleIDs)
+        expandedBranchBundleIDs.formIntersection(availableBundleIDs)
+        branchProjectionRevision &+= 1
+    }
+
+    private func rebuildTraditionalBranchProjection() {
+        traditionalBranchProjection =
+            CommitGraphTraditionalBranchProjector.project(
+                CommitGraphTraditionalBranchProjectionInput(
+                    catalog: branchCatalog,
+                    totalWidth: traditionalViewportWidth,
+                    selectedHash: selectedHash,
+                    pinnedBranchIDs: scene.pinnedTraditionalBranchIDs,
+                    lastSelectedBranchID: scene.lastTraditionalBranchID
+                )
+            )
     }
 
     private func rebuildTraditionalGroupBadgeIndex() {

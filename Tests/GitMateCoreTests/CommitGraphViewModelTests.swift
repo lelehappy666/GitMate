@@ -1775,8 +1775,142 @@ let commitGraphViewModelTests = [
         let loadCount = await store.loadCount()
         try expectEqual(loadCount, 3, "重进必须重新读取一次缓存，再执行一次刷新")
         viewModel.endInitialPresentation(reenterLease)
+    },
+    TestCase("提交图快照只派生一次分支目录且视口操作不重建") { @MainActor in
+        let snapshot = branchProjectionViewModelSnapshot()
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 950,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: CommitGraphRefreshCoordinator(
+                reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
+                store: InMemoryCommitGraphSnapshotStore()
+            )
+        )
+
+        await viewModel.refresh(source: .toolbar)
+
+        try expectEqual(
+            viewModel.branchCatalog.branch(id: "local:main")?.side,
+            .trunk,
+            "刷新安装时必须同时建立稳定居中主干"
+        )
+        try expect(
+            viewModel.branchBundleProjection.bundle(containing: "hash-c")
+                != nil,
+            "线性普通提交必须进入概览分支束"
+        )
+        let revision = viewModel.branchProjectionRevision
+
+        viewModel.pan(by: GraphPoint(x: 16, y: 24))
+        viewModel.zoom(
+            by: 1.1,
+            anchor: GraphPoint(x: 240, y: 180)
+        )
+
+        try expectEqual(
+            viewModel.branchProjectionRevision,
+            revision,
+            "平移和缩放只能查询现有投影，不得重建完整分支目录"
+        )
+    },
+    TestCase("搜索束内提交自动展开并允许重新折叠") { @MainActor in
+        let snapshot = branchProjectionViewModelSnapshot()
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 951,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: CommitGraphRefreshCoordinator(
+                reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
+                store: InMemoryCommitGraphSnapshotStore()
+            )
+        )
+        await viewModel.refresh(source: .toolbar)
+        let bundleID = try required(
+            viewModel.branchBundleProjection.bundle(containing: "hash-c")?.id,
+            "搜索前必须存在包含目标提交的分支束"
+        )
+
+        try expect(viewModel.navigateToFirstMatch("hash-c"), "必须命中束内提交")
+        try expectEqual(viewModel.selectedHash, "hash-c", "搜索必须选中真实提交")
+        try expectEqual(
+            viewModel.branchBundleProjection.bundle(containing: "hash-c"),
+            nil,
+            "搜索命中后必须临时展开分支束"
+        )
+
+        viewModel.dismissDetail()
+        viewModel.clearCanvasSelection()
+        viewModel.toggleBranchBundle(id: bundleID)
+        try expect(
+            viewModel.branchBundleProjection.bundle(containing: "hash-c")
+                != nil,
+            "再次切换必须恢复自动聚合"
+        )
+    },
+    TestCase("传统分支选择固定和手动节点保护写入场景") { @MainActor in
+        let snapshot = branchProjectionViewModelSnapshot()
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 952,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: CommitGraphRefreshCoordinator(
+                reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
+                store: InMemoryCommitGraphSnapshotStore()
+            )
+        )
+        await viewModel.refresh(source: .toolbar)
+
+        viewModel.setTraditionalViewportWidth(980)
+        viewModel.selectTraditionalBranch(id: "local:main")
+        viewModel.togglePinnedTraditionalBranch(id: "local:main")
+        try expectEqual(
+            viewModel.scene.lastTraditionalBranchID,
+            "local:main",
+            "传统浮层选择必须写入最近分支偏好"
+        )
+        try expect(
+            viewModel.scene.pinnedTraditionalBranchIDs.contains("local:main"),
+            "固定分支必须持久化到仓库场景"
+        )
+        try expect(
+            viewModel.traditionalBranchProjection.visibleBranches.contains {
+                $0.id == "local:main"
+            },
+            "固定 HEAD 必须继续出现在传统上下文泳道"
+        )
+
+        viewModel.moveNode(
+            hash: "hash-c",
+            by: GraphPoint(x: 42, y: -18)
+        )
+        let manualPosition = viewModel.scene.nodePositions["hash-c"]
+        viewModel.resetLayout()
+
+        try expectEqual(
+            viewModel.scene.nodePositions["hash-c"],
+            manualPosition,
+            "自动布局不得覆盖用户手动移动的普通节点"
+        )
     }
 ]
+
+private func branchProjectionViewModelSnapshot() -> CommitGraphSnapshot {
+    let commits = [
+        commitGraphCommit(hash: "hash-e", parents: ["hash-d"]),
+        commitGraphCommit(hash: "hash-d", parents: ["hash-c"]),
+        commitGraphCommit(hash: "hash-c", parents: ["hash-b"]),
+        commitGraphCommit(hash: "hash-b", parents: ["hash-a"]),
+        commitGraphCommit(hash: "hash-a")
+    ]
+    return commitGraphSnapshot(
+        commits: commits,
+        headHash: "hash-e"
+    )
+}
 
 private let commitGraphRepositoryURL = URL(
     fileURLWithPath: "/tmp/GitMateCommitGraph"
