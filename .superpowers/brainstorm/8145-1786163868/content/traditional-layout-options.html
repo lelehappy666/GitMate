@@ -1,0 +1,69 @@
+<style>
+  .traditional-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:22px}
+  .design-card{border:1px solid #d8e1ec;border-radius:18px;background:#fff;overflow:hidden;cursor:pointer;transition:.2s;box-shadow:0 8px 24px rgba(18,38,63,.06)}
+  .design-card:hover{transform:translateY(-2px);box-shadow:0 14px 30px rgba(18,38,63,.12)}
+  .design-card.selected{border:2px solid #1677e8;box-shadow:0 0 0 4px rgba(22,119,232,.12)}
+  .preview{height:430px;background:#f8fafc;border-bottom:1px solid #e4eaf1;position:relative;overflow:hidden}
+  .card-copy{padding:18px}.card-copy h3{margin:0 0 8px;font-size:18px}.card-copy p{margin:0;color:#617086;line-height:1.55;font-size:13px}
+  .recommended{position:absolute;top:12px;left:12px;background:#1677e8;color:#fff;border-radius:999px;padding:6px 10px;font-size:11px;font-weight:700;z-index:3}
+  .hint{margin-top:18px;padding:12px 14px;border-radius:12px;background:#eef6ff;color:#275b91;font-size:13px}
+  .ui-text{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
+  @media(max-width:1050px){.traditional-grid{grid-template-columns:1fr}.preview{height:420px}}
+</style>
+
+<h2>传统提交图：选择更清晰的观看方式</h2>
+<p class="subtitle">共同规则：最新提交在最上方；完整包含本地与远程分支；未提交工作区独立置顶；长边只沿泳道垂直走，不允许斜穿其他节点。</p>
+
+<div class="traditional-grid">
+  <div class="design-card" data-choice="traditional-a" onclick="toggleSelect(this)">
+    <div class="preview">
+      <div class="recommended">推荐 · GitKraken 紧凑轨道</div>
+      <svg viewBox="0 0 360 430" width="100%" height="100%" class="ui-text">
+        <rect width="360" height="430" fill="#fff"/>
+        <rect x="0" y="0" width="360" height="42" fill="#f8fafc"/><text x="18" y="26" font-size="11" font-weight="700" fill="#243246">全部分支</text><rect x="230" y="10" width="112" height="24" rx="8" fill="#fff" stroke="#d6e0eb"/><text x="246" y="26" font-size="9" fill="#63748a">搜索分支或提交</text>
+        <rect x="0" y="42" width="360" height="48" fill="#fff9ef"/><circle cx="24" cy="66" r="10" fill="#f4a62a" opacity=".18"/><path d="M20 66h8M24 62v8" stroke="#d88916" stroke-width="1.5"/><text x="43" y="61" font-size="10" font-weight="700" fill="#263448">工作区变更</text><text x="43" y="75" font-size="8" fill="#7a8798">暂存 2 · 修改 4 · 未跟踪 1</text><rect x="284" y="55" width="58" height="22" rx="11" fill="#fff"/><text x="297" y="69" font-size="8" font-weight="700" fill="#d88916">本地未提交</text>
+        <rect x="0" y="90" width="142" height="340" fill="#fbfcfe"/><path d="M142 90V430" stroke="#dce4ed"/>
+        <g stroke="#e7edf4"><path d="M0 138H360M0 186H360M0 234H360M0 282H360M0 330H360M0 378H360"/></g>
+        <path d="M36 110V410" stroke="#1677e8" stroke-width="3.5" stroke-linecap="round"/>
+        <path d="M36 158 C36 171 65 171 65 184 V253 C65 267 36 267 36 282" fill="none" stroke="#7450c8" stroke-width="3" stroke-linecap="round"/>
+        <path d="M36 207 C36 219 94 219 94 232 V349 C94 363 36 363 36 378" fill="none" stroke="#23926b" stroke-width="3" stroke-linecap="round" stroke-dasharray="5 3"/>
+        <g fill="#fff" stroke-width="3"><circle cx="36" cy="114" r="6" stroke="#1677e8"/><circle cx="36" cy="162" r="6" stroke="#1677e8"/><circle cx="65" cy="210" r="6" stroke="#7450c8"/><circle cx="94" cy="258" r="6" stroke="#23926b"/><circle cx="65" cy="306" r="6" stroke="#7450c8"/><circle cx="36" cy="354" r="6" stroke="#1677e8"/><circle cx="36" cy="402" r="6" stroke="#1677e8"/></g>
+        <g font-size="7" font-weight="700"><rect x="50" y="103" width="47" height="18" rx="9" fill="#e8f3ff"/><text x="59" y="115" fill="#1677e8">HEAD · main</text><rect x="75" y="199" width="52" height="18" rx="9" fill="#f1ecff"/><text x="84" y="211" fill="#6542ae">feature/ui</text><rect x="71" y="295" width="49" height="18" rx="9" fill="#eaf7f1"/><text x="79" y="307" fill="#197653">已合并</text></g>
+        <g fill="#263448"><text x="160" y="111" font-size="10" font-weight="700">修复提交画布大量历史显示</text><text x="160" y="126" font-size="8" fill="#7c8999">lele · 8f29a41 · 刚刚</text><text x="160" y="159" font-size="10" font-weight="700">优化传统分支泳道路由</text><text x="160" y="174" font-size="8" fill="#7c8999">lele · 51c7ef2 · 12 分钟前</text><text x="160" y="207" font-size="10" font-weight="700">合并 feature/ui</text><text x="160" y="222" font-size="8" fill="#7c8999">Merge · 签名已验证</text><text x="160" y="255" font-size="10" font-weight="700">远程自动化更新</text><text x="160" y="270" font-size="8" fill="#7c8999">origin/automation · 1 小时前</text><text x="160" y="303" font-size="10" font-weight="700">调整提交卡片密度</text><text x="160" y="318" font-size="8" fill="#7c8999">feature/ui · 昨天</text><text x="160" y="351" font-size="10" font-weight="700">发布 v2.0</text><text x="160" y="366" font-size="8" fill="#7c8999">main · tag v2.0</text><text x="160" y="399" font-size="10" font-weight="700">初始化仓库</text><text x="160" y="414" font-size="8" fill="#7c8999">main · 最早提交</text></g>
+        <rect x="8" y="398" width="126" height="24" rx="12" fill="#fff" stroke="#d5dfeb"/><text x="19" y="414" font-size="8" fill="#69798d">主干固定 · 其余分支 +12</text><path d="M114 410h10" stroke="#1677e8" stroke-width="2"/>
+      </svg>
+    </div>
+    <div class="card-copy"><h3>A · 固定图轨 + 完整提交列表</h3><p>左侧只负责拓扑，右侧只负责阅读。当前主干固定，常用分支优先显示，远程分支使用虚线；分支过多时折叠为“+N”，点击后搜索展开。</p></div>
+  </div>
+
+  <div class="design-card" data-choice="traditional-b" onclick="toggleSelect(this)">
+    <div class="preview">
+      <svg viewBox="0 0 360 430" width="100%" height="100%" class="ui-text">
+        <rect width="360" height="430" fill="#fff"/><rect width="360" height="44" fill="#f8fafc"/><text x="18" y="27" font-size="11" font-weight="700" fill="#263448">全泳道模式</text><text x="277" y="27" font-size="8" fill="#728198">Shift + 滚轮</text>
+        <rect x="0" y="44" width="230" height="386" fill="#fbfcfe"/><path d="M230 44V430" stroke="#dce4ed"/><g stroke="#e7edf4"><path d="M0 100H360M0 156H360M0 212H360M0 268H360M0 324H360M0 380H360"/></g>
+        <g fill="none" stroke-width="3" stroke-linecap="round"><path d="M34 70V405" stroke="#1677e8"/><path d="M34 125C34 139 68 139 68 153V270C68 284 34 284 34 298" stroke="#7450c8"/><path d="M34 181C34 195 104 195 104 209V326C104 340 34 340 34 354" stroke="#23926b" stroke-dasharray="5 3"/><path d="M68 237C68 251 140 251 140 265V382" stroke="#e1922f"/></g>
+        <g fill="#fff" stroke-width="3"><circle cx="34" cy="72" r="6" stroke="#1677e8"/><circle cx="68" cy="128" r="6" stroke="#7450c8"/><circle cx="104" cy="184" r="6" stroke="#23926b"/><circle cx="140" cy="240" r="6" stroke="#e1922f"/><circle cx="68" cy="296" r="6" stroke="#7450c8"/><circle cx="34" cy="352" r="6" stroke="#1677e8"/><circle cx="34" cy="404" r="6" stroke="#1677e8"/></g>
+        <g font-size="7" font-weight="700"><text x="22" y="61" fill="#1677e8">main</text><text x="55" y="117" fill="#7450c8">ui</text><text x="89" y="173" fill="#23926b">origin</text><text x="126" y="229" fill="#c47a18">release</text></g>
+        <g font-size="9" fill="#263448" font-weight="700"><text x="246" y="76">最新提交</text><text x="246" y="132">功能分支</text><text x="246" y="188">远程更新</text><text x="246" y="244">发布分支</text><text x="246" y="300">合并功能</text><text x="246" y="356">版本发布</text><text x="246" y="408">初始提交</text></g>
+        <rect x="12" y="397" width="206" height="20" rx="10" fill="#eef2f7"/><rect x="15" y="400" width="88" height="14" rx="7" fill="#81b9f4"/><path d="M202 407l5-5m-5 5 5 5" stroke="#69798d"/>
+      </svg>
+    </div>
+    <div class="card-copy"><h3>B · 全泳道横向浏览</h3><p>所有分支始终同时显示，底部提供明确横向滚动条。拓扑最完整，但仓库分支很多时需要频繁左右移动，提交信息区域会变窄。</p></div>
+  </div>
+
+  <div class="design-card" data-choice="traditional-c" onclick="toggleSelect(this)">
+    <div class="preview">
+      <svg viewBox="0 0 360 430" width="100%" height="100%" class="ui-text">
+        <rect width="360" height="430" fill="#fff"/><rect width="360" height="48" fill="#f8fafc"/><rect x="14" y="11" width="150" height="27" rx="9" fill="#fff" stroke="#d5dfea"/><circle cx="29" cy="24" r="4" fill="#1677e8"/><text x="40" y="28" font-size="9" font-weight="700" fill="#263448">main + 直接相关分支</text><rect x="246" y="11" width="100" height="27" rx="9" fill="#edf5ff"/><text x="267" y="28" font-size="8" font-weight="700" fill="#1677e8">显示全部分支</text>
+        <rect x="16" y="63" width="328" height="52" rx="12" fill="#f7f9fc" stroke="#e0e7ef"/><path d="M43 72V106" stroke="#1677e8" stroke-width="3"/><circle cx="43" cy="88" r="6" fill="#fff" stroke="#1677e8" stroke-width="3"/><text x="65" y="83" font-size="10" font-weight="700" fill="#263448">修复提交图交互</text><text x="65" y="99" font-size="8" fill="#7a8798">main · lele · 2 分钟前</text>
+        <rect x="16" y="126" width="328" height="104" rx="12" fill="#f5f0ff" stroke="#dfd3f8"/><text x="29" y="146" font-size="8" font-weight="700" fill="#6847ae">功能分支 · 18 个提交</text><path d="M43 156V214" stroke="#7450c8" stroke-width="3"/><circle cx="43" cy="172" r="6" fill="#fff" stroke="#7450c8" stroke-width="3"/><circle cx="43" cy="204" r="6" fill="#fff" stroke="#7450c8" stroke-width="3"/><text x="65" y="175" font-size="9" font-weight="700" fill="#263448">重构布局算法</text><text x="65" y="207" font-size="9" font-weight="700" fill="#263448">增加语义缩放</text><rect x="270" y="139" width="58" height="20" rx="10" fill="#fff"/><text x="284" y="152" font-size="7" font-weight="700" fill="#6847ae">收起分支</text>
+        <rect x="16" y="241" width="328" height="52" rx="12" fill="#f7f9fc" stroke="#e0e7ef"/><path d="M43 250V284" stroke="#1677e8" stroke-width="3"/><circle cx="43" cy="267" r="6" fill="#fff" stroke="#1677e8" stroke-width="3"/><text x="65" y="262" font-size="10" font-weight="700" fill="#263448">合并 feature/canvas</text><text x="65" y="278" font-size="8" fill="#7a8798">main · Merge · 签名已验证</text>
+        <rect x="16" y="304" width="328" height="42" rx="12" fill="#eef8f3" stroke="#d4eadf"/><text x="29" y="329" font-size="9" font-weight="700" fill="#237b59">远程分支已折叠 · origin/automation ×32</text><text x="303" y="329" font-size="12" fill="#237b59">⌄</text>
+        <rect x="16" y="357" width="328" height="52" rx="12" fill="#f7f9fc" stroke="#e0e7ef"/><path d="M43 366V400" stroke="#1677e8" stroke-width="3"/><circle cx="43" cy="383" r="6" fill="#fff" stroke="#1677e8" stroke-width="3"/><text x="65" y="378" font-size="10" font-weight="700" fill="#263448">发布 v2.0</text><text x="65" y="394" font-size="8" fill="#7a8798">main · tag v2.0</text>
+      </svg>
+    </div>
+    <div class="card-copy"><h3>C · 分支章节列表</h3><p>把分支历史做成可折叠章节，更像结构化日志而不是连续拓扑图。阅读舒服，但复杂 Merge 的全局关系不如 A、B 直观。</p></div>
+  </div>
+</div>
+
+<div class="hint">推荐 A：它最接近 GitKraken 的高密度阅读体验，同时避免“所有泳道一起挤压”和“长线斜穿节点”。点击方案后告诉我是否确认。</div>

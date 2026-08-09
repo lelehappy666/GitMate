@@ -1,0 +1,73 @@
+<style>
+  .layout-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:22px}
+  .design-card{border:1px solid #d8e1ec;border-radius:18px;background:#fff;overflow:hidden;cursor:pointer;transition:.2s;box-shadow:0 8px 24px rgba(18,38,63,.06)}
+  .design-card:hover{transform:translateY(-2px);box-shadow:0 14px 30px rgba(18,38,63,.12)}
+  .design-card.selected{border:2px solid #1677e8;box-shadow:0 0 0 4px rgba(22,119,232,.12)}
+  .preview{height:390px;background:#f8fafc;border-bottom:1px solid #e4eaf1;position:relative;overflow:hidden}
+  .card-copy{padding:18px}.card-copy h3{margin:0 0 8px;font-size:18px}.card-copy p{margin:0;color:#617086;line-height:1.55;font-size:13px}
+  .recommended{position:absolute;top:14px;left:14px;background:#1677e8;color:#fff;border-radius:999px;padding:6px 10px;font-size:11px;font-weight:700;z-index:2}
+  .toolbar{position:absolute;top:12px;right:12px;display:flex;gap:6px}.pill{height:24px;padding:0 8px;border:1px solid #d8e1ec;border-radius:7px;background:white;font-size:9px;display:flex;align-items:center;color:#526174}
+  .mini-map{position:absolute;right:12px;bottom:12px;width:58px;height:96px;border:1px solid #ccd7e4;border-radius:9px;background:rgba(255,255,255,.94)}
+  .time-label{font-size:8px;fill:#8a98aa}.node-title{font-size:8px;fill:#263448;font-weight:650}.node-meta{font-size:6.5px;fill:#8090a4}
+  .hint{margin-top:18px;padding:12px 14px;border-radius:12px;background:#eef6ff;color:#275b91;font-size:13px}
+  @media(max-width:1050px){.layout-grid{grid-template-columns:1fr}.preview{height:350px}}
+</style>
+
+<h2>大量提交时，画布应该怎样组织？</h2>
+<p class="subtitle">以下三种方案都保留“最早在上、最新在下”、所有本地与远程分支，以及现有分组与版本区域。请选择你最喜欢的观看方式。</p>
+
+<div class="layout-grid">
+  <div class="design-card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="preview">
+      <div class="recommended">推荐 · 自适应树干</div>
+      <div class="toolbar"><div class="pill">主分支</div><div class="pill">密度 3 档</div></div>
+      <svg viewBox="0 0 330 390" width="100%" height="100%">
+        <defs><filter id="s"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity=".12"/></filter></defs>
+        <g stroke="#e7edf4" stroke-width="1"><path d="M0 72H330M0 152H330M0 232H330M0 312H330"/></g>
+        <text x="10" y="68" class="time-label">v1.0</text><text x="10" y="148" class="time-label">v1.5</text><text x="10" y="228" class="time-label">v2.0</text><text x="10" y="308" class="time-label">现在</text>
+        <path d="M165 30V350" stroke="#1473e6" stroke-width="5" stroke-linecap="round"/>
+        <path d="M165 92 C165 108 95 106 95 126 V185 C95 203 165 194 165 214" fill="none" stroke="#7450c8" stroke-width="3.5" stroke-linecap="round"/>
+        <path d="M165 146 C165 161 244 158 244 177 V252 C244 270 165 266 165 286" fill="none" stroke="#1c9368" stroke-width="3.5" stroke-linecap="round"/>
+        <path d="M165 248 C165 260 72 258 72 278 V323" fill="none" stroke="#e28c23" stroke-width="3" stroke-linecap="round"/>
+        <g fill="white" stroke-width="3"><circle cx="165" cy="44" r="7" stroke="#1473e6"/><circle cx="165" cy="92" r="7" stroke="#1473e6"/><circle cx="95" cy="126" r="7" stroke="#7450c8"/><circle cx="95" cy="164" r="7" stroke="#7450c8"/><circle cx="165" cy="214" r="7" stroke="#1473e6"/><circle cx="244" cy="177" r="7" stroke="#1c9368"/><circle cx="244" cy="216" r="7" stroke="#1c9368"/><circle cx="244" cy="252" r="7" stroke="#1c9368"/><circle cx="165" cy="286" r="7" stroke="#1473e6"/><circle cx="72" cy="278" r="7" stroke="#e28c23"/><circle cx="72" cy="315" r="7" stroke="#e28c23"/><circle cx="165" cy="350" r="8" stroke="#1473e6"/></g>
+        <g filter="url(#s)"><rect x="176" y="32" width="125" height="30" rx="8" fill="white"/><text x="185" y="45" class="node-title">初始化仓库与同步</text><text x="185" y="55" class="node-meta">main · 3a81f22</text><rect x="105" y="114" width="102" height="28" rx="8" fill="white"/><text x="114" y="127" class="node-title">登录重构 ×12</text><text x="114" y="136" class="node-meta">功能分支摘要</text><rect x="132" y="273" width="120" height="30" rx="8" fill="white"/><text x="141" y="286" class="node-title">合并发布版本</text><text x="141" y="296" class="node-meta">main · v2.0</text></g>
+      </svg>
+      <div class="mini-map"><svg viewBox="0 0 58 96"><path d="M29 8V88" stroke="#1473e6" stroke-width="2"/><path d="M29 28C18 31 15 38 17 52C18 61 29 60 29 67" fill="none" stroke="#7450c8"/><rect x="5" y="38" width="48" height="24" rx="3" fill="rgba(22,119,232,.08)" stroke="#1677e8"/></svg></div>
+    </div>
+    <div class="card-copy"><h3>A · 自适应树干 + 分支束</h3><p>主干始终居中。短分支完整展开，长分支自动压缩为带数量的“分支束”；靠近或点击后再展开。适合几百到几万条提交。</p></div>
+  </div>
+
+  <div class="design-card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="preview">
+      <div class="toolbar"><div class="pill">时间分段</div><div class="pill">月 / 版本</div></div>
+      <svg viewBox="0 0 330 390" width="100%" height="100%">
+        <g stroke="#e7edf4"><path d="M0 70H330M0 155H330M0 240H330M0 325H330"/></g>
+        <rect x="18" y="18" width="294" height="58" rx="12" fill="#edf5ff"/><rect x="18" y="92" width="294" height="102" rx="12" fill="#f6f1ff"/><rect x="18" y="210" width="294" height="132" rx="12" fill="#eef9f4"/>
+        <text x="31" y="38" class="node-title">v1.0 · 24 个提交</text><text x="31" y="108" class="node-title">v1.5 · 86 个提交</text><text x="31" y="226" class="node-title">v2.0 · 142 个提交</text>
+        <path d="M82 44V320" stroke="#1473e6" stroke-width="4"/><path d="M82 122C128 122 136 145 136 177C136 193 82 197 82 216" fill="none" stroke="#7450c8" stroke-width="3"/><path d="M82 245C180 245 202 268 202 315" fill="none" stroke="#1c9368" stroke-width="3"/>
+        <g fill="white" stroke-width="3"><circle cx="82" cy="44" r="7" stroke="#1473e6"/><circle cx="82" cy="122" r="7" stroke="#1473e6"/><circle cx="136" cy="152" r="7" stroke="#7450c8"/><circle cx="82" cy="216" r="7" stroke="#1473e6"/><circle cx="82" cy="245" r="7" stroke="#1473e6"/><circle cx="202" cy="276" r="7" stroke="#1c9368"/><circle cx="202" cy="315" r="7" stroke="#1c9368"/></g>
+        <g><rect x="225" y="27" width="68" height="24" rx="12" fill="#fff"/><text x="239" y="42" class="node-title">展开版本</text><rect x="225" y="100" width="68" height="24" rx="12" fill="#fff"/><text x="239" y="115" class="node-title">已展开</text><rect x="225" y="218" width="68" height="24" rx="12" fill="#fff"/><text x="239" y="233" class="node-title">展开版本</text></g>
+      </svg>
+    </div>
+    <div class="card-copy"><h3>B · 版本时间段折叠</h3><p>按 Release、Tag 或月份把历史切成纵向章节，默认只展开当前章节。结构最整齐，但跨版本分支关系需要展开后查看。</p></div>
+  </div>
+
+  <div class="design-card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="preview">
+      <div class="toolbar"><div class="pill">聚焦 feature/sync</div></div>
+      <svg viewBox="0 0 330 390" width="100%" height="100%">
+        <path d="M72 28V360" stroke="#b8c4d1" stroke-width="3"/><path d="M258 28V360" stroke="#d5dce5" stroke-width="3"/>
+        <rect x="104" y="18" width="124" height="354" rx="18" fill="#edf5ff" stroke="#b9d8fb"/>
+        <path d="M166 38V352" stroke="#1473e6" stroke-width="5"/>
+        <path d="M166 94C126 100 122 127 122 151C122 178 166 178 166 202" fill="none" stroke="#7450c8" stroke-width="3.5"/>
+        <g fill="white" stroke-width="3"><circle cx="166" cy="54" r="7" stroke="#1473e6"/><circle cx="166" cy="94" r="7" stroke="#1473e6"/><circle cx="122" cy="128" r="7" stroke="#7450c8"/><circle cx="122" cy="163" r="7" stroke="#7450c8"/><circle cx="166" cy="202" r="7" stroke="#1473e6"/><circle cx="166" cy="254" r="7" stroke="#1473e6"/><circle cx="166" cy="316" r="7" stroke="#1473e6"/><circle cx="166" cy="352" r="7" stroke="#1473e6"/></g>
+        <g fill="#9aa8b8"><circle cx="72" cy="54" r="4"/><circle cx="72" cy="105" r="4"/><circle cx="72" cy="158" r="4"/><circle cx="72" cy="250" r="4"/><circle cx="72" cy="335" r="4"/><circle cx="258" cy="72" r="4"/><circle cx="258" cy="181" r="4"/><circle cx="258" cy="270" r="4"/><circle cx="258" cy="340" r="4"/></g>
+        <text x="18" y="18" class="time-label">其他分支</text><text x="120" y="34" class="node-title">当前上下文</text><text x="244" y="18" class="time-label">远程分支</text>
+        <rect x="176" y="238" width="110" height="35" rx="9" fill="white" stroke="#c7d7ea"/><text x="185" y="253" class="node-title">修复同步冲突</text><text x="185" y="264" class="node-meta">feature/sync · 62d1b61</text>
+      </svg>
+    </div>
+    <div class="card-copy"><h3>C · 焦点透镜</h3><p>只完整显示当前分支及其直接父子关系，其他分支降级为两侧细线和标记。阅读最专注，但默认不会同时展开全部拓扑。</p></div>
+  </div>
+</div>
+
+<div class="hint">点击一个方案进行选择。建议优先选择 A：它仍保留完整自由画布，同时用分支束和三级语义缩放解决大量提交的密度问题。</div>

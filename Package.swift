@@ -26,7 +26,13 @@ let package = Package(
         .executableTarget(
             name: "GitMateCoreTestsRunner",
             dependencies: ["GitMateCore"],
-            path: "Tests/GitMateCoreTests"
+            path: "Tests/GitMateCoreTests",
+            swiftSettings: [
+                .define(
+                    "GITMATE_TESTING_INTERNALS",
+                    .when(configuration: .debug)
+                )
+            ]
         )
     ]
 )

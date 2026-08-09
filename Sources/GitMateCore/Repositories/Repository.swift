@@ -9,6 +9,7 @@ public struct Repository: Identifiable, Equatable, Codable, Sendable {
     public let sizeInKilobytes: Int
     public let cloneURL: URL
     public let ownerAvatarURL: URL?
+    public let primaryLanguage: String?
 
     public init(
         id: Int64,
@@ -18,7 +19,8 @@ public struct Repository: Identifiable, Equatable, Codable, Sendable {
         defaultBranch: String,
         sizeInKilobytes: Int,
         cloneURL: URL,
-        ownerAvatarURL: URL?
+        ownerAvatarURL: URL?,
+        primaryLanguage: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -28,5 +30,28 @@ public struct Repository: Identifiable, Equatable, Codable, Sendable {
         self.sizeInKilobytes = sizeInKilobytes
         self.cloneURL = cloneURL
         self.ownerAvatarURL = ownerAvatarURL
+        self.primaryLanguage = primaryLanguage
+    }
+
+    public var safeLocalDirectoryName: String {
+        let invalid = CharacterSet(charactersIn: "/:\\")
+        let directoryName = name.components(separatedBy: invalid).joined(separator: "-")
+        if directoryName == "." || directoryName == ".." {
+            return "repository-\(directoryName)"
+        }
+        return directoryName
+    }
+
+    public var normalizedFullName: String {
+        Self.normalizedFullName(fullName)
+    }
+
+    public static func normalizedFullName(_ fullName: String) -> String {
+        fullName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: Locale(identifier: "en_US_POSIX")
+            )
     }
 }

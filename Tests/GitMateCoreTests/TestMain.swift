@@ -7,13 +7,64 @@ struct GitMateCoreTestsMain {
             + onboardingStateTests
             + githubDeviceFlowTests
             + githubAPITests
+            + githubWorkspaceAPITests
             + enterpriseConnectionTests
             + credentialStoreTests
             + repositorySyncServiceTests
             + gitProgressParserTests
+            + repositorySyncPreferenceTests
+            + repositorySyncPreferenceStoreTests
             + syncProgressTests
             + syncDestinationTests
             + onboardingViewModelTests
+            + workspaceRouteTests
+            + repositorySwitcherModelTests
+            + localRepositoryCatalogTests
+            + importedLocalRepositoryStoreTests
+            + localRepositoryImporterTests
+            + workspaceRepositoryClassifierTests
+            + localGitReaderTests
+            + workspaceContentServiceTests
+            + dashboardViewModelTests
+            + cloudRepositoryViewModelTests
+            + repositoryWallViewModelTests
+            + repositoryOverviewViewModelTests
+            + readmeViewModelTests
+            + filesCommitsViewModelTests
+            + filePreviewDescriptorTests
+            + fileTreePresentationTests
+            + repositoryCoverLoaderTests
+            + repositoryCoverResolverTests
+            + repositoryCoverViewportSchedulerTests
+            + readmeBlockParserTests
+            + repositoryCoverExtractorTests
+            + commitGraphBranchCatalogTests
+            + commitGraphBranchBundleTests
+            + commitGraphSearchIndexTests
+            + commitGraphLayoutTests
+            + commitGraphLaneTopologyTests
+            + commitGraphTraditionalLayoutTests
+            + commitGraphTraditionalBranchProjectionTests
+            + commitGraphTraditionalSegmentProjectionTests
+            + commitGraphTraditionalPublicationTests
+            + commitGraphTraditionalViewportTests
+            + commitGraphAuthorAvatarTests
+            + commitGraphTraditionalContentViewportTests
+            + commitGraphTraditionalSplitLayoutTests
+            + commitGraphPathGeometryTests
+            + commitGraphTextFitterTests
+            + commitGraphGroupingTests
+            + commitGraphSceneProjectorTests
+            + commitGraphRenderIndexTests
+            + commitGraphLevelOfDetailTests
+            + commitGraphSceneStoreTests
+            + commitGraphViewportProjectorTests
+            + commitGraphViewModelTests
+            + commitGraphIntegrityValidatorTests
+            + commitGraphSnapshotStoreTests
+            + commitGraphRefreshCoordinatorTests
+            + commitGraphSceneReconcilerTests
+            + commitGraphPerformanceTests
         var failedCount = 0
 
         for test in tests {

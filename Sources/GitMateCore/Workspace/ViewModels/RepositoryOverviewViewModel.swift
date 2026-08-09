@@ -1,0 +1,377 @@
+import Foundation
+import Observation
+
+public protocol RepositoryContentLoading: Sendable {
+    func repositoryContent(
+        repository: Repository,
+        account: GitHubAccount,
+        token: String
+    ) async throws -> RepositoryContent
+
+    func repositoryContentUpdates(
+        repository: Repository,
+        account: GitHubAccount,
+        token: String
+    ) -> AsyncThrowingStream<RepositoryContentUpdate, Error>
+}
+
+public extension RepositoryContentLoading {
+    func repositoryContentUpdates(
+        repository: Repository,
+        account: GitHubAccount,
+        token: String
+    ) -> AsyncThrowingStream<RepositoryContentUpdate, Error> {
+        AsyncThrowingStream { continuation in
+            let producer = Task {
+                do {
+                    let content = try await repositoryContent(
+                        repository: repository,
+                        account: account,
+                        token: token
+                    )
+                    try Task.checkCancellation()
+                    continuation.yield(
+                        RepositoryContentUpdate(
+                            content: content,
+                            freshness: .refreshed,
+                            isFinal: true
+                        )
+                    )
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in
+                producer.cancel()
+            }
+        }
+    }
+}
+
+extension WorkspaceContentService: RepositoryContentLoading {}
+
+public struct AuthorizationObservingRepositoryLoader:
+    RepositoryContentLoading
+{
+    private let loader: any RepositoryContentLoading
+    private let onAuthorizationRequired:
+        @MainActor @Sendable () -> Void
+
+    public init(
+        loader: any RepositoryContentLoading,
+        onAuthorizationRequired:
+            @escaping @MainActor @Sendable () -> Void
+    ) {
+        self.loader = loader
+        self.onAuthorizationRequired = onAuthorizationRequired
+    }
+
+    public func repositoryContent(
+        repository: Repository,
+        account: GitHubAccount,
+        token: String
+    ) async throws -> RepositoryContent {
+        let content = try await loader.repositoryContent(
+            repository: repository,
+            account: account,
+            token: token
+        )
+        await observeAuthorization(in: content)
+        return content
+    }
+
+    public func repositoryContentUpdates(
+        repository: Repository,
+        account: GitHubAccount,
+        token: String
+    ) -> AsyncThrowingStream<RepositoryContentUpdate, Error> {
+        AsyncThrowingStream { continuation in
+            let producer = Task {
+                do {
+                    for try await update in loader.repositoryContentUpdates(
+                        repository: repository,
+                        account: account,
+                        token: token
+                    ) {
+                        try Task.checkCancellation()
+                        await observeAuthorization(in: update.content)
+                        continuation.yield(update)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in
+                producer.cancel()
+            }
+        }
+    }
+
+    private func observeAuthorization(
+        in content: RepositoryContent
+    ) async {
+        guard content.connectivity == .authorizationRequired else {
+            return
+        }
+        await onAuthorizationRequired()
+    }
+}
+
+public enum RepositoryOverviewLoadPhase: Equatable, Sendable {
+    case idle
+    case loading
+    case loaded
+    case failed(message: String)
+}
+
+public struct WorkspaceRetryAction: Equatable, Sendable {
+    public let title: String
+    public let accessibilityLabel: String
+    public let accessibilityIdentifier: String
+
+    public init(
+        title: String,
+        accessibilityLabel: String,
+        accessibilityIdentifier: String
+    ) {
+        self.title = title
+        self.accessibilityLabel = accessibilityLabel
+        self.accessibilityIdentifier = accessibilityIdentifier
+    }
+}
+
+public struct RepositoryOverviewState: Equatable, Sendable {
+    public var loadPhase: RepositoryOverviewLoadPhase
+    public var repository: Repository
+    public var localAvailability: LocalRepositoryAvailability
+    public var localStatus: LocalRepositoryStatus?
+    public var onlineSummary: RepositoryOnlineSummary?
+    public var recentCommits: [GitCommit]
+    public var readmePreview: READMEDocument?
+    public var connectivity: WorkspaceConnectivity
+    public var panelErrors: [WorkspacePanelError]
+    public var lastInspectedAt: Date?
+    public var lastSynchronizedAt: Date?
+    public var localSizeInBytes: Int64
+
+    public init(repository: Repository) {
+        loadPhase = .idle
+        self.repository = RepositoryPresentationSanitizer.repository(repository)
+        localAvailability = .missing
+        localStatus = nil
+        onlineSummary = nil
+        recentCommits = []
+        readmePreview = nil
+        connectivity = .online
+        panelErrors = []
+        lastInspectedAt = nil
+        lastSynchronizedAt = nil
+        localSizeInBytes = 0
+    }
+
+    public var needsResync: Bool {
+        localAvailability != .available
+    }
+
+    public var uncommittedChangeCount: Int {
+        guard let localStatus else { return 0 }
+        return localStatus.stagedCount
+            + localStatus.unstagedCount
+            + localStatus.untrackedCount
+            + localStatus.conflictCount
+    }
+
+    public var quickRoutes: [WorkspaceRoute] {
+        [
+            .readme(repositoryID: repository.id),
+            .filesAndCommits(repositoryID: repository.id),
+            .commitGraph(repositoryID: repository.id)
+        ]
+    }
+
+    public var retryAction: WorkspaceRetryAction? {
+        guard case .failed = loadPhase else {
+            return nil
+        }
+        return WorkspaceRetryAction(
+            title: "重试",
+            accessibilityLabel: "重新加载仓库总览",
+            accessibilityIdentifier: "workspace.repository.overview.retry"
+        )
+    }
+}
+
+@MainActor
+@Observable
+public final class RepositoryOverviewViewModel {
+    public private(set) var state: RepositoryOverviewState
+
+    @ObservationIgnored
+    private let repository: Repository
+
+    @ObservationIgnored
+    private let account: GitHubAccount
+
+    @ObservationIgnored
+    private let token: String
+
+    @ObservationIgnored
+    private let loader: any RepositoryContentLoading
+
+    @ObservationIgnored
+    private let parser: any READMEParsing
+
+    @ObservationIgnored
+    private var isLoading = false
+
+    @ObservationIgnored
+    private var hasLoadedSuccessfully = false
+
+    public init(
+        repository: Repository,
+        account: GitHubAccount,
+        token: String,
+        loader: any RepositoryContentLoading,
+        parser: any READMEParsing = READMEBlockParser()
+    ) {
+        self.repository = repository
+        self.account = account
+        self.token = token
+        self.loader = loader
+        self.parser = parser
+        state = RepositoryOverviewState(repository: repository)
+    }
+
+    public func load() async {
+        guard !isLoading, !hasLoadedSuccessfully else {
+            return
+        }
+
+        let stateBeforeLoad = state
+        let hasVisibleContent = state.loadPhase == .loaded
+        isLoading = true
+        if !hasVisibleContent {
+            state.loadPhase = .loading
+        }
+        defer { isLoading = false }
+        var hasAppliedContent = hasVisibleContent
+
+        do {
+            try Task.checkCancellation()
+            for try await update in loader.repositoryContentUpdates(
+                repository: repository,
+                account: account,
+                token: token
+            ) {
+                try Task.checkCancellation()
+                state = try makeState(from: update.content)
+                hasAppliedContent = true
+                if update.isFinal {
+                    hasLoadedSuccessfully = true
+                }
+            }
+            try Task.checkCancellation()
+        } catch is CancellationError {
+            if !hasAppliedContent {
+                state = stateBeforeLoad
+            }
+        } catch {
+            if hasAppliedContent {
+                let backgroundError = WorkspacePanelError(
+                    panel: .onlineSummary,
+                    repositoryID: repository.id,
+                    message: "后台刷新失败，已保留缓存内容。"
+                )
+                if !state.panelErrors.contains(backgroundError) {
+                    state.panelErrors.append(backgroundError)
+                }
+            } else {
+                var failedState = stateBeforeLoad
+                failedState.loadPhase = .failed(
+                    message: "暂时无法加载仓库总览，请稍后重试。"
+                )
+                state = failedState
+            }
+        }
+    }
+
+    private func makeState(
+        from content: RepositoryContent
+    ) throws -> RepositoryOverviewState {
+        var nextState = RepositoryOverviewState(
+            repository: content.repository
+        )
+        nextState.loadPhase = .loaded
+        nextState.localAvailability = content.localRecord.availability
+        nextState.localStatus = content.localStatus
+        nextState.onlineSummary = content.onlineSummary
+        nextState.recentCommits = content.recentCommits
+        nextState.connectivity = content.connectivity
+        nextState.panelErrors = content.panelErrors.map {
+            WorkspacePanelError(
+                panel: $0.panel,
+                repositoryID: $0.repositoryID,
+                message: sanitizedText($0.message)
+            )
+        }
+        nextState.lastInspectedAt = content.localRecord.lastInspectedAt
+        nextState.localSizeInBytes = content.localRecord.localSizeInBytes
+
+        if let readme = content.readme {
+            let document = try parser.parse(
+                readme.markdown,
+                baseURL: RepositoryPresentationSanitizer.remoteURL(
+                    readme.downloadURL
+                )
+            )
+            let sanitized = READMEPresentationSanitizer.sanitize(document)
+            if !sanitized.blocks.isEmpty {
+                nextState.readmePreview = sanitized
+            }
+        }
+        return nextState
+    }
+
+    private func sanitizedText(_ value: String) -> String {
+        guard !token.isEmpty else { return value }
+        return value.replacingOccurrences(of: token, with: "••••")
+    }
+}
+
+enum RepositoryPresentationSanitizer {
+    static func repository(_ repository: Repository) -> Repository {
+        Repository(
+            id: repository.id,
+            name: repository.name,
+            fullName: repository.fullName,
+            isPrivate: repository.isPrivate,
+            defaultBranch: repository.defaultBranch,
+            sizeInKilobytes: repository.sizeInKilobytes,
+            cloneURL: remoteURL(repository.cloneURL)
+                ?? URL(string: "https://invalid.invalid/")!,
+            ownerAvatarURL: remoteURL(repository.ownerAvatarURL)
+        )
+    }
+
+    static func remoteURL(_ url: URL?) -> URL? {
+        guard let url,
+              var components = URLComponents(
+                  url: url,
+                  resolvingAgainstBaseURL: false
+              ),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              components.host?.isEmpty == false
+        else {
+            return nil
+        }
+        components.scheme = scheme
+        components.user = nil
+        components.password = nil
+        components.query = nil
+        components.fragment = nil
+        return components.url
+    }
+}

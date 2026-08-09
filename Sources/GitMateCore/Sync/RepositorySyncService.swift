@@ -43,6 +43,24 @@ public protocol RepositorySyncService: Sendable {
 }
 
 public extension RepositorySyncService {
+    func sync(
+        repositories: [Repository],
+        preferences: [RepositorySyncPreference],
+        destination: URL,
+        accessToken: String?
+    ) -> AsyncThrowingStream<SyncEvent, Error> {
+        sync(
+            repositories: repositories,
+            selectedRepositoryIDs: Set(
+                preferences
+                    .filter(\.shouldSyncInitially)
+                    .map(\.repositoryID)
+            ),
+            destination: destination,
+            accessToken: accessToken
+        )
+    }
+
     func pause() throws {
         throw CommandControlError.noActiveProcess
     }

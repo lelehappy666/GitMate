@@ -117,6 +117,18 @@ private struct PreviewGitHubAPI: GitHubAPI {
     func repositories(token: String) async throws -> [Repository] {
         []
     }
+
+    func repositoryPage(
+        token: String,
+        page: Int,
+        perPage: Int
+    ) async throws -> GitHubRepositoryPage {
+        GitHubRepositoryPage(
+            repositories: [],
+            page: max(page, 1),
+            hasNextPage: false
+        )
+    }
 }
 
 private struct PreviewAPIProvider: GitHubAPIProviding {

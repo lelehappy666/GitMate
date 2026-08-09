@@ -221,26 +221,45 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
 
             let clock = ContinuousClock()
             var lastUpdate: ContinuousClock.Instant?
+            var standardOutputBuffer = GitActivityDataBuffer()
+            var standardErrorBuffer = GitActivityDataBuffer()
+
+            func reportActivities(_ values: [String]) {
+                for value in values {
+                    let activity = Self.normalizedActivity(value)
+                    guard !activity.isEmpty else { continue }
+
+                    let now = clock.now
+                    if lastUpdate == nil
+                        || now - lastUpdate! >= .milliseconds(120) {
+                        onActivity(activity)
+                        lastUpdate = now
+                    }
+                }
+            }
+
             for try await output in executor.execute(
                 arguments: arguments,
                 environment: environment
             ) {
                 try Task.checkCancellation()
-                let value: String
                 switch output {
-                case let .standardOutput(text), let .standardError(text):
-                    value = text
-                }
-                let activity = Self.normalizedActivity(value)
-                guard !activity.isEmpty else { continue }
-
-                let now = clock.now
-                if lastUpdate == nil
-                    || now - lastUpdate! >= .milliseconds(120) {
-                    onActivity(activity)
-                    lastUpdate = now
+                case let .standardOutput(text):
+                    reportActivities(
+                        standardOutputBuffer.consume(Data(text.utf8))
+                    )
+                case let .standardError(text):
+                    reportActivities(
+                        standardErrorBuffer.consume(Data(text.utf8))
+                    )
+                case let .standardOutputData(data):
+                    reportActivities(standardOutputBuffer.consume(data))
+                case let .standardErrorData(data):
+                    reportActivities(standardErrorBuffer.consume(data))
                 }
             }
+            reportActivities(standardOutputBuffer.flush())
+            reportActivities(standardErrorBuffer.flush())
         } catch let CommandExecutionError.exitStatus(_, message) {
             throw Self.mapFailure(message: message)
         } catch {
@@ -306,7 +325,85 @@ public final class GitRepositorySyncService: RepositorySyncService, @unchecked S
         let normalized = value
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return "" }
-        return String(normalized.prefix(180))
+        let pattern = #"(https?://)[^/@\s]+@"#
+        guard let expression = try? NSRegularExpression(pattern: pattern) else {
+            return String(normalized.prefix(180))
+        }
+        let range = NSRange(
+            normalized.startIndex..<normalized.endIndex,
+            in: normalized
+        )
+        let redacted = expression.stringByReplacingMatches(
+            in: normalized,
+            range: range,
+            withTemplate: "$1***@"
+        )
+        return String(redacted.prefix(180))
     }
 
+}
+
+private struct GitActivityDataBuffer {
+    private static let maximumPendingByteCount = 16_384
+    private var pending = Data()
+    private var discardsUntilSeparator = false
+
+    mutating func consume(_ data: Data) -> [String] {
+        pending.append(data)
+        var values: [String] = []
+
+        if discardsUntilSeparator {
+            guard let separator = pending.firstIndex(
+                where: { $0 == 0x0A || $0 == 0x0D }
+            ) else {
+                pending.removeAll(keepingCapacity: true)
+                return []
+            }
+            pending.removeSubrange(...separator)
+            while pending.first == 0x0A || pending.first == 0x0D {
+                pending.removeFirst()
+            }
+            discardsUntilSeparator = false
+        }
+
+        while let separator = pending.firstIndex(
+            where: { $0 == 0x0A || $0 == 0x0D }
+        ) {
+            let lineByteCount = pending.distance(
+                from: pending.startIndex,
+                to: separator
+            )
+            if lineByteCount > Self.maximumPendingByteCount {
+                pending.removeSubrange(...separator)
+                values.append("Git 输出过长，已安全省略")
+                continue
+            }
+            let line = Data(pending[..<separator])
+            pending.removeSubrange(...separator)
+            while pending.first == 0x0A || pending.first == 0x0D {
+                pending.removeFirst()
+            }
+            if !line.isEmpty {
+                values.append(String(decoding: line, as: UTF8.self))
+            }
+        }
+
+        if pending.count > Self.maximumPendingByteCount {
+            pending.removeAll(keepingCapacity: true)
+            discardsUntilSeparator = true
+            values.append("Git 输出过长，已安全省略")
+        }
+        return values
+    }
+
+    mutating func flush() -> [String] {
+        if discardsUntilSeparator {
+            pending.removeAll(keepingCapacity: true)
+            discardsUntilSeparator = false
+            return []
+        }
+        guard !pending.isEmpty else { return [] }
+        defer { pending.removeAll(keepingCapacity: true) }
+        return [String(decoding: pending, as: UTF8.self)]
+    }
 }

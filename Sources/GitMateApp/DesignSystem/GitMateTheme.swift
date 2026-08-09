@@ -23,6 +23,8 @@ enum GitMateTheme {
 struct GitMateAvatar: View {
     let url: URL?
     var size: CGFloat = 48
+    var fallbackText: String? = nil
+    var fallbackColorIndex = 0
     @State private var image: NSImage?
 
     var body: some View {
@@ -31,6 +33,21 @@ struct GitMateAvatar: View {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFill()
+            } else if let fallbackText = normalizedFallbackText {
+                ZStack {
+                    Circle().fill(fallbackColor.opacity(0.14))
+                    Text(fallbackText)
+                        .font(
+                            .system(
+                                size: max(size * 0.36, 8),
+                                weight: .bold,
+                                design: .rounded
+                            )
+                        )
+                        .foregroundStyle(fallbackColor)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
             } else {
                 Image(systemName: "person.crop.circle.fill")
                     .resizable()
@@ -45,14 +62,35 @@ struct GitMateAvatar: View {
         }
         .accessibilityHidden(true)
         .task(id: url) {
+            image = nil
             guard let url,
                   let data = await AvatarDataCache.shared.data(for: url)
             else {
-                image = nil
                 return
             }
+            guard !Task.isCancelled else { return }
             image = NSImage(data: data)
         }
+    }
+
+    private var normalizedFallbackText: String? {
+        let value = fallbackText?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value, !value.isEmpty else { return nil }
+        return String(value.prefix(2))
+    }
+
+    private var fallbackColor: Color {
+        let colors: [Color] = [
+            Color(red: 0.08, green: 0.38, blue: 0.75),
+            Color(red: 0.37, green: 0.20, blue: 0.68),
+            Color(red: 0.10, green: 0.47, blue: 0.33),
+            Color(red: 0.68, green: 0.31, blue: 0.08),
+            Color(red: 0.62, green: 0.16, blue: 0.34),
+            Color(red: 0.18, green: 0.43, blue: 0.52)
+        ]
+        let index = Int(fallbackColorIndex.magnitude % UInt(colors.count))
+        return colors[index]
     }
 }
 
