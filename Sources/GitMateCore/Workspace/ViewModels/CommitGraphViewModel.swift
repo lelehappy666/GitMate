@@ -41,6 +41,10 @@ public struct CommitGraphGitDerivedBase: Sendable {
     public let availableHashes: Set<String>
     public let branchCatalog: CommitGraphBranchCatalog
     public let searchIndex: CommitGraphSearchIndex
+    public let traditionalBranchProjection:
+        CommitGraphTraditionalBranchProjection
+    public let traditionalSegmentProjection:
+        CommitGraphTraditionalSegmentProjection
     public let traditionalPublicationIndex:
         CommitGraphTraditionalPublicationIndex
 
@@ -56,6 +60,10 @@ public struct CommitGraphGitDerivedBase: Sendable {
             primaryBranchIDByHash: [:]
         ),
         searchIndex: CommitGraphSearchIndex = .empty,
+        traditionalBranchProjection:
+            CommitGraphTraditionalBranchProjection = .empty,
+        traditionalSegmentProjection:
+            CommitGraphTraditionalSegmentProjection = .empty,
         traditionalPublicationIndex:
             CommitGraphTraditionalPublicationIndex = .empty
     ) {
@@ -66,6 +74,8 @@ public struct CommitGraphGitDerivedBase: Sendable {
         self.availableHashes = availableHashes
         self.branchCatalog = branchCatalog
         self.searchIndex = searchIndex
+        self.traditionalBranchProjection = traditionalBranchProjection
+        self.traditionalSegmentProjection = traditionalSegmentProjection
         self.traditionalPublicationIndex = traditionalPublicationIndex
     }
 }
@@ -178,6 +188,25 @@ public struct DefaultCommitGraphViewModelDeriver:
                 fingerprint: request.snapshot.fingerprint
             )
             try Task.checkCancellation()
+            let traditionalBranchProjection =
+                CommitGraphTraditionalBranchProjector.project(
+                    CommitGraphTraditionalBranchProjectionInput(
+                        catalog: branchCatalog,
+                        topology: topology,
+                        totalWidth: 0,
+                        selectedHash: nil,
+                        pinnedBranchIDs: [],
+                        lastSelectedBranchID: nil
+                    )
+                )
+            try Task.checkCancellation()
+            let traditionalSegmentProjection =
+                CommitGraphTraditionalSegmentProjector.project(
+                    topology: topology,
+                    catalog: branchCatalog,
+                    branchProjection: traditionalBranchProjection
+                )
+            try Task.checkCancellation()
             let searchIndex = CommitGraphSearchIndex(
                 commitsNewestFirst: request.snapshot.commitsNewestFirst,
                 fingerprint: request.snapshot.fingerprint
@@ -212,6 +241,8 @@ public struct DefaultCommitGraphViewModelDeriver:
                 availableHashes: availableHashes,
                 branchCatalog: branchCatalog,
                 searchIndex: searchIndex,
+                traditionalBranchProjection: traditionalBranchProjection,
+                traditionalSegmentProjection: traditionalSegmentProjection,
                 traditionalPublicationIndex: publicationIndex
             )
         }
@@ -457,7 +488,6 @@ public final class CommitGraphViewModel {
             guard selectedHash != oldValue else { return }
             rebuildSelectionHighlight()
             rebuildBranchBundleProjection()
-            rebuildTraditionalBranchProjection()
         }
     }
     public private(set) var isLoading = false
@@ -487,6 +517,8 @@ public final class CommitGraphViewModel {
         CommitGraphBranchBundleProjection()
     public private(set) var traditionalBranchProjection =
         CommitGraphTraditionalBranchProjection.empty
+    public private(set) var traditionalSegmentProjection =
+        CommitGraphTraditionalSegmentProjection.empty
     public private(set) var traditionalPublicationIndex =
         CommitGraphTraditionalPublicationIndex.empty
     public private(set) var expandedBranchBundleIDs: Set<String> = []
@@ -910,7 +942,6 @@ public final class CommitGraphViewModel {
         let normalized = width.rounded()
         guard normalized != traditionalViewportWidth else { return }
         traditionalViewportWidth = normalized
-        rebuildTraditionalBranchProjection()
     }
 
     /// 分割线拖动结束时提交一次最终值；pointermove 只更新视图本地状态。
@@ -926,7 +957,6 @@ public final class CommitGraphViewModel {
         guard branchCatalog.branch(id: id) != nil else { return }
         guard scene.lastTraditionalBranchID != id else { return }
         scene.lastTraditionalBranchID = id
-        rebuildTraditionalBranchProjection()
         recordSceneMutation()
         scheduleSceneSave()
     }
@@ -938,7 +968,6 @@ public final class CommitGraphViewModel {
         } else {
             scene.pinnedTraditionalBranchIDs.insert(id)
         }
-        rebuildTraditionalBranchProjection()
         recordSceneMutation()
         scheduleSceneSave()
     }
@@ -1771,7 +1800,6 @@ public final class CommitGraphViewModel {
         selectedDiff = nil
         isSelectedDiffTruncated = false
         rebuildBranchBundleProjection()
-        rebuildTraditionalBranchProjection()
     }
 
     private struct LoadedScene: Sendable {
@@ -1968,13 +1996,14 @@ public final class CommitGraphViewModel {
         traditionalLayout = base.traditionalLayout
         branchCatalog = base.branchCatalog
         searchIndex = base.searchIndex
+        traditionalBranchProjection = base.traditionalBranchProjection
+        traditionalSegmentProjection = base.traditionalSegmentProjection
         traditionalPublicationIndex = base.traditionalPublicationIndex
         scene = derived.scene
         cancelBranchBundleProjectionRebuild()
         branchBundleProjection = derived.branchBundleProjection
         branchProjectionRevision &+= 1
         rebuildTraditionalGroupBadgeIndex()
-        rebuildTraditionalBranchProjection()
         rebuildHistoryNavigationMarkers()
         viewport = derived.scene.canvasViewport
         integrityReport = base.integrityReport
@@ -2366,19 +2395,6 @@ public final class CommitGraphViewModel {
         branchBundleRebuildRequestID &+= 1
         branchBundleRebuildTask?.cancel()
         branchBundleRebuildTask = nil
-    }
-
-    private func rebuildTraditionalBranchProjection() {
-        traditionalBranchProjection =
-            CommitGraphTraditionalBranchProjector.project(
-                CommitGraphTraditionalBranchProjectionInput(
-                    catalog: branchCatalog,
-                    totalWidth: traditionalViewportWidth,
-                    selectedHash: selectedHash,
-                    pinnedBranchIDs: scene.pinnedTraditionalBranchIDs,
-                    lastSelectedBranchID: scene.lastTraditionalBranchID
-                )
-            )
     }
 
     private func rebuildTraditionalGroupBadgeIndex() {

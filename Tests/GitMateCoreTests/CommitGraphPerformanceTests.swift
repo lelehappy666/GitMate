@@ -220,12 +220,24 @@ let commitGraphPerformanceTests = [
         let traditional = CommitGraphTraditionalBranchProjector.project(
             CommitGraphTraditionalBranchProjectionInput(
                 catalog: catalog,
+                topology: topology,
                 totalWidth: 1_520,
                 selectedHash: nil,
                 pinnedBranchIDs: [],
                 lastSelectedBranchID: nil
             )
         )
+        var segmentProjection: CommitGraphTraditionalSegmentProjection?
+        let segmentDuration = clock.measure {
+            segmentProjection = CommitGraphTraditionalSegmentProjector.project(
+                topology: topology,
+                catalog: catalog,
+                branchProjection: traditional
+            )
+        }
+        guard let segmentProjection else {
+            throw TestFailure(description: "三百分支传统区段投影未生成")
+        }
         var publicationIndex: CommitGraphTraditionalPublicationIndex?
         let publicationDuration = clock.measure {
             publicationIndex = CommitGraphTraditionalPublicationIndex.build(
@@ -274,6 +286,17 @@ let commitGraphPerformanceTests = [
             visibleLaneRange.count < 30,
             "左侧分支视口只应绘制当前窗口附近的泳道"
         )
+        try expect(
+            topology.rowsNewestFirst.allSatisfy {
+                segmentProjection.lane(for: $0.commit.fullHash) != nil
+            },
+            "五万提交必须各自恰好获得一个可查询的最终泳道"
+        )
+        try expectEqual(
+            segmentProjection.connections.count,
+            topology.rowsNewestFirst.reduce(0) { $0 + $1.connections.count },
+            "区段投影不得遗漏完整拓扑中的父边"
+        )
         try expectEqual(
             publicationIndex.state(for: "commit-49999"),
             .remoteKnown,
@@ -289,6 +312,7 @@ let commitGraphPerformanceTests = [
                 + "拓扑 \(topologyDuration)，"
                 + "分支目录 \(catalogDuration)，"
                 + "分支束 \(bundleDuration)；"
+                + "区段投影 \(segmentDuration)；"
                 + "发布索引 \(publicationDuration)；"
                 + "传统槽位 \(traditional.slots.count)，"
                 + "局部分支束 \(localBundles.count)"

@@ -1945,6 +1945,69 @@ let commitGraphViewModelTests = [
             "自动布局不得覆盖用户手动移动的普通节点"
         )
     },
+    TestCase("完整刷新原子安装主干专属传统区段投影") { @MainActor in
+        let commits = [
+            commitGraphCommit(hash: "feature-2", parents: ["feature-1"]),
+            commitGraphCommit(hash: "main-2", parents: ["main-1"]),
+            commitGraphCommit(hash: "feature-1", parents: ["main-1"]),
+            commitGraphCommit(hash: "main-1", parents: ["root"]),
+            commitGraphCommit(hash: "root")
+        ]
+        let snapshot = CommitGraphSnapshot(
+            repositoryPath: commitGraphRepositoryURL.standardizedFileURL.path,
+            fingerprint: CommitGraphReferenceFingerprint(
+                references: [
+                    CommitGraphReference(
+                        name: "refs/heads/main",
+                        targetHash: "main-2",
+                        kind: .localBranch
+                    ),
+                    CommitGraphReference(
+                        name: "refs/heads/feature/a",
+                        targetHash: "feature-2",
+                        kind: .localBranch
+                    )
+                ],
+                headName: "feature/a",
+                headHash: "feature-2",
+                isShallow: false
+            ),
+            commitsNewestFirst: commits,
+            expectedCommitCount: commits.count,
+            shallowBoundaryParentHashes: [],
+            generatedAt: Date(timeIntervalSince1970: 1_000)
+        )
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 955,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: CommitGraphRefreshCoordinator(
+                reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
+                store: InMemoryCommitGraphSnapshotStore()
+            )
+        )
+
+        await viewModel.refresh(source: .toolbar)
+
+        try expectEqual(
+            viewModel.traditionalSegmentProjection.lane(for: "main-1"),
+            0,
+            "共享祖先必须随同一快照代次安装到 main"
+        )
+        try expectEqual(
+            viewModel.traditionalSegmentProjection.lane(for: "feature-1"),
+            1,
+            "功能分支独有提交必须随同一快照代次安装"
+        )
+        try expectEqual(
+            viewModel.traditionalBranchProjection.displayLane(
+                for: "local:feature/a"
+            ),
+            1,
+            "区段投影和分支投影不得混装不同代次"
+        )
+    },
     TestCase("传统分割线只接受拖动结束提交的有限最终宽度") { @MainActor in
         let snapshot = branchProjectionViewModelSnapshot()
         let viewModel = CommitGraphViewModel(
