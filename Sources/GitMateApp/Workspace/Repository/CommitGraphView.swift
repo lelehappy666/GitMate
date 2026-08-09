@@ -404,6 +404,7 @@ struct CommitGraphView: View {
                 layout: viewModel.traditionalLayout,
                 branchCatalog: viewModel.branchCatalog,
                 branchProjection: viewModel.traditionalBranchProjection,
+                segmentProjection: viewModel.traditionalSegmentProjection,
                 publicationIndex: viewModel.traditionalPublicationIndex,
                 pinnedBranchIDs: viewModel.scene.pinnedTraditionalBranchIDs,
                 groupBadgeByHash: viewModel.traditionalGroupBadgeByHash,

@@ -20,8 +20,8 @@ struct CommitGraphTraditionalCanvas: View {
     }
 
     let layout: CommitGraphTraditionalLayoutResult
-    let branchCatalog: CommitGraphBranchCatalog
     let branchProjection: CommitGraphTraditionalBranchProjection
+    let segmentProjection: CommitGraphTraditionalSegmentProjection
     let publicationIndex: CommitGraphTraditionalPublicationIndex
     let groupByHash: [String: CommitGraphTraditionalGroupBadge]
     let groupRevision: UInt64
@@ -117,21 +117,19 @@ struct CommitGraphTraditionalCanvas: View {
             for span in layout.connectionSpans(
                 intersecting: visibleRows
             ) {
-                let connection = span.connection
+                let rawConnection = span.connection
+                let connection = segmentProjection.connection(
+                    childHash: rawConnection.childHash,
+                    parentHash: rawConnection.parentHash
+                ) ?? rawConnection
                 let source = lanePoint(
                     row: span.sourceRow,
-                    lane: displayLane(
-                        for: connection.childHash,
-                        fallback: connection.sourceLane
-                    ),
+                    lane: connection.sourceLane,
                     laneWidth: laneWidth
                 )
                 let target = lanePoint(
                     row: span.targetRow,
-                    lane: displayLane(
-                        for: connection.parentHash,
-                        fallback: connection.targetLane
-                    ),
+                    lane: connection.targetLane,
                     laneWidth: laneWidth
                 )
                 guard laneSpanIntersectsViewport(
@@ -177,18 +175,16 @@ struct CommitGraphTraditionalCanvas: View {
                 }
                 let source = lanePoint(
                     row: child.row,
-                    lane: displayLane(
-                        for: endpoint.childHash,
-                        fallback: child.lane
-                    ),
+                    lane: segmentProjection.lane(
+                        for: endpoint.childHash
+                    ) ?? child.lane,
                     laneWidth: laneWidth
                 )
                 let target = lanePoint(
                     row: endpoint.row,
-                    lane: displayLane(
-                        for: endpoint.childHash,
-                        fallback: endpoint.lane
-                    ),
+                    lane: segmentProjection.lane(
+                        for: endpoint.childHash
+                    ) ?? endpoint.lane,
                     laneWidth: laneWidth
                 )
                 var path = Path()
@@ -237,14 +233,17 @@ struct CommitGraphTraditionalCanvas: View {
                 let row = layout.rows[rowIndex]
                 let source = lanePoint(
                     row: rowIndex,
-                    lane: displayLane(
-                        for: row.commit.fullHash,
-                        fallback: row.lane
-                    ),
+                    lane: segmentProjection.lane(
+                        for: row.commit.fullHash
+                    ) ?? row.lane,
                     laneWidth: laneWidth
                 )
 
-                let color = CommitGraphPalette.color(row.colorIndex)
+                let color = CommitGraphPalette.color(
+                    segmentProjection.colorIndex(
+                        for: row.commit.fullHash
+                    ) ?? row.colorIndex
+                )
                 guard source.x >= -12, source.x <= laneWidth + 12 else {
                     continue
                 }
@@ -274,10 +273,6 @@ struct CommitGraphTraditionalCanvas: View {
                 }
             }
 
-            drawAdditionalReferenceTips(
-                context: &layer,
-                laneWidth: laneWidth
-            )
         }
 
         for endpoint in layout.shallowBoundaryEndpoints
@@ -291,93 +286,6 @@ struct CommitGraphTraditionalCanvas: View {
                 at: CGPoint(x: laneWidth + 18, y: rect.midY),
                 anchor: .leading
             )
-        }
-    }
-
-    private func drawAdditionalReferenceTips(
-        context: inout GraphicsContext,
-        laneWidth: Double
-    ) {
-        let visibleLanes = CommitGraphTraditionalSplitLayout.visibleLaneRange(
-            slotCount: branchProjection.slots.count,
-            horizontalOffset: laneHorizontalOffset,
-            dividerWidth: laneWidth
-        )
-        for branch in branchCatalog.branches {
-            guard let row = layout.row(hash: branch.tipHash),
-                  visibleRows.contains(row.row),
-                  let displayLane = branchProjection.displayLane(
-                      for: branch.id
-                  ),
-                  visibleLanes.contains(displayLane)
-            else { continue }
-            let primary = branchCatalog.branch(containing: branch.tipHash)
-            guard primary?.id != branch.id else { continue }
-
-            let target = lanePoint(
-                row: row.row,
-                lane: displayLane,
-                laneWidth: laneWidth
-            )
-            let source = lanePoint(
-                row: row.row,
-                lane: primary.flatMap {
-                    branchProjection.displayLane(for: $0.id)
-                } ?? displayLane,
-                laneWidth: laneWidth
-            )
-            let color = CommitGraphPalette.color(branch.lane)
-            let isLocalUnpushed = publicationIndex.isDashed(
-                childHash: branch.tipHash
-            )
-            if source.x != target.x {
-                var connector = Path()
-                connector.move(to: source)
-                connector.addLine(to: target)
-                context.stroke(
-                    connector,
-                    with: .color(color.opacity(branch.isMerged ? 0.52 : 0.76)),
-                    style: StrokeStyle(
-                        lineWidth: 1.4,
-                        lineCap: .round,
-                        dash: isLocalUnpushed ? [4, 3] : []
-                    )
-                )
-            }
-            let marker = CGRect(
-                x: target.x - 5,
-                y: target.y - 5,
-                width: 10,
-                height: 10
-            )
-            if branch.source == .remote {
-                let shape = Path(
-                    roundedRect: marker,
-                    cornerRadius: 2.5
-                )
-                context.fill(shape, with: .color(.white))
-                context.stroke(
-                    shape,
-                    with: .color(color),
-                    style: StrokeStyle(
-                        lineWidth: 1.8,
-                        dash: isLocalUnpushed ? [3, 2] : []
-                    )
-                )
-            } else {
-                context.fill(
-                    Path(ellipseIn: marker),
-                    with: .color(.white)
-                )
-                context.stroke(
-                    Path(ellipseIn: marker),
-                    with: .color(color),
-                    style: StrokeStyle(
-                        lineWidth: 1.8,
-                        dash: isLocalUnpushed ? [3, 2] : []
-                    )
-                )
-            }
         }
     }
 
@@ -524,7 +432,11 @@ struct CommitGraphTraditionalCanvas: View {
                 case .localBranch:
                     Badge(
                         text: reference.name,
-                        color: CommitGraphPalette.color(row.colorIndex)
+                        color: CommitGraphPalette.color(
+                            segmentProjection.colorIndex(
+                                for: row.commit.fullHash
+                            ) ?? row.colorIndex
+                        )
                     )
                 case .remoteBranch:
                     Badge(
@@ -711,21 +623,6 @@ struct CommitGraphTraditionalCanvas: View {
         let minimum = min(sourceX, targetX)
         let maximum = max(sourceX, targetX)
         return maximum >= -padding && minimum <= laneWidth + padding
-    }
-
-    private func displayLane(
-        for hash: String,
-        fallback: Int
-    ) -> Int {
-        guard let branch = branchCatalog.branch(containing: hash),
-              let lane = branchProjection.displayLane(for: branch.id)
-        else {
-            return min(
-                max(fallback, 0),
-                max(branchProjection.slots.count - 1, 0)
-            )
-        }
-        return lane
     }
 
     private func appendRoute(

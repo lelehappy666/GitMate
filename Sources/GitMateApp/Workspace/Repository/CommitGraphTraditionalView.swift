@@ -6,6 +6,7 @@ struct CommitGraphTraditionalView: View {
     let layout: CommitGraphTraditionalLayoutResult
     let branchCatalog: CommitGraphBranchCatalog
     let branchProjection: CommitGraphTraditionalBranchProjection
+    let segmentProjection: CommitGraphTraditionalSegmentProjection
     let publicationIndex: CommitGraphTraditionalPublicationIndex
     let pinnedBranchIDs: Set<String>
     let groupBadgeByHash: [String: CommitGraphTraditionalGroupBadge]
@@ -67,8 +68,8 @@ struct CommitGraphTraditionalView: View {
                 ZStack(alignment: .topLeading) {
                     CommitGraphTraditionalCanvas(
                         layout: layout,
-                        branchCatalog: branchCatalog,
                         branchProjection: branchProjection,
+                        segmentProjection: segmentProjection,
                         publicationIndex: publicationIndex,
                         groupByHash: groupBadgeByHash,
                         groupRevision: groupRevision,
@@ -218,7 +219,7 @@ struct CommitGraphTraditionalView: View {
                 .foregroundStyle(GitMateTheme.textPrimary)
             Divider().frame(height: 20)
             Label(
-                "\(branchProjection.slots.count) 条逻辑分支 · \(branchCatalog.branches.count) 个引用",
+                "\(branchProjection.slots.filter { !$0.isPlaceholder }.count) 条逻辑分支 · \(branchCatalog.branches.count) 个引用",
                 systemImage: "arrow.triangle.branch"
             )
             .font(.system(size: 11, weight: .bold))
@@ -264,9 +265,18 @@ struct CommitGraphTraditionalView: View {
         } label: {
             let color = CommitGraphPalette.color(slot.lane)
             HStack(spacing: 5) {
-                Circle()
-                    .fill(color)
-                    .frame(width: 7, height: 7)
+                if slot.isPlaceholder {
+                    Circle()
+                        .stroke(
+                            GitMateTheme.textSecondary.opacity(0.55),
+                            style: StrokeStyle(lineWidth: 1, dash: [2, 2])
+                        )
+                        .frame(width: 7, height: 7)
+                } else {
+                    Circle()
+                        .fill(color)
+                        .frame(width: 7, height: 7)
+                }
                 Text(slot.title)
                     .lineLimit(1)
                 if slot.referenceTitles.count > 1 {
@@ -290,7 +300,13 @@ struct CommitGraphTraditionalView: View {
             }
         }
         .buttonStyle(.plain)
-        .help(slot.referenceTitles.joined(separator: " · "))
+        .disabled(slot.isPlaceholder)
+        .opacity(slot.isPlaceholder ? 0.62 : 1)
+        .help(
+            slot.isPlaceholder
+                ? "仓库不存在 main，最左侧主干泳道保持空白"
+                : slot.referenceTitles.joined(separator: " · ")
+        )
     }
 
     private func workingTreeRow(
