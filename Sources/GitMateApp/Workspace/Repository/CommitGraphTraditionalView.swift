@@ -13,6 +13,7 @@ struct CommitGraphTraditionalView: View {
     let focusedHash: String?
     let localStatus: LocalRepositoryStatus?
     let currentUserLogin: String?
+    let currentUserName: String?
     let currentUserAvatarURL: URL?
     let select: (String) -> Void
     let setViewportWidth: (Double) -> Void
@@ -21,6 +22,7 @@ struct CommitGraphTraditionalView: View {
     let consumeFocus: (String) -> Void
 
     @State private var verticalOffset = 0.0
+    @State private var horizontalOffset = 0.0
     @State private var showsBranchPicker = false
 
     var body: some View {
@@ -35,83 +37,119 @@ struct CommitGraphTraditionalView: View {
             branchContextBar
             Divider()
             GeometryReader { geometry in
-            let width = Double(geometry.size.width)
-            let height = Double(geometry.size.height)
-            let laneWidth = CommitGraphTraditionalMetrics
-                .laneViewportWidth(
-                    width,
-                    maximumLane: max(branchProjection.slots.count - 1, 0)
-                )
-            let visibleRows = CommitGraphTraditionalViewport.visibleRows(
-                totalCount: layout.contentRowCount,
-                rowHeight: CommitGraphTraditionalMetrics.rowHeight,
-                verticalOffset: verticalOffset,
-                viewportHeight: height,
-                preloadScreens: 1.5
-            )
+                let width = Double(geometry.size.width)
+                let height = Double(geometry.size.height)
+                let maximumLane = max(branchProjection.slots.count - 1, 0)
+                let contentWidth = CommitGraphTraditionalContentViewport
+                    .contentWidth(
+                        viewportWidth: width,
+                        maximumLane: maximumLane
+                    )
+                let laneWidth = CommitGraphTraditionalMetrics
+                    .laneViewportWidth(
+                        contentWidth,
+                        maximumLane: maximumLane
+                    )
+                let canvasVisibleRows = CommitGraphTraditionalViewport
+                    .visibleRows(
+                        totalCount: layout.contentRowCount,
+                        rowHeight: CommitGraphTraditionalMetrics.rowHeight,
+                        verticalOffset: verticalOffset,
+                        viewportHeight: height,
+                        preloadScreens: 1.5
+                    )
+                let overlayVisibleRows = CommitGraphTraditionalContentViewport
+                    .overlayRows(
+                        totalCount: layout.contentRowCount,
+                        rowHeight: CommitGraphTraditionalMetrics.rowHeight,
+                        verticalOffset: verticalOffset,
+                        viewportHeight: height
+                    )
 
-            ZStack(alignment: .topLeading) {
-                CommitGraphTraditionalCanvas(
-                    layout: layout,
-                    branchCatalog: branchCatalog,
-                    branchProjection: branchProjection,
-                    groupByHash: groupBadgeByHash,
-                    groupRevision: groupRevision,
-                    visibleRows: visibleRows,
-                    verticalOffset: verticalOffset,
-                    selectedHash: selectedHash
-                )
-
-                avatarLayer(
-                    visibleRows: visibleRows,
-                    laneWidth: laneWidth
-                )
-
-                TraditionalInteractionSurface(
-                    rowCount: layout.rows.count,
-                    rowHeight: CommitGraphTraditionalMetrics.rowHeight,
-                    verticalOffset: verticalOffset,
-                    laneViewportWidth: laneWidth,
-                    scroll: { verticalDelta, horizontalDelta in
-                        verticalOffset = clampedVerticalOffset(
-                            verticalOffset - verticalDelta,
-                            viewportHeight: height
+                ZStack(alignment: .topLeading) {
+                    ZStack(alignment: .topLeading) {
+                        CommitGraphTraditionalCanvas(
+                            layout: layout,
+                            branchCatalog: branchCatalog,
+                            branchProjection: branchProjection,
+                            groupByHash: groupBadgeByHash,
+                            groupRevision: groupRevision,
+                            visibleRows: canvasVisibleRows,
+                            verticalOffset: verticalOffset,
+                            selectedHash: selectedHash
                         )
-                        _ = horizontalDelta
-                    },
-                    selectRow: { row in
-                        guard layout.rows.indices.contains(row) else { return }
-                        select(layout.rows[row].commit.fullHash)
+                        .frame(width: contentWidth, height: height)
+
+                        avatarLayer(
+                            visibleRows: overlayVisibleRows,
+                            laneWidth: laneWidth
+                        )
+
+                        accessibilityRows(
+                            visibleRows: overlayVisibleRows,
+                            width: contentWidth
+                        )
                     }
-                )
-                .accessibilityHidden(true)
-                .accessibilityIdentifier("workspace.commitGraph.traditional")
+                    .frame(
+                        width: contentWidth,
+                        height: height,
+                        alignment: .topLeading
+                    )
+                    .offset(x: -horizontalOffset)
 
-                accessibilityRows(
-                    visibleRows: visibleRows,
-                    width: width
+                    TraditionalInteractionSurface(
+                        rowCount: layout.rows.count,
+                        rowHeight: CommitGraphTraditionalMetrics.rowHeight,
+                        verticalOffset: verticalOffset,
+                        scroll: { verticalDelta, horizontalDelta in
+                            verticalOffset = clampedVerticalOffset(
+                                verticalOffset - verticalDelta,
+                                viewportHeight: height
+                            )
+                            horizontalOffset = CommitGraphTraditionalContentViewport
+                                .clampedHorizontalOffset(
+                                    horizontalOffset - horizontalDelta,
+                                    contentWidth: contentWidth,
+                                    viewportWidth: width
+                                )
+                        },
+                        selectRow: { row in
+                            guard layout.rows.indices.contains(row) else { return }
+                            select(layout.rows[row].commit.fullHash)
+                        }
+                    )
+                    .frame(width: width, height: height)
+                    .accessibilityHidden(true)
+                    .accessibilityIdentifier("workspace.commitGraph.traditional")
+                }
+                .frame(
+                    width: geometry.size.width,
+                    height: geometry.size.height,
+                    alignment: .topLeading
                 )
-
-            }
-            .onAppear {
-                setViewportWidth(width)
-                clampOffsets(width: width, height: height)
-                applyFocusIfNeeded(viewportHeight: height)
-            }
-            .onChange(of: geometry.size) { _, newSize in
-                setViewportWidth(Double(newSize.width))
-                clampOffsets(
-                    width: Double(newSize.width),
-                    height: Double(newSize.height)
-                )
-            }
-            .onChange(of: layout.contentRowCount) { _, _ in
-                clampOffsets(width: width, height: height)
-                applyFocusIfNeeded(viewportHeight: height)
-            }
-            .onChange(of: focusedHash) { _, _ in
-                applyFocusIfNeeded(viewportHeight: height)
-            }
+                .clipped()
+                .onAppear {
+                    setViewportWidth(width)
+                    clampOffsets(width: width, height: height)
+                    applyFocusIfNeeded(viewportHeight: height)
+                }
+                .onChange(of: geometry.size) { _, newSize in
+                    setViewportWidth(Double(newSize.width))
+                    clampOffsets(
+                        width: Double(newSize.width),
+                        height: Double(newSize.height)
+                    )
+                }
+                .onChange(of: layout.contentRowCount) { _, _ in
+                    clampOffsets(width: width, height: height)
+                    applyFocusIfNeeded(viewportHeight: height)
+                }
+                .onChange(of: branchProjection.slots.count) { _, _ in
+                    clampOffsets(width: width, height: height)
+                }
+                .onChange(of: focusedHash) { _, _ in
+                    applyFocusIfNeeded(viewportHeight: height)
+                }
             }
         }
         .background(.white)
@@ -344,9 +382,18 @@ struct CommitGraphTraditionalView: View {
         ForEach(Array(visibleRows), id: \.self) { rowIndex in
             if layout.rows.indices.contains(rowIndex) {
                 let commit = layout.rows[rowIndex].commit
+                let identity = CommitGraphAuthorAvatarIdentity.resolve(
+                    authorName: commit.authorName,
+                    authorEmail: commit.authorEmail,
+                    currentUserLogin: currentUserLogin,
+                    currentUserName: currentUserName,
+                    currentUserAvatarURL: currentUserAvatarURL
+                )
                 GitMateAvatar(
-                    url: avatarURL(for: commit),
-                    size: CommitGraphTraditionalMetrics.avatarSize
+                    url: identity.remoteURL,
+                    size: CommitGraphTraditionalMetrics.avatarSize,
+                    fallbackText: identity.fallbackInitials,
+                    fallbackColorIndex: identity.fallbackColorIndex
                 )
                 .position(
                     x: laneWidth + 18
@@ -359,36 +406,6 @@ struct CommitGraphTraditionalView: View {
                 .allowsHitTesting(false)
             }
         }
-    }
-
-    private func avatarURL(for commit: GitCommit) -> URL? {
-        if let login = githubLogin(from: commit.authorEmail) {
-            return URL(string: "https://github.com/\(login).png?size=96")
-        }
-        if let currentUserLogin,
-           commit.authorName.compare(
-                currentUserLogin,
-                options: [.caseInsensitive, .diacriticInsensitive]
-           ) == .orderedSame {
-            return currentUserAvatarURL
-        }
-        return nil
-    }
-
-    private func githubLogin(from email: String) -> String? {
-        let normalized = email.lowercased()
-        guard normalized.hasSuffix("@users.noreply.github.com") else {
-            return nil
-        }
-        let local = String(normalized.split(separator: "@", maxSplits: 1)[0])
-        let candidate = local.split(separator: "+", maxSplits: 1).last.map(String.init)
-            ?? local
-        guard !candidate.isEmpty,
-              candidate.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" })
-        else {
-            return nil
-        }
-        return candidate
     }
 
     private func applyFocusIfNeeded(viewportHeight: Double) {
@@ -407,11 +424,20 @@ struct CommitGraphTraditionalView: View {
     }
 
     private func clampOffsets(width: Double, height: Double) {
-        _ = width
         verticalOffset = clampedVerticalOffset(
             verticalOffset,
             viewportHeight: height
         )
+        let contentWidth = CommitGraphTraditionalContentViewport.contentWidth(
+            viewportWidth: width,
+            maximumLane: max(branchProjection.slots.count - 1, 0)
+        )
+        horizontalOffset = CommitGraphTraditionalContentViewport
+            .clampedHorizontalOffset(
+                horizontalOffset,
+                contentWidth: contentWidth,
+                viewportWidth: width
+            )
     }
 
     private func clampedVerticalOffset(
@@ -432,7 +458,6 @@ private struct TraditionalInteractionSurface: NSViewRepresentable {
     let rowCount: Int
     let rowHeight: Double
     let verticalOffset: Double
-    let laneViewportWidth: Double
     let scroll: (Double, Double) -> Void
     let selectRow: (Int) -> Void
 
@@ -446,7 +471,6 @@ private struct TraditionalInteractionSurface: NSViewRepresentable {
         view.rowCount = rowCount
         view.rowHeight = rowHeight
         view.verticalOffset = verticalOffset
-        view.laneViewportWidth = laneViewportWidth
         return view
     }
 
@@ -456,7 +480,6 @@ private struct TraditionalInteractionSurface: NSViewRepresentable {
         view.rowCount = rowCount
         view.rowHeight = rowHeight
         view.verticalOffset = verticalOffset
-        view.laneViewportWidth = laneViewportWidth
     }
 
     @MainActor
@@ -479,13 +502,15 @@ private struct TraditionalInteractionSurface: NSViewRepresentable {
         var rowCount = 0
         var rowHeight = CommitGraphTraditionalMetrics.rowHeight
         var verticalOffset = 0.0
-        var laneViewportWidth = 220.0
+        private var mouseDownPoint: NSPoint?
+        private var lastDragPoint: NSPoint?
+        private var mouseDownRow: Int?
+        private var isHorizontalDragging = false
 
         override var isFlipped: Bool { true }
         override var acceptsFirstResponder: Bool { true }
 
         override func scrollWheel(with event: NSEvent) {
-            let point = convert(event.locationInWindow, from: nil)
             let verticalScale: Double = event.hasPreciseScrollingDeltas
                 ? 1
                 : rowHeight * 3
@@ -493,13 +518,11 @@ private struct TraditionalInteractionSurface: NSViewRepresentable {
                 ? 1
                 : 48
             let shiftScroll = event.modifierFlags.contains(.shift)
-            let horizontal = point.x <= laneViewportWidth
-                ? Double(
-                    shiftScroll
-                        ? event.scrollingDeltaY
-                        : event.scrollingDeltaX
-                ) * horizontalScale
-                : 0
+            let horizontal = Double(
+                shiftScroll
+                    ? event.scrollingDeltaY
+                    : event.scrollingDeltaX
+            ) * horizontalScale
             coordinator?.scroll(
                 shiftScroll
                     ? 0
@@ -510,15 +533,55 @@ private struct TraditionalInteractionSurface: NSViewRepresentable {
 
         override func mouseDown(with event: NSEvent) {
             let point = convert(event.locationInWindow, from: nil)
-            guard rowHeight > 0 else { return }
-            let row = Int(floor((Double(point.y) + verticalOffset) / rowHeight))
-            guard row >= 0, row < rowCount else { return }
-            coordinator?.selectRow(row)
+            mouseDownPoint = point
+            lastDragPoint = point
+            isHorizontalDragging = false
+            mouseDownRow = row(at: point)
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            guard let mouseDownPoint,
+                  let lastDragPoint
+            else {
+                return
+            }
+            let point = convert(event.locationInWindow, from: nil)
+            if !isHorizontalDragging {
+                isHorizontalDragging = CommitGraphTraditionalHorizontalDrag
+                    .isDragging(
+                        horizontalDistance: Double(point.x - mouseDownPoint.x)
+                    )
+            }
+            if isHorizontalDragging {
+                coordinator?.scroll(0, Double(point.x - lastDragPoint.x))
+                NSCursor.closedHand.set()
+            }
+            self.lastDragPoint = point
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            if !isHorizontalDragging,
+               let mouseDownRow {
+                coordinator?.selectRow(mouseDownRow)
+            }
+            mouseDownPoint = nil
+            lastDragPoint = nil
+            mouseDownRow = nil
+            isHorizontalDragging = false
+            window?.invalidateCursorRects(for: self)
+        }
+
+        private func row(at point: NSPoint) -> Int? {
+            guard rowHeight.isFinite, rowHeight > 0 else { return nil }
+            let row = Int(
+                floor((Double(point.y) + verticalOffset) / rowHeight)
+            )
+            return row >= 0 && row < rowCount ? row : nil
         }
 
         override func resetCursorRects() {
             super.resetCursorRects()
-            addCursorRect(bounds, cursor: .pointingHand)
+            addCursorRect(bounds, cursor: .openHand)
         }
     }
 }

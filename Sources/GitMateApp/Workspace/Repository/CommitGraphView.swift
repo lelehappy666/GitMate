@@ -15,6 +15,7 @@ struct CommitGraphView: View {
 
     @Bindable var viewModel: CommitGraphViewModel
     var currentUserLogin: String?
+    var currentUserName: String?
     var currentUserAvatarURL: URL?
     @State private var showsCreateGroup = false
     @State private var newGroupTitle = ""
@@ -410,6 +411,7 @@ struct CommitGraphView: View {
                 focusedHash: viewModel.focusedHash,
                 localStatus: viewModel.localStatus,
                 currentUserLogin: currentUserLogin,
+                currentUserName: currentUserName,
                 currentUserAvatarURL: currentUserAvatarURL,
                 select: { hash in
                     viewModel.selectForNavigation(hash: hash)
@@ -880,32 +882,13 @@ struct CommitGraphView: View {
     }
 
     private func avatarURL(for commit: GitCommit) -> URL? {
-        let email = commit.authorEmail.lowercased()
-        if email.hasSuffix("@users.noreply.github.com") {
-            let local = String(
-                email.split(separator: "@", maxSplits: 1)[0]
-            )
-            let login = local.split(
-                separator: "+",
-                maxSplits: 1
-            ).last.map(String.init) ?? local
-            if !login.isEmpty,
-               login.allSatisfy({
-                   $0.isLetter || $0.isNumber || $0 == "-"
-               }) {
-                return URL(
-                    string: "https://github.com/\(login).png?size=128"
-                )
-            }
-        }
-        if let currentUserLogin,
-           commit.authorName.compare(
-               currentUserLogin,
-               options: [.caseInsensitive, .diacriticInsensitive]
-           ) == .orderedSame {
-            return currentUserAvatarURL
-        }
-        return nil
+        CommitGraphAuthorAvatarIdentity.resolve(
+            authorName: commit.authorName,
+            authorEmail: commit.authorEmail,
+            currentUserLogin: currentUserLogin,
+            currentUserName: currentUserName,
+            currentUserAvatarURL: currentUserAvatarURL
+        ).remoteURL
     }
 
     private var loadingState: some View {

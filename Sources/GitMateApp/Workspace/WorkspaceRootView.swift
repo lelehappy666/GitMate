@@ -210,6 +210,7 @@ struct WorkspaceRootView: View {
                     repositoryURL: runtime.catalog.localURL(for: repository),
                     repositoryID: repository.id,
                     currentUserLogin: session.account.login,
+                    currentUserName: session.account.name,
                     currentUserAvatarURL: session.account.avatarURL,
                     sceneStore: runtime.commitGraphSceneStore,
                     refreshCoordinator: runtime.commitGraphRefreshCoordinator,
@@ -881,6 +882,7 @@ private struct CommitGraphPageContainer: View {
         repositoryURL: URL,
         repositoryID: Int64,
         currentUserLogin: String,
+        currentUserName: String?,
         currentUserAvatarURL: URL?,
         sceneStore: any CommitGraphSceneStoring,
         refreshCoordinator: CommitGraphRefreshCoordinator,
@@ -896,11 +898,13 @@ private struct CommitGraphPageContainer: View {
             )
         )
         self.currentUserLogin = currentUserLogin
+        self.currentUserName = currentUserName
         self.currentUserAvatarURL = currentUserAvatarURL
         self.refreshRevision = refreshRevision
     }
 
     let currentUserLogin: String
+    let currentUserName: String?
     let currentUserAvatarURL: URL?
     let refreshRevision: Int
 
@@ -908,6 +912,7 @@ private struct CommitGraphPageContainer: View {
         CommitGraphView(
             viewModel: viewModel,
             currentUserLogin: currentUserLogin,
+            currentUserName: currentUserName,
             currentUserAvatarURL: currentUserAvatarURL
         )
             .onAppear {
