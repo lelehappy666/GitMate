@@ -170,11 +170,108 @@ let commitGraphPerformanceTests = [
                 + "曲线候选 \(curveQuery.diagnostics.edgeCandidates)，"
                 + "直角几何 \(orthogonalQuery.diagnostics.generatedEdgeGeometries)"
         )
+    },
+    TestCase("五万提交与三百分支的投影仍保持局部工作量") {
+        let snapshot = performanceCommitGraphSnapshot(
+            count: 50_000,
+            branchCount: 300
+        )
+        let clock = ContinuousClock()
+
+        var topology: CommitGraphLaneTopology?
+        let topologyDuration = clock.measure {
+            topology = CommitGraphLaneTopology.build(snapshot: snapshot)
+        }
+        guard let topology else {
+            throw TestFailure(description: "三百分支共享拓扑未生成")
+        }
+        let layout = CommitGraphLayout().layout(topology: topology)
+
+        var catalog: CommitGraphBranchCatalog?
+        let catalogDuration = clock.measure {
+            catalog = CommitGraphBranchCatalog.build(
+                topology: topology,
+                fingerprint: snapshot.fingerprint
+            )
+        }
+        guard let catalog else {
+            throw TestFailure(description: "三百分支目录未生成")
+        }
+
+        var bundles: CommitGraphBranchBundleProjection?
+        let bundleDuration = clock.measure {
+            bundles = CommitGraphBranchBundleBuilder.build(
+                input: CommitGraphBranchBundleInput(
+                    catalog: catalog,
+                    layout: layout,
+                    edges: layout.edges,
+                    forcedVisibleHashes: [],
+                    groupBoundaryHashes: [],
+                    regionBoundaryHashes: [],
+                    shallowBoundaryHashes: [],
+                    expandedBundleIDs: []
+                )
+            )
+        }
+        guard let bundles else {
+            throw TestFailure(description: "三百分支束未生成")
+        }
+
+        let traditional = CommitGraphTraditionalBranchProjector.project(
+            CommitGraphTraditionalBranchProjectionInput(
+                catalog: catalog,
+                totalWidth: 1_520,
+                selectedHash: nil,
+                pinnedBranchIDs: [],
+                lastSelectedBranchID: nil
+            )
+        )
+        let localBundles = bundles.visibleBundles(
+            in: GraphRect(
+                x: 0,
+                y: 1_500_000,
+                width: 1_200,
+                height: 1_000
+            )
+        )
+
+        try expectEqual(
+            catalog.branches.count,
+            300,
+            "本地与远程引用都必须进入分支目录"
+        )
+        try expect(
+            (4...8).contains(traditional.visibleBranches.count),
+            "传统视图在三百分支下仍只能显示四到八条真实分支泳道"
+        )
+        try expect(
+            traditional.slots.count <= traditional.capacity + 2,
+            "真实分支之外最多只能增加本地与远程两个聚合槽"
+        )
+        try expect(
+            traditional.hiddenLocalCount > 0
+                && traditional.hiddenRemoteCount > 0,
+            "本地与远程隐藏分支必须分别聚合"
+        )
+        try expect(
+            localBundles.count < 500,
+            "分支束局部查询不得返回全历史"
+        )
+
+        print(
+            "  性能记录：50000 提交、300 分支；"
+                + "拓扑 \(topologyDuration)，"
+                + "分支目录 \(catalogDuration)，"
+                + "分支束 \(bundleDuration)；"
+                + "传统槽位 \(traditional.slots.count)，"
+                + "局部分支束 \(localBundles.count)"
+        )
     }
 ]
 
 private func performanceCommitGraphSnapshot(
-    count: Int
+    count: Int,
+    branchCount: Int = 3
 ) -> CommitGraphSnapshot {
     let commits = (0..<count).reversed().map { index in
         var parents = index == 0 ? [] : ["commit-\(index - 1)"]
@@ -198,26 +295,45 @@ private func performanceCommitGraphSnapshot(
             decorations: decorations
         )
     }
+    var references = [
+        CommitGraphReference(
+            name: "refs/heads/main",
+            targetHash: "commit-\(count - 1)",
+            kind: .localBranch
+        ),
+        CommitGraphReference(
+            name: "refs/remotes/origin/main",
+            targetHash: "commit-\(count - 1)",
+            kind: .remoteBranch
+        ),
+        CommitGraphReference(
+            name: "refs/heads/release/performance",
+            targetHash: "commit-\(count - 10_000)",
+            kind: .localBranch
+        )
+    ]
+    if branchCount > references.count {
+        references.append(
+            contentsOf: (references.count..<branchCount).map { index in
+                let isRemote = index.isMultiple(of: 2)
+                let targetIndex = max(
+                    count - 1 - index * max(count / branchCount, 1),
+                    0
+                )
+                return CommitGraphReference(
+                    name: isRemote
+                        ? "refs/remotes/origin/performance-\(index)"
+                        : "refs/heads/performance-\(index)",
+                    targetHash: "commit-\(targetIndex)",
+                    kind: isRemote ? .remoteBranch : .localBranch
+                )
+            }
+        )
+    }
     return CommitGraphSnapshot(
         repositoryPath: "/performance",
         fingerprint: CommitGraphReferenceFingerprint(
-            references: [
-                CommitGraphReference(
-                    name: "refs/heads/main",
-                    targetHash: "commit-\(count - 1)",
-                    kind: .localBranch
-                ),
-                CommitGraphReference(
-                    name: "refs/remotes/origin/main",
-                    targetHash: "commit-\(count - 1)",
-                    kind: .remoteBranch
-                ),
-                CommitGraphReference(
-                    name: "refs/heads/release/performance",
-                    targetHash: "commit-\(count - 10_000)",
-                    kind: .localBranch
-                )
-            ],
+            references: references,
             headName: "main",
             headHash: "commit-\(count - 1)",
             isShallow: false

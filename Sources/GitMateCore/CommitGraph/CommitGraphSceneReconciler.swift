@@ -104,7 +104,12 @@ public enum CommitGraphSceneReconciler {
             boundaryPorts: boundaryPorts,
             lineStyle: scene.lineStyle,
             viewMode: scene.viewMode,
-            canvasViewport: scene.canvasViewport
+            canvasViewport: scene.canvasViewport,
+            manuallyPositionedHashes: scene.manuallyPositionedHashes
+                .intersection(availableHashes)
+                .subtracting(claimedHashes),
+            pinnedTraditionalBranchIDs: scene.pinnedTraditionalBranchIDs,
+            lastTraditionalBranchID: scene.lastTraditionalBranchID
         )
     }
 
@@ -142,20 +147,33 @@ public enum CommitGraphSceneReconciler {
             groups.append(group)
         }
 
+        var migratedNodePositions = defaultPositions.filter {
+            !groupedHashes.contains($0.key)
+        }
+        let survivingManualHashes = scene.manuallyPositionedHashes
+            .intersection(Set(defaultPositions.keys))
+            .subtracting(groupedHashes)
+        for hash in survivingManualHashes {
+            if let manualPosition = scene.nodePositions[hash] {
+                migratedNodePositions[hash] = manualPosition
+            }
+        }
+
         return CommitGraphSceneState(
             schemaVersion: CommitGraphSceneState.currentSchemaVersion,
             layoutAlgorithmVersion:
                 CommitGraphSceneState.currentLayoutAlgorithmVersion,
-            nodePositions: defaultPositions.filter {
-                !groupedHashes.contains($0.key)
-            },
+            nodePositions: migratedNodePositions,
             groups: groups,
             regions: scene.regions,
             edgePorts: [:],
             boundaryPorts: [:],
             lineStyle: scene.lineStyle,
             viewMode: scene.viewMode,
-            canvasViewport: scene.canvasViewport
+            canvasViewport: scene.canvasViewport,
+            manuallyPositionedHashes: survivingManualHashes,
+            pinnedTraditionalBranchIDs: scene.pinnedTraditionalBranchIDs,
+            lastTraditionalBranchID: scene.lastTraditionalBranchID
         )
     }
 

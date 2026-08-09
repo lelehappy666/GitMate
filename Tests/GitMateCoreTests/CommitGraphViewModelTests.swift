@@ -120,12 +120,12 @@ let commitGraphViewModelTests = [
 
         try expectEqual(
             viewModel.viewport.scale,
-            CommitGraphViewportProjector.minimumScale,
-            "超长历史必须使用可读的最小安全缩放"
+            CommitGraphLevelOfDetail.compactThreshold,
+            "全历史低于百分之五十时必须进入最新提交概览窗口"
         )
         try expect(
-            abs(latestScreenY - screenSize.height / 2) < 0.000_001,
-            "完整 oldest-first 画布降级时必须把底部最新提交放在视口中心"
+            abs(latestScreenY - screenSize.height * 0.42) < 0.000_001,
+            "完整 oldest-first 画布降级时必须保持底部最新提交可见"
         )
         try expect(
             earliestScreenY < 0,
@@ -1848,6 +1848,55 @@ let commitGraphViewModelTests = [
             viewModel.branchBundleProjection.bundle(containing: "hash-c")
                 != nil,
             "再次切换必须恢复自动聚合"
+        )
+    },
+    TestCase("版本区域和手动移动立即使相关分支束失效") { @MainActor in
+        let snapshot = branchProjectionViewModelSnapshot()
+        let viewModel = CommitGraphViewModel(
+            reader: StaticCommitGraphReader(),
+            repositoryURL: commitGraphRepositoryURL,
+            repositoryID: 953,
+            sceneStore: InMemoryCommitGraphSceneStore(),
+            refreshCoordinator: CommitGraphRefreshCoordinator(
+                reader: StaticCommitGraphSnapshotReader(snapshot: snapshot),
+                store: InMemoryCommitGraphSnapshotStore()
+            )
+        )
+        await viewModel.refresh(source: .toolbar)
+        let position = try required(
+            viewModel.scene.nodePositions["hash-c"],
+            "测试提交必须具有场景位置"
+        )
+        let regionID = viewModel.createRegion(
+            title: "v3",
+            colorHex: "#2F80ED",
+            rect: GraphRect(
+                x: position.x - 10,
+                y: position.y - 10,
+                width: 20,
+                height: 20
+            )
+        )
+        try expectEqual(
+            viewModel.branchBundleProjection.bundle(containing: "hash-c"),
+            nil,
+            "区域内提交必须立即恢复独立节点"
+        )
+
+        viewModel.deleteRegion(id: regionID)
+        try expect(
+            viewModel.branchBundleProjection.bundle(containing: "hash-c")
+                != nil,
+            "删除区域后普通连续提交可以重新聚合"
+        )
+        viewModel.moveNode(
+            hash: "hash-c",
+            by: GraphPoint(x: 20, y: 12)
+        )
+        try expectEqual(
+            viewModel.branchBundleProjection.bundle(containing: "hash-c"),
+            nil,
+            "手动移动后必须立即成为强制可见锚点"
         )
     },
     TestCase("传统分支选择固定和手动节点保护写入场景") { @MainActor in

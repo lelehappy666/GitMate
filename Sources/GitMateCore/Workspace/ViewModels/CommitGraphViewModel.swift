@@ -40,6 +40,7 @@ public struct CommitGraphGitDerivedBase: Sendable {
     public let defaultPositions: [String: GraphPoint]
     public let availableHashes: Set<String>
     public let branchCatalog: CommitGraphBranchCatalog
+    public let searchIndex: CommitGraphSearchIndex
 
     public init(
         integrityReport: CommitGraphIntegrityReport,
@@ -51,7 +52,8 @@ public struct CommitGraphGitDerivedBase: Sendable {
             branches: [],
             headBranchID: nil,
             primaryBranchIDByHash: [:]
-        )
+        ),
+        searchIndex: CommitGraphSearchIndex = .empty
     ) {
         self.integrityReport = integrityReport
         self.canvasLayout = canvasLayout
@@ -59,6 +61,7 @@ public struct CommitGraphGitDerivedBase: Sendable {
         self.defaultPositions = defaultPositions
         self.availableHashes = availableHashes
         self.branchCatalog = branchCatalog
+        self.searchIndex = searchIndex
     }
 }
 
@@ -170,6 +173,11 @@ public struct DefaultCommitGraphViewModelDeriver:
                 fingerprint: request.snapshot.fingerprint
             )
             try Task.checkCancellation()
+            let searchIndex = CommitGraphSearchIndex(
+                commitsNewestFirst: request.snapshot.commitsNewestFirst,
+                fingerprint: request.snapshot.fingerprint
+            )
+            try Task.checkCancellation()
             let canvas = graphLayout.layout(topology: topology)
             try Task.checkCancellation()
             let traditional = traditionalLayout.layout(
@@ -192,7 +200,8 @@ public struct DefaultCommitGraphViewModelDeriver:
                 traditionalLayout: traditional,
                 defaultPositions: defaultPositions,
                 availableHashes: availableHashes,
-                branchCatalog: branchCatalog
+                branchCatalog: branchCatalog,
+                searchIndex: searchIndex
             )
         }
         return try await withTaskCancellationHandler {
@@ -335,6 +344,73 @@ private struct CommitGraphHistoryBinCacheKey: Hashable {
     let revision: UInt64
 }
 
+private enum CommitGraphBranchBundleProjectionDeriver {
+    static let synchronousNodeLimit = 2_000
+
+    static func build(
+        layout: CommitGraphLayoutResult,
+        scene: CommitGraphSceneState,
+        catalog: CommitGraphBranchCatalog,
+        selectedHashes: Set<String>,
+        selectedHash: String?,
+        expandedBundleIDs: Set<String>
+    ) -> CommitGraphBranchBundleProjection {
+        var forcedHashes = selectedHashes
+            .union(scene.manuallyPositionedHashes)
+        if let selectedHash {
+            forcedHashes.insert(selectedHash)
+        }
+        let groupHashes = Set(scene.groups.flatMap(\.memberHashes))
+        let groupedPositions = Dictionary(
+            scene.groups.flatMap { group in
+                group.relativePositions.map {
+                    (
+                        $0.key,
+                        GraphPoint(
+                            x: group.origin.x + $0.value.x,
+                            y: group.origin.y + $0.value.y
+                        )
+                    )
+                }
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var regionHashes = Set<String>()
+        if !scene.regions.isEmpty {
+            regionHashes.reserveCapacity(
+                min(layout.nodes.count, scene.regions.count * 64)
+            )
+            for node in layout.nodes {
+                let position = groupedPositions[node.hash]
+                    ?? scene.nodePositions[node.hash]
+                    ?? GraphPoint(x: node.x, y: node.y)
+                if scene.regions.contains(where: { region in
+                    position.x >= region.rect.minimumX
+                        && position.x <= region.rect.maximumX
+                        && position.y >= region.rect.minimumY
+                        && position.y <= region.rect.maximumY
+                }) {
+                    regionHashes.insert(node.hash)
+                }
+            }
+        }
+        return CommitGraphBranchBundleBuilder.build(
+            input: CommitGraphBranchBundleInput(
+                catalog: catalog,
+                layout: layout,
+                edges: layout.edges,
+                forcedVisibleHashes: forcedHashes,
+                groupBoundaryHashes: groupHashes,
+                regionBoundaryHashes: regionHashes,
+                shallowBoundaryHashes: Set(
+                    layout.shallowBoundaryEndpoints.map(\.childHash)
+                ),
+                expandedBundleIDs: expandedBundleIDs
+            )
+        )
+    }
+}
+
 @MainActor
 @Observable
 public final class CommitGraphViewModel {
@@ -395,6 +471,7 @@ public final class CommitGraphViewModel {
         headBranchID: nil,
         primaryBranchIDByHash: [:]
     )
+    public private(set) var searchIndex = CommitGraphSearchIndex.empty
     public private(set) var branchBundleProjection =
         CommitGraphBranchBundleProjection()
     public private(set) var traditionalBranchProjection =
@@ -501,6 +578,12 @@ public final class CommitGraphViewModel {
 
     @ObservationIgnored
     private var traditionalViewportWidth = 1_040.0
+
+    @ObservationIgnored
+    private var branchBundleRebuildTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var branchBundleRebuildRequestID: UInt64 = 0
 
     public init(
         reader: any LocalGitReading,
@@ -914,25 +997,10 @@ public final class CommitGraphViewModel {
             in: .whitespacesAndNewlines
         )
         guard !normalized.isEmpty else { return false }
-        let matchingReferenceTargets = Set(
-            currentSnapshot?.fingerprint.references.compactMap { reference in
-                reference.name.localizedCaseInsensitiveContains(normalized)
-                    ? reference.targetHash
-                    : nil
-            } ?? []
-        )
-        let match = commits.first { commit in
-            commit.fullHash.localizedCaseInsensitiveContains(normalized)
-                || commit.shortHash.localizedCaseInsensitiveContains(normalized)
-                || commit.subject.localizedCaseInsensitiveContains(normalized)
-                || commit.authorName.localizedCaseInsensitiveContains(normalized)
-                || commit.decorations.contains {
-                    $0.localizedCaseInsensitiveContains(normalized)
-                }
-                || matchingReferenceTargets.contains(commit.fullHash)
+        guard let matchHash = searchIndex.firstMatch(query: normalized) else {
+            return false
         }
-        guard let match else { return false }
-        selectForNavigation(hash: match.fullHash)
+        selectForNavigation(hash: matchHash)
         return true
     }
 
@@ -1187,21 +1255,40 @@ public final class CommitGraphViewModel {
             availableWidth / contentWidth,
             availableHeight / contentHeight
         )
-        let scale = min(
-            max(requestedScale, CommitGraphViewportProjector.minimumScale),
-            CommitGraphViewportProjector.maximumScale
-        )
-        let cannotFitEntireHistory = requestedScale
-            < CommitGraphViewportProjector.minimumScale
+        let usesLatestWindow = layout.nodes.count > 80
+            && requestedScale < CommitGraphLevelOfDetail.compactThreshold
+        let scale = usesLatestWindow
+            ? CommitGraphLevelOfDetail.compactThreshold
+            : min(
+                max(
+                    requestedScale,
+                    CommitGraphViewportProjector.minimumScale
+                ),
+                CommitGraphViewportProjector.maximumScale
+            )
         let latestHash = currentSnapshot?.commitsNewestFirst.first?.fullHash
             ?? layout.nodes.last?.hash
         let latestPosition = latestHash.flatMap(currentPosition(for:))
+        let latestWindowHashes = currentSnapshot.map {
+            Array($0.commitsNewestFirst.prefix(80).map(\.fullHash))
+        } ?? Array(layout.nodes.suffix(80).map(\.hash))
+        let latestWindowPositions = latestWindowHashes.compactMap(
+            currentPosition(for:)
+        )
+        let latestWindowCenterX: Double = {
+            guard let minimumX = latestWindowPositions.map(\.x).min(),
+                  let maximumX = latestWindowPositions.map(\.x).max()
+            else { return contentWidth / 2 }
+            return minimumX + (maximumX - minimumX) / 2
+        }()
 
         viewport = GraphViewport(
-            offsetX: (screenSize.width - contentWidth * scale) / 2,
-            offsetY: cannotFitEntireHistory
+            offsetX: usesLatestWindow
+                ? screenSize.width / 2 - latestWindowCenterX * scale
+                : (screenSize.width - contentWidth * scale) / 2,
+            offsetY: usesLatestWindow
                 ? latestPosition.map {
-                    screenSize.height / 2 - $0.y * scale
+                    screenSize.height * 0.42 - $0.y * scale
                 } ?? safePadding
                 : (screenSize.height - contentHeight * scale) / 2,
             scale: scale
@@ -1473,6 +1560,7 @@ public final class CommitGraphViewModel {
         )
         scene.regions.append(region)
         syncRenderRegions()
+        rebuildBranchBundleProjection()
         rebuildHistoryNavigationMarkers()
         recordSceneMutation()
         scheduleSceneSave()
@@ -1496,6 +1584,7 @@ public final class CommitGraphViewModel {
             scene.regions[index].rect = rect
         }
         syncRenderRegions()
+        rebuildBranchBundleProjection()
         rebuildHistoryNavigationMarkers()
         recordSceneMutation()
         scheduleSceneSave()
@@ -1510,6 +1599,7 @@ public final class CommitGraphViewModel {
         guard updated != scene else { return }
         scene = updated
         syncRenderRegions()
+        rebuildBranchBundleProjection()
         historyMarkersNeedRebuild = true
         recordSceneMutation()
         scheduleSceneSave()
@@ -1524,6 +1614,7 @@ public final class CommitGraphViewModel {
         guard updated != scene else { return }
         scene = updated
         syncRenderRegions()
+        rebuildBranchBundleProjection()
         historyMarkersNeedRebuild = true
         recordSceneMutation()
         scheduleSceneSave()
@@ -1533,6 +1624,7 @@ public final class CommitGraphViewModel {
         guard scene.regions.contains(where: { $0.id == id }) else { return }
         scene.regions.removeAll { $0.id == id }
         syncRenderRegions()
+        rebuildBranchBundleProjection()
         rebuildHistoryNavigationMarkers()
         recordSceneMutation()
         scheduleSceneSave()
@@ -1674,6 +1766,7 @@ public final class CommitGraphViewModel {
     private func beginRefreshRequest() -> UInt64 {
         baseDerivationTask?.cancel()
         sceneDerivationTask?.cancel()
+        cancelBranchBundleProjectionRebuild()
         baseDerivationTask = nil
         sceneDerivationTask = nil
         refreshRequestID &+= 1
@@ -1852,7 +1945,9 @@ public final class CommitGraphViewModel {
         layout = base.canvasLayout
         traditionalLayout = base.traditionalLayout
         branchCatalog = base.branchCatalog
+        searchIndex = base.searchIndex
         scene = derived.scene
+        cancelBranchBundleProjectionRebuild()
         branchBundleProjection = derived.branchBundleProjection
         branchProjectionRevision &+= 1
         rebuildTraditionalGroupBadgeIndex()
@@ -2040,6 +2135,7 @@ public final class CommitGraphViewModel {
         pathRevision &+= 1
         recordSceneMutation()
         if schedulesPersistence {
+            rebuildBranchBundleProjection()
             scheduleSceneSave()
         }
     }
@@ -2064,6 +2160,7 @@ public final class CommitGraphViewModel {
         pathRevision &+= 1
         recordSceneMutation()
         if schedulesPersistence {
+            rebuildBranchBundleProjection()
             scheduleSceneSave()
         }
     }
@@ -2169,50 +2266,83 @@ public final class CommitGraphViewModel {
 
     private func rebuildBranchBundleProjection() {
         guard !layout.nodes.isEmpty, !branchCatalog.branches.isEmpty else {
+            cancelBranchBundleProjectionRebuild()
             if !branchBundleProjection.bundles.isEmpty {
                 branchBundleProjection = CommitGraphBranchBundleProjection()
                 branchProjectionRevision &+= 1
             }
             return
         }
-        var forcedHashes = selectedHashes
-            .union(scene.manuallyPositionedHashes)
-        if let selectedHash {
-            forcedHashes.insert(selectedHash)
-        }
-        let groupHashes = Set(scene.groups.flatMap(\.memberHashes))
-        var regionHashes = Set<String>()
-        for node in layout.nodes {
-            let position = currentPosition(for: node.hash)
-                ?? GraphPoint(x: node.x, y: node.y)
-            if scene.regions.contains(where: { region in
-                position.x >= region.rect.minimumX
-                    && position.x <= region.rect.maximumX
-                    && position.y >= region.rect.minimumY
-                    && position.y <= region.rect.maximumY
-            }) {
-                regionHashes.insert(node.hash)
-            }
-        }
-        branchBundleProjection = CommitGraphBranchBundleBuilder.build(
-            input: CommitGraphBranchBundleInput(
-                catalog: branchCatalog,
-                layout: layout,
-                edges: layout.edges,
-                forcedVisibleHashes: forcedHashes,
-                groupBoundaryHashes: groupHashes,
-                regionBoundaryHashes: regionHashes,
-                shallowBoundaryHashes: Set(
-                    layout.shallowBoundaryEndpoints.map(\.childHash)
+        cancelBranchBundleProjectionRebuild()
+        let requestID = branchBundleRebuildRequestID
+        let layout = layout
+        let scene = scene
+        let catalog = branchCatalog
+        let selectedHashes = selectedHashes
+        let selectedHash = selectedHash
+        let expandedBundleIDs = expandedBranchBundleIDs
+        if layout.nodes.count
+            <= CommitGraphBranchBundleProjectionDeriver.synchronousNodeLimit {
+            installBranchBundleProjection(
+                CommitGraphBranchBundleProjectionDeriver.build(
+                    layout: layout,
+                    scene: scene,
+                    catalog: catalog,
+                    selectedHashes: selectedHashes,
+                    selectedHash: selectedHash,
+                    expandedBundleIDs: expandedBundleIDs
                 ),
-                expandedBundleIDs: expandedBranchBundleIDs
+                requestID: requestID
             )
-        )
+            return
+        }
+
+        branchBundleRebuildTask = Task { [weak self] in
+            await Task.yield()
+            guard !Task.isCancelled,
+                  self?.branchBundleRebuildRequestID == requestID
+            else { return }
+            let worker = Task.detached(priority: .userInitiated) {
+                CommitGraphBranchBundleProjectionDeriver.build(
+                    layout: layout,
+                    scene: scene,
+                    catalog: catalog,
+                    selectedHashes: selectedHashes,
+                    selectedHash: selectedHash,
+                    expandedBundleIDs: expandedBundleIDs
+                )
+            }
+            let rebuilt = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            guard !Task.isCancelled else { return }
+            self?.installBranchBundleProjection(
+                rebuilt,
+                requestID: requestID
+            )
+        }
+    }
+
+    private func installBranchBundleProjection(
+        _ rebuilt: CommitGraphBranchBundleProjection,
+        requestID: UInt64
+    ) {
+        guard branchBundleRebuildRequestID == requestID else { return }
+        branchBundleProjection = rebuilt
         let availableBundleIDs = Set(
             branchBundleProjection.bundles.map(\.id)
         ).union(expandedBranchBundleIDs)
         expandedBranchBundleIDs.formIntersection(availableBundleIDs)
         branchProjectionRevision &+= 1
+        branchBundleRebuildTask = nil
+    }
+
+    private func cancelBranchBundleProjectionRebuild() {
+        branchBundleRebuildRequestID &+= 1
+        branchBundleRebuildTask?.cancel()
+        branchBundleRebuildTask = nil
     }
 
     private func rebuildTraditionalBranchProjection() {

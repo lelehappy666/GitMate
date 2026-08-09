@@ -45,6 +45,63 @@ let commitGraphBranchCatalogTests = [
             first.branches.contains { $0.side == .left || $0.side == .right },
             "非主干分支必须向主干两侧生长"
         )
+    },
+    TestCase("拓扑泳道被回收复用时分支身份仍然隔离") {
+        let oldCommit = branchCatalogCommit(hash: "old-tip")
+        let newCommit = branchCatalogCommit(hash: "new-tip")
+        let topology = CommitGraphLaneTopology(
+            rowsNewestFirst: [
+                CommitGraphLaneRow(
+                    commit: newCommit,
+                    lane: 1,
+                    colorIndex: 1,
+                    connections: []
+                ),
+                CommitGraphLaneRow(
+                    commit: oldCommit,
+                    lane: 1,
+                    colorIndex: 1,
+                    connections: []
+                )
+            ],
+            maximumLane: 1
+        )
+        let catalog = CommitGraphBranchCatalog.build(
+            topology: topology,
+            fingerprint: CommitGraphReferenceFingerprint(
+                references: [
+                    CommitGraphReference(
+                        name: "refs/heads/old",
+                        targetHash: "old-tip",
+                        kind: .localBranch
+                    ),
+                    CommitGraphReference(
+                        name: "refs/remotes/origin/new",
+                        targetHash: "new-tip",
+                        kind: .remoteBranch
+                    )
+                ],
+                headName: nil,
+                headHash: nil,
+                isShallow: false
+            )
+        )
+
+        try expectEqual(
+            catalog.branch(containing: "old-tip")?.id,
+            "local:old",
+            "旧生命周期提交必须属于旧分支"
+        )
+        try expectEqual(
+            catalog.branch(containing: "new-tip")?.id,
+            "remote:origin/new",
+            "同一拓扑泳道上的新分支不得与旧分支串联"
+        )
+        try expect(
+            catalog.branch(id: "local:old")?.memberHashes
+                .contains("new-tip") == false,
+            "分支成员不得使用整条可回收拓扑泳道"
+        )
     }
 ]
 

@@ -30,7 +30,7 @@ let commitGraphTraditionalBranchProjectionTests = [
         let projection = CommitGraphTraditionalBranchProjector.project(
             CommitGraphTraditionalBranchProjectionInput(
                 catalog: catalog,
-                totalWidth: 980,
+                totalWidth: 760,
                 selectedHash: "selected-hash",
                 pinnedBranchIDs: ["local:pinned"],
                 lastSelectedBranchID: nil
@@ -51,8 +51,8 @@ let commitGraphTraditionalBranchProjectionTests = [
             "超出容量的远程分支必须进入远程聚合入口"
         )
         try expect(
-            projection.slots.count <= projection.capacity,
-            "分支和聚合入口的总槽位不得超过视口容量"
+            projection.slots.count <= projection.capacity + 2,
+            "真实分支容量之外最多只能增加本地与远程两个聚合入口"
         )
     },
     TestCase("选择隐藏分支只替换临时泳道并保留本地远程来源") {
@@ -121,6 +121,49 @@ let commitGraphTraditionalBranchProjectionTests = [
         try expect(
             visiblePinned.first == "remote:origin/recent",
             "固定分支超量时必须优先最近活跃分支"
+        )
+    },
+    TestCase("浮层选择隐藏分支优先于已选提交上下文") {
+        let projection = CommitGraphTraditionalBranchProjector.project(
+            CommitGraphTraditionalBranchProjectionInput(
+                catalog: traditionalProjectionCatalog(),
+                totalWidth: 760,
+                selectedHash: "selected-hash",
+                pinnedBranchIDs: [],
+                lastSelectedBranchID: "remote:origin/hidden"
+            )
+        )
+
+        try expect(
+            projection.visibleBranches.contains {
+                $0.id == "remote:origin/hidden"
+            },
+            "用户显式选择隐藏分支后必须立即替换临时槽"
+        )
+    },
+    TestCase("可见分支容量与本地远程聚合槽分别计算") {
+        let projection = CommitGraphTraditionalBranchProjector.project(
+            CommitGraphTraditionalBranchProjectionInput(
+                catalog: traditionalProjectionCatalog(),
+                totalWidth: 760,
+                selectedHash: nil,
+                pinnedBranchIDs: [],
+                lastSelectedBranchID: nil
+            )
+        )
+
+        try expectEqual(
+            projection.visibleBranches.count,
+            projection.capacity,
+            "四到八条容量应完整用于真实可见分支"
+        )
+        try expect(
+            projection.slots.contains { $0.kind == .hiddenLocalBranches },
+            "本地隐藏分支必须拥有独立聚合槽"
+        )
+        try expect(
+            projection.slots.contains { $0.kind == .hiddenRemoteBranches },
+            "远程隐藏分支必须拥有独立聚合槽"
         )
     }
 ]

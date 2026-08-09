@@ -335,9 +335,13 @@ struct CommitGraphCanvas: View {
 
             let cardWidth = max(138 * viewport.scale, 90)
             let cardHeight = max(40 * viewport.scale, 30)
+            let cardCenterY = min(
+                max(rect.midY, cardHeight / 2 + 12),
+                max(Double(size.height) - cardHeight / 2 - 12, cardHeight / 2)
+            )
             let cardRect = CGRect(
                 x: centerX - cardWidth / 2,
-                y: rect.midY - cardHeight / 2,
+                y: cardCenterY - cardHeight / 2,
                 width: cardWidth,
                 height: cardHeight
             )
@@ -367,7 +371,7 @@ struct CommitGraphCanvas: View {
                 context: &context
             )
             drawFittedText(
-                "\(bundle.commitCount) 个提交 · 点击展开",
+                "\(bundle.commitCount) 个提交 · \(bundleTimeRange(bundle))",
                 in: CGRect(
                     x: cardRect.minX + 10 * viewport.scale,
                     y: cardRect.midY,
@@ -382,6 +386,13 @@ struct CommitGraphCanvas: View {
                 context: &context
             )
         }
+    }
+
+    private func bundleTimeRange(
+        _ bundle: CommitGraphBranchBundle
+    ) -> String {
+        let format = Date.FormatStyle(date: .numeric, time: .omitted)
+        return "\(bundle.timeRange.lowerBound.formatted(format))–\(bundle.timeRange.upperBound.formatted(format))"
     }
 
     private func drawShallowBoundaryEndpoints(

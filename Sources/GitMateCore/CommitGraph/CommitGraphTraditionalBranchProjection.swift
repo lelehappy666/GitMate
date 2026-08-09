@@ -13,7 +13,8 @@ public enum CommitGraphTraditionalLaneCapacity {
 
 public enum CommitGraphTraditionalBranchSlotKind: Equatable, Sendable {
     case branch
-    case hiddenBranches
+    case hiddenLocalBranches
+    case hiddenRemoteBranches
 }
 
 public struct CommitGraphTraditionalBranchSlot:
@@ -145,10 +146,10 @@ public enum CommitGraphTraditionalBranchProjector {
             )
         }
 
-        let selectedBranchID = input.selectedHash.flatMap {
-            input.catalog.branch(containing: $0)?.id
-        } ?? input.lastSelectedBranchID.flatMap {
+        let selectedBranchID = input.lastSelectedBranchID.flatMap {
             input.catalog.branch(id: $0)?.id
+        } ?? input.selectedHash.flatMap {
+            input.catalog.branch(containing: $0)?.id
         }
         let relatedIDs = selectedBranchID.map {
             input.catalog.relatedBranchIDs(to: $0)
@@ -168,9 +169,7 @@ public enum CommitGraphTraditionalBranchProjector {
                 relatedBranchIDs: relatedIDs
             )
         }
-        let needsAggregate = ordered.count > capacity
-        let branchLimit = max(capacity - (needsAggregate ? 1 : 0), 1)
-        let visible = Array(ordered.prefix(branchLimit))
+        let visible = Array(ordered.prefix(capacity))
         let visibleIDs = Set(visible.map(\.id))
         let hidden = ordered.filter { !visibleIDs.contains($0.id) }
         let hiddenLocal = hidden.filter { $0.source != .remote }
@@ -188,16 +187,28 @@ public enum CommitGraphTraditionalBranchProjector {
                 branchID: branch.id
             )
         }
-        if !hidden.isEmpty {
+        if !hiddenLocal.isEmpty {
             slots.append(
                 CommitGraphTraditionalBranchSlot(
-                    id: "hidden:all",
+                    id: "hidden:local",
                     lane: slots.count,
-                    kind: .hiddenBranches,
-                    title: "其他分支",
-                    source: .synthetic,
+                    kind: .hiddenLocalBranches,
+                    title: "其他本地分支",
+                    source: .local,
                     branchID: nil,
-                    hiddenLocalCount: hiddenLocal.count,
+                    hiddenLocalCount: hiddenLocal.count
+                )
+            )
+        }
+        if !hiddenRemote.isEmpty {
+            slots.append(
+                CommitGraphTraditionalBranchSlot(
+                    id: "hidden:remote",
+                    lane: slots.count,
+                    kind: .hiddenRemoteBranches,
+                    title: "其他远程分支",
+                    source: .remote,
+                    branchID: nil,
                     hiddenRemoteCount: hiddenRemote.count
                 )
             )
@@ -207,9 +218,17 @@ public enum CommitGraphTraditionalBranchProjector {
                 ($0.0.id, $0.1)
             }
         )
-        if let aggregate = slots.last,
-           aggregate.kind == .hiddenBranches {
-            for branch in hidden {
+        if let aggregate = slots.first(where: {
+            $0.kind == .hiddenLocalBranches
+        }) {
+            for branch in hiddenLocal {
+                slotByBranchID[branch.id] = aggregate
+            }
+        }
+        if let aggregate = slots.first(where: {
+            $0.kind == .hiddenRemoteBranches
+        }) {
+            for branch in hiddenRemote {
                 slotByBranchID[branch.id] = aggregate
             }
         }

@@ -2,6 +2,45 @@ import Foundation
 import GitMateCore
 
 let commitGraphSceneReconcilerTests = [
+    TestCase("刷新对账保留手动位置和传统分支偏好") {
+        let scene = CommitGraphSceneState(
+            nodePositions: ["a": GraphPoint(x: 90, y: 120)],
+            manuallyPositionedHashes: ["a", "deleted"],
+            pinnedTraditionalBranchIDs: ["local:main", "remote:origin/release"],
+            lastTraditionalBranchID: "remote:origin/release"
+        )
+
+        let reconciled = CommitGraphSceneReconciler.reconcile(
+            scene: scene,
+            oldSnapshot: reconcileSnapshot(hashes: ["a", "deleted"]),
+            newSnapshot: reconcileSnapshot(hashes: ["a", "new"]),
+            defaultPositions: [
+                "a": GraphPoint(x: 10, y: 20),
+                "new": GraphPoint(x: 30, y: 40)
+            ]
+        )
+
+        try expectEqual(
+            reconciled.manuallyPositionedHashes,
+            Set(["a"]),
+            "对账必须保留存在提交的手动位置标记"
+        )
+        try expectEqual(
+            reconciled.nodePositions["a"],
+            GraphPoint(x: 90, y: 120),
+            "手动节点必须保留位置"
+        )
+        try expectEqual(
+            reconciled.pinnedTraditionalBranchIDs,
+            scene.pinnedTraditionalBranchIDs,
+            "分支固定偏好必须留给分支目录阶段再对账"
+        )
+        try expectEqual(
+            reconciled.lastTraditionalBranchID,
+            scene.lastTraditionalBranchID,
+            "最近分支选择不得在场景对账中丢失"
+        )
+    },
     TestCase("旧画布算法场景自动迁移到树枝布局且保留分组状态") {
         let groupID = UUID(uuidString: "ABABABAB-ABAB-ABAB-ABAB-ABABABABABAB")!
         let scene = CommitGraphSceneState(

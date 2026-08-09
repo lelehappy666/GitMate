@@ -120,22 +120,14 @@ public struct CommitGraphBranchCatalog: Equatable, Sendable {
             rows.map { ($0.commit.fullHash, $0) },
             uniquingKeysWith: { first, _ in first }
         )
-        let hashesByLane = Dictionary(grouping: rows, by: \.lane).mapValues {
-            Set($0.map(\.commit.fullHash))
-        }
-        let latestActivityByLane = Dictionary(grouping: rows, by: \.lane)
-            .mapValues { values in
-                values.map(\.commit.authoredAt).max()
-                    ?? Date(timeIntervalSince1970: 0)
-            }
         let headReferenceName = normalizedHeadReferenceName(fingerprint.headName)
         let knownAncestors = ancestors(
             from: fingerprint.headHash,
             rowsByHash: rowsByHash
         )
 
-        var descriptors: [CommitGraphBranchDescriptor] = []
-        var descriptorIDs = Set<String>()
+        var drafts: [BranchDraft] = []
+        var draftIDs = Set<String>()
         for reference in fingerprint.references.sorted(by: { $0.name < $1.name }) {
             guard let row = rowsByHash[reference.targetHash] else { continue }
             let source: CommitGraphBranchSource = reference.kind == .localBranch
@@ -143,22 +135,18 @@ public struct CommitGraphBranchCatalog: Equatable, Sendable {
                 : .remote
             let name = readableReferenceName(reference.name)
             let id = "\(source.rawValue):\(name)"
-            guard descriptorIDs.insert(id).inserted else { continue }
+            guard draftIDs.insert(id).inserted else { continue }
             let isHead = reference.name == headReferenceName
                 || (reference.kind == .localBranch
                     && name == fingerprint.headName
                     && reference.targetHash == fingerprint.headHash)
-            descriptors.append(
-                CommitGraphBranchDescriptor(
+            drafts.append(
+                BranchDraft(
                     id: id,
                     displayName: name,
                     source: source,
-                    side: side(for: row.lane),
-                    lane: row.lane,
                     tipHash: reference.targetHash,
-                    latestActivity: latestActivityByLane[row.lane]
-                        ?? row.commit.authoredAt,
-                    memberHashes: hashesByLane[row.lane] ?? [],
+                    latestActivity: row.commit.authoredAt,
                     isHead: isHead,
                     isMerged: !isHead
                         && knownAncestors.contains(reference.targetHash)
@@ -166,67 +154,98 @@ public struct CommitGraphBranchCatalog: Equatable, Sendable {
             )
         }
 
-        var headBranchID = descriptors.first(where: \.isHead)?.id
+        var headBranchID = drafts.first(where: \.isHead)?.id
         if headBranchID == nil,
            let headHash = fingerprint.headHash,
            let headRow = rowsByHash[headHash] {
             let id = "detached:HEAD"
-            descriptors.append(
-                CommitGraphBranchDescriptor(
+            drafts.append(
+                BranchDraft(
                     id: id,
                     displayName: "Detached HEAD",
                     source: .detached,
-                    side: .trunk,
-                    lane: headRow.lane,
                     tipHash: headHash,
-                    latestActivity: latestActivityByLane[headRow.lane]
-                        ?? headRow.commit.authoredAt,
-                    memberHashes: hashesByLane[headRow.lane] ?? [],
+                    latestActivity: headRow.commit.authoredAt,
                     isHead: true,
                     isMerged: false
                 )
             )
-            descriptorIDs.insert(id)
+            draftIDs.insert(id)
             headBranchID = id
         }
 
-        let representedLanes = Set(descriptors.map(\.lane))
-        for lane in Set(rows.map(\.lane)).subtracting(representedLanes).sorted() {
-            guard let tip = rows.first(where: { $0.lane == lane }) else { continue }
-            let id = "synthetic:lane-\(lane):\(tip.commit.fullHash)"
-            descriptors.append(
-                CommitGraphBranchDescriptor(
-                    id: id,
-                    displayName: lane == 0 ? "主干" : "分支 \(lane)",
-                    source: .synthetic,
-                    side: side(for: lane),
-                    lane: lane,
-                    tipHash: tip.commit.fullHash,
-                    latestActivity: latestActivityByLane[lane]
-                        ?? tip.commit.authoredAt,
-                    memberHashes: hashesByLane[lane] ?? [],
-                    isHead: lane == 0 && headBranchID == nil,
-                    isMerged: false
-                )
-            )
-            if lane == 0 && headBranchID == nil {
-                headBranchID = id
+        drafts.sort(by: draftOrdering)
+        var primaryByHash: [String: String] = [:]
+        for draft in drafts {
+            var current: String? = draft.tipHash
+            while let hash = current,
+                  primaryByHash[hash] == nil,
+                  let row = rowsByHash[hash] {
+                primaryByHash[hash] = draft.id
+                current = row.commit.parentHashes.first
             }
         }
 
-        descriptors.sort(by: branchOrdering)
-        let descriptorsByLane = Dictionary(grouping: descriptors, by: \.lane)
-        var primaryByHash: [String: String] = [:]
-        for row in rows {
-            let candidates = descriptorsByLane[row.lane] ?? []
-            if row.lane == 0,
-               let headBranchID,
-               candidates.contains(where: { $0.id == headBranchID }) {
-                primaryByHash[row.commit.fullHash] = headBranchID
-            } else if let primary = candidates.sorted(by: branchOrdering).first {
-                primaryByHash[row.commit.fullHash] = primary.id
+        let unassignedHashes = Set(rows.map(\.commit.fullHash))
+            .subtracting(primaryByHash.keys)
+        for component in unassignedComponents(
+            hashes: unassignedHashes,
+            rows: rows
+        ) {
+            guard let tip = rows.first(where: {
+                component.contains($0.commit.fullHash)
+            }) else { continue }
+            let id = "synthetic:\(tip.commit.fullHash)"
+            drafts.append(
+                BranchDraft(
+                    id: id,
+                    displayName: "未命名分支",
+                    source: .synthetic,
+                    tipHash: tip.commit.fullHash,
+                    latestActivity: component.compactMap {
+                        rowsByHash[$0]?.commit.authoredAt
+                    }.max() ?? tip.commit.authoredAt,
+                    isHead: headBranchID == nil,
+                    isMerged: false
+                )
+            )
+            if headBranchID == nil {
+                headBranchID = id
+            }
+            for hash in component {
+                primaryByHash[hash] = id
             }
         }
+
+        drafts.sort(by: draftOrdering)
+        var membersByBranchID: [String: Set<String>] = [:]
+        for (hash, branchID) in primaryByHash {
+            membersByBranchID[branchID, default: []].insert(hash)
+        }
+        var logicalLane = 1
+        var descriptors: [CommitGraphBranchDescriptor] = []
+        descriptors.reserveCapacity(drafts.count)
+        for draft in drafts {
+            let isHead = draft.id == headBranchID
+            let lane = isHead ? 0 : logicalLane
+            if !isHead { logicalLane += 1 }
+            descriptors.append(
+                CommitGraphBranchDescriptor(
+                    id: draft.id,
+                    displayName: draft.displayName,
+                    source: draft.source,
+                    side: isHead ? .trunk : stableSide(for: draft.id),
+                    lane: lane,
+                    tipHash: draft.tipHash,
+                    latestActivity: draft.latestActivity,
+                    memberHashes: membersByBranchID[draft.id] ?? [],
+                    isHead: isHead,
+                    isMerged: draft.isMerged
+                )
+            )
+        }
+        descriptors.sort(by: branchOrdering)
+
         var related: [String: Set<String>] = [:]
         for row in rows {
             guard let sourceID = primaryByHash[row.commit.fullHash] else {
@@ -248,6 +267,79 @@ public struct CommitGraphBranchCatalog: Equatable, Sendable {
         )
     }
 
+    private struct BranchDraft {
+        let id: String
+        let displayName: String
+        let source: CommitGraphBranchSource
+        let tipHash: String
+        let latestActivity: Date
+        let isHead: Bool
+        let isMerged: Bool
+    }
+
+    private static func draftOrdering(
+        _ first: BranchDraft,
+        _ second: BranchDraft
+    ) -> Bool {
+        if first.isHead != second.isHead { return first.isHead }
+        let sourceOrder: [CommitGraphBranchSource: Int] = [
+            .local: 0,
+            .remote: 1,
+            .detached: 2,
+            .synthetic: 3
+        ]
+        if sourceOrder[first.source] != sourceOrder[second.source] {
+            return sourceOrder[first.source, default: 4]
+                < sourceOrder[second.source, default: 4]
+        }
+        if first.latestActivity != second.latestActivity {
+            return first.latestActivity > second.latestActivity
+        }
+        return first.id < second.id
+    }
+
+    private static func unassignedComponents(
+        hashes: Set<String>,
+        rows: [CommitGraphLaneRow]
+    ) -> [Set<String>] {
+        guard !hashes.isEmpty else { return [] }
+        var adjacency: [String: Set<String>] = [:]
+        for row in rows where hashes.contains(row.commit.fullHash) {
+            for parent in row.commit.parentHashes where hashes.contains(parent) {
+                adjacency[row.commit.fullHash, default: []].insert(parent)
+                adjacency[parent, default: []].insert(row.commit.fullHash)
+            }
+        }
+        var remaining = hashes
+        var result: [Set<String>] = []
+        for row in rows {
+            let start = row.commit.fullHash
+            guard remaining.contains(start) else { continue }
+            var component = Set<String>()
+            var stack = [start]
+            while let hash = stack.popLast(),
+                  component.insert(hash).inserted {
+                remaining.remove(hash)
+                stack.append(contentsOf: adjacency[hash] ?? [])
+            }
+            result.append(component)
+        }
+        return result.sorted {
+            ($0.sorted().first ?? "") < ($1.sorted().first ?? "")
+        }
+    }
+
+    private static func stableSide(
+        for identity: String
+    ) -> CommitGraphBranchSide {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in identity.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return hash.isMultiple(of: 2) ? .right : .left
+    }
+
     private static func normalizedHeadReferenceName(_ headName: String?) -> String? {
         guard let headName, !headName.isEmpty else { return nil }
         return headName.hasPrefix("refs/") ? headName : "refs/heads/\(headName)"
@@ -261,11 +353,6 @@ public struct CommitGraphBranchCatalog: Equatable, Sendable {
             return String(name.dropFirst("refs/remotes/".count))
         }
         return name
-    }
-
-    private static func side(for lane: Int) -> CommitGraphBranchSide {
-        guard lane > 0 else { return .trunk }
-        return lane.isMultiple(of: 2) ? .right : .left
     }
 
     private static func branchOrdering(
