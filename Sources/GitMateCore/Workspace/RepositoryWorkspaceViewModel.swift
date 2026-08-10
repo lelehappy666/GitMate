@@ -66,6 +66,11 @@ public final class RepositoryWorkspaceViewModel {
         state.errorMessage = nil
     }
 
+    public func cancelPageLoads() {
+        loadTask?.cancel()
+        loadMoreTask?.cancel()
+    }
+
     public func loadCurrentRoute() async {
         loadTask?.cancel()
         let route = state.route
@@ -98,7 +103,11 @@ public final class RepositoryWorkspaceViewModel {
             }
         }
         loadTask = task
-        await task.value
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
         if loadID == identifier {
             loadTask = nil
         }
@@ -153,7 +162,11 @@ public final class RepositoryWorkspaceViewModel {
         }
         loadMoreID = identifier
         loadMoreTask = task
-        await task.value
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
         if loadMoreID == identifier {
             loadMoreTask = nil
             loadMoreID = nil

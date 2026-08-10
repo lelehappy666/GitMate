@@ -86,6 +86,7 @@ struct GitMateRootView: View {
             if repositoryManagementAccess.shouldDismissWorkspace(
                 isPresented: repositoryWorkspace != nil
             ) {
+                repositoryWorkspace?.workspaceViewModel.cancelPageLoads()
                 repositoryWorkspace = nil
             }
         }

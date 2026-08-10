@@ -228,6 +228,194 @@ private final class WorkspaceIssuesAPIFake:
     }
 }
 
+private final class CancellableWorkspaceIssuesAPIFake:
+    GitHubIssuesAPI,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var pendingIssuesRequest:
+        CheckedContinuation<GitHubPage<GitHubIssue>, Error>?
+    private var didStartIssuesRequest = false
+    private var didObserveCancellation = false
+
+    private let firstIssuesPage: GitHubPage<GitHubIssue>?
+
+    init(firstIssuesPage: GitHubPage<GitHubIssue>? = nil) {
+        self.firstIssuesPage = firstIssuesPage
+    }
+
+    var issuesRequestStarted: Bool {
+        lock.withLock { didStartIssuesRequest }
+    }
+
+    var issuesRequestObservedCancellation: Bool {
+        lock.withLock { didObserveCancellation }
+    }
+
+    func completeIssuesRequest() {
+        let continuation = lock.withLock {
+            let continuation = pendingIssuesRequest
+            pendingIssuesRequest = nil
+            return continuation
+        }
+        continuation?.resume(
+            returning: GitHubPage(
+                items: [
+                    GitHubIssue(
+                        id: 99,
+                        number: 99,
+                        title: "过期议题",
+                        body: nil,
+                        state: .open,
+                        author: IssueUser(login: "lele")
+                    )
+                ],
+                nextPageURL: nil
+            )
+        )
+    }
+
+    func issues(
+        query: IssueQuery,
+        pageURL: URL?,
+        token: String
+    ) async throws -> GitHubPage<GitHubIssue> {
+        if pageURL == nil, let firstIssuesPage {
+            return firstIssuesPage
+        }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                lock.withLock {
+                    didStartIssuesRequest = true
+                    pendingIssuesRequest = continuation
+                }
+            }
+        } onCancel: {
+            lock.withLock {
+                didObserveCancellation = true
+            }
+        }
+    }
+
+    func issue(number: Int, token: String) async throws -> GitHubIssue {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func timeline(
+        number: Int,
+        token: String
+    ) async throws -> [IssueTimelineEvent] {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func comments(
+        number: Int,
+        token: String
+    ) async throws -> [IssueComment] {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func createIssue(
+        _ input: CreateIssueInput,
+        token: String
+    ) async throws -> GitHubIssue {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func updateIssue(
+        number: Int,
+        input: UpdateIssueInput,
+        token: String
+    ) async throws -> GitHubIssue {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func createComment(
+        number: Int,
+        body: String,
+        token: String
+    ) async throws -> IssueComment {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func updateComment(
+        id: Int64,
+        body: String,
+        token: String
+    ) async throws -> IssueComment {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func lockIssue(
+        number: Int,
+        reason: IssueLockReason?,
+        token: String
+    ) async throws {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func unlockIssue(number: Int, token: String) async throws {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func milestones(
+        state: IssueState?,
+        token: String
+    ) async throws -> [IssueMilestone] {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func createMilestone(
+        _ input: MilestoneInput,
+        token: String
+    ) async throws -> IssueMilestone {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func updateMilestone(
+        number: Int,
+        input: MilestoneInput,
+        token: String
+    ) async throws -> IssueMilestone {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func deleteMilestone(number: Int, token: String) async throws {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func labels(token: String) async throws -> [IssueLabel] {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func labelUsage(token: String) async throws -> [String: IssueLabelUsage] {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func createLabel(
+        _ input: IssueLabelInput,
+        token: String
+    ) async throws -> IssueLabel {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func updateLabel(
+        name: String,
+        input: IssueLabelInput,
+        token: String
+    ) async throws -> IssueLabel {
+        throw CancellationTestError.unexpectedRequest
+    }
+
+    func deleteLabel(name: String, token: String) async throws {
+        throw CancellationTestError.unexpectedRequest
+    }
+}
+
+private enum CancellationTestError: Error {
+    case unexpectedRequest
+}
+
 private actor EmptyLabelMergeAPI: LabelMergeAPI {
     func issueNumbers(labelName: String, token: String) async throws -> [Int] { [] }
     func addLabels(to issueNumber: Int, names: [String], token: String) async throws {}
@@ -311,6 +499,43 @@ private func makeWorkspaceViewModel(
         issuesAPI,
         persistence
     )
+}
+
+@MainActor
+private func makeCancellableWorkspaceViewModel(
+    issuesAPI: CancellableWorkspaceIssuesAPIFake
+) throws -> RepositoryWorkspaceViewModel {
+    let credentials = InMemoryCredentialStore()
+    try credentials.save(token: "secret", accountID: workspaceAccount.id)
+    return RepositoryWorkspaceViewModel(
+        context: RepositoryWorkspaceContext(
+            account: workspaceAccount,
+            repository: workspaceRepository,
+            localDirectory: workspaceDirectory,
+            tokenAccountID: workspaceAccount.id
+        ),
+        dependencies: RepositoryWorkspaceDependencies(
+            localGit: WorkspaceLocalGitFake(),
+            branchesAPI: WorkspaceBranchesAPIFake(),
+            issuesAPI: issuesAPI,
+            credentialStore: credentials,
+            persistenceStore: InMemoryWorkspacePersistenceStore(),
+            labelMergeService: LabelMergeService(api: EmptyLabelMergeAPI())
+        ),
+        initialRoute: .issues
+    )
+}
+
+private func waitForIssuesRequestStart(
+    _ issuesAPI: CancellableWorkspaceIssuesAPIFake
+) async throws {
+    for _ in 0..<10_000 {
+        if issuesAPI.issuesRequestStarted {
+            return
+        }
+        await Task.yield()
+    }
+    throw TestFailure(description: "议题读取任务未在有界等待内开始")
 }
 
 let repositoryWorkspaceViewModelTests = [
@@ -538,6 +763,158 @@ let repositoryWorkspaceViewModelTests = [
             viewModel.state.issues.map(\.number),
             [91, 92],
             "第二页议题只能追加一次"
+        )
+    },
+    TestCase("取消外层当前页面加载会取消内部读取且不写入过期状态") { @MainActor in
+        let issues = CancellableWorkspaceIssuesAPIFake()
+        let viewModel = try makeCancellableWorkspaceViewModel(
+            issuesAPI: issues
+        )
+        let load = Task { @MainActor in
+            await viewModel.loadCurrentRoute()
+        }
+        try await waitForIssuesRequestStart(issues)
+
+        load.cancel()
+        issues.completeIssuesRequest()
+        await load.value
+
+        try expect(
+            issues.issuesRequestObservedCancellation,
+            "外层取消必须传递到底层议题读取任务"
+        )
+        try expectEqual(
+            viewModel.state.issues,
+            [],
+            "取消后返回的过期议题不得写入状态"
+        )
+        try expectEqual(
+            viewModel.state.status,
+            .idle,
+            "取消后的页面加载应结束并回到空闲状态"
+        )
+    },
+    TestCase("显式取消当前页面读取会终止底层任务且不写入过期状态") { @MainActor in
+        let issues = CancellableWorkspaceIssuesAPIFake()
+        let viewModel = try makeCancellableWorkspaceViewModel(
+            issuesAPI: issues
+        )
+        let load = Task { @MainActor in
+            await viewModel.loadCurrentRoute()
+        }
+        try await waitForIssuesRequestStart(issues)
+
+        viewModel.cancelPageLoads()
+        issues.completeIssuesRequest()
+        await load.value
+
+        try expect(
+            issues.issuesRequestObservedCancellation,
+            "显式取消必须传递到底层议题读取任务"
+        )
+        try expectEqual(
+            viewModel.state.issues,
+            [],
+            "显式取消后返回的过期议题不得写入状态"
+        )
+        try expectEqual(
+            viewModel.state.status,
+            .idle,
+            "显式取消后的页面加载应结束并回到空闲状态"
+        )
+    },
+    TestCase("显式取消页面读取会终止加载更多且不追加过期页") { @MainActor in
+        let nextURL = URL(
+            string: "https://api.github.com/repos/GitMate/mac-client/issues?page=2"
+        )!
+        let issues = CancellableWorkspaceIssuesAPIFake(
+            firstIssuesPage: GitHubPage(
+                items: [
+                    GitHubIssue(
+                        id: 1,
+                        number: 91,
+                        title: "第一页",
+                        body: nil,
+                        state: .open,
+                        author: IssueUser(login: "lele")
+                    )
+                ],
+                nextPageURL: nextURL
+            )
+        )
+        let viewModel = try makeCancellableWorkspaceViewModel(
+            issuesAPI: issues
+        )
+        await viewModel.loadCurrentRoute()
+        let loadMore = Task { @MainActor in
+            await viewModel.loadMoreIssues()
+        }
+        try await waitForIssuesRequestStart(issues)
+
+        viewModel.cancelPageLoads()
+        issues.completeIssuesRequest()
+        await loadMore.value
+
+        try expect(
+            issues.issuesRequestObservedCancellation,
+            "显式取消必须传递到底层加载更多任务"
+        )
+        try expectEqual(
+            viewModel.state.issues.map(\.number),
+            [91],
+            "显式取消后返回的过期页不得追加"
+        )
+        try expectEqual(
+            viewModel.state.nextIssuesPageURL,
+            nextURL,
+            "取消加载更多后应保留原分页游标"
+        )
+    },
+    TestCase("取消外层加载更多会取消内部读取且不追加过期页") { @MainActor in
+        let nextURL = URL(
+            string: "https://api.github.com/repos/GitMate/mac-client/issues?page=2"
+        )!
+        let issues = CancellableWorkspaceIssuesAPIFake(
+            firstIssuesPage: GitHubPage(
+                items: [
+                    GitHubIssue(
+                        id: 1,
+                        number: 91,
+                        title: "第一页",
+                        body: nil,
+                        state: .open,
+                        author: IssueUser(login: "lele")
+                    )
+                ],
+                nextPageURL: nextURL
+            )
+        )
+        let viewModel = try makeCancellableWorkspaceViewModel(
+            issuesAPI: issues
+        )
+        await viewModel.loadCurrentRoute()
+        let loadMore = Task { @MainActor in
+            await viewModel.loadMoreIssues()
+        }
+        try await waitForIssuesRequestStart(issues)
+
+        loadMore.cancel()
+        issues.completeIssuesRequest()
+        await loadMore.value
+
+        try expect(
+            issues.issuesRequestObservedCancellation,
+            "外层取消必须传递到底层加载更多任务"
+        )
+        try expectEqual(
+            viewModel.state.issues.map(\.number),
+            [91],
+            "外层取消后返回的过期页不得追加"
+        )
+        try expectEqual(
+            viewModel.state.nextIssuesPageURL,
+            nextURL,
+            "取消加载更多后应保留原分页游标"
         )
     },
     TestCase("401 响应转为工作区授权失效状态") { @MainActor in
