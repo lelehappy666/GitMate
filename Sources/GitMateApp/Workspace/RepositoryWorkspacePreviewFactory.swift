@@ -7,7 +7,10 @@ enum RepositoryWorkspacePreviewFactory {
         page: Int,
         state: WorkspacePreviewState
     ) -> RepositoryWorkspaceRuntime {
-        let workspaceViewModel = makeWorkspaceViewModel(page: page)
+        let workspaceViewModel = makeWorkspaceViewModel(
+            page: page,
+            state: state
+        )
         let contentLoader = RepositoryWorkspacePreviewContentLoader(
             state: state
         )
@@ -33,7 +36,8 @@ enum RepositoryWorkspacePreviewFactory {
     }
 
     private static func makeWorkspaceViewModel(
-        page: Int
+        page: Int,
+        state: WorkspacePreviewState
     ) -> RepositoryWorkspaceViewModel {
         let credentials = InMemoryCredentialStore()
         try? credentials.save(
@@ -53,7 +57,7 @@ enum RepositoryWorkspacePreviewFactory {
             dependencies: RepositoryWorkspaceDependencies(
                 localGit: WorkspacePreviewLocalGit(),
                 branchesAPI: WorkspacePreviewBranchesAPI(),
-                issuesAPI: WorkspacePreviewIssuesAPI(),
+                issuesAPI: WorkspacePreviewIssuesAPI(state: state),
                 credentialStore: credentials,
                 persistenceStore: InMemoryWorkspacePersistenceStore(),
                 labelMergeService: WorkspacePreviewLabelMerger()
@@ -868,6 +872,8 @@ private struct WorkspacePreviewBranchesAPI: GitHubBranchesAPI {
 }
 
 private struct WorkspacePreviewIssuesAPI: GitHubIssuesAPI {
+    let state: WorkspacePreviewState
+
     func issues(
         query: IssueQuery,
         pageURL: URL?,
@@ -1003,7 +1009,20 @@ private struct WorkspacePreviewIssuesAPI: GitHubIssuesAPI {
         _ input: MilestoneInput,
         token: String
     ) async throws -> IssueMilestone {
-        IssueMilestone(
+        if state == .error {
+            throw GitHubAPIError.validationFailed(
+                message: "Invalid request.",
+                details: [
+                    GitHubValidationErrorDetail(
+                        resource: "Milestone",
+                        field: "due_on",
+                        code: "invalid",
+                        message: "截止日期必须晚于当前时间"
+                    )
+                ]
+            )
+        }
+        return IssueMilestone(
             id: 999,
             number: 99,
             title: input.title,

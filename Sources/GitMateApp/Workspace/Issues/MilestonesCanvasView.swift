@@ -4,8 +4,7 @@ import SwiftUI
 struct MilestonesCanvasView: View {
     @Bindable var viewModel: RepositoryWorkspaceViewModel
     @State private var selectedMilestone: IssueMilestone?
-    @State private var editingMilestone: IssueMilestone?
-    @State private var showsEditor = false
+    @State private var editorPresentation: MilestoneEditorPresentation?
     @State private var scale: CGFloat = 0.85
     @State private var offset = CGSize(width: 60, height: 10)
     @GestureState private var dragTranslation = CGSize.zero
@@ -25,8 +24,9 @@ struct MilestonesCanvasView: View {
                 onClose: { selectedMilestone = nil },
                 onEdit: {
                     selectedMilestone = nil
-                    editingMilestone = milestone
-                    showsEditor = true
+                    editorPresentation = MilestoneEditorPresentation(
+                        milestone: milestone
+                    )
                 },
                 onToggleState: {
                     selectedMilestone = nil
@@ -54,30 +54,37 @@ struct MilestonesCanvasView: View {
                 }
             )
         }
-        .sheet(isPresented: $showsEditor) {
+        .sheet(item: $editorPresentation) { presentation in
             MilestoneEditorSheet(
-                milestone: editingMilestone,
+                milestone: presentation.milestone,
                 onCancel: {
-                    editingMilestone = nil
-                    showsEditor = false
+                    editorPresentation = nil
                 },
-                onSave: { input in
-                    let original = editingMilestone
-                    editingMilestone = nil
-                    showsEditor = false
-                    Task {
-                        if let original {
-                            await viewModel.updateMilestone(
-                                number: original.number,
-                                input: input
-                            )
-                        } else {
-                            await viewModel.createMilestone(input)
-                        }
-                    }
-                }
+                onSave: saveMilestone
             )
         }
+    }
+
+    @MainActor
+    private func saveMilestone(_ input: MilestoneInput) async -> String? {
+        guard let editorPresentation else {
+            return "里程碑编辑窗口已关闭，请重新打开后再试。"
+        }
+        let succeeded: Bool
+        if let milestone = editorPresentation.milestone {
+            succeeded = await viewModel.updateMilestone(
+                number: milestone.number,
+                input: input
+            )
+        } else {
+            succeeded = await viewModel.createMilestone(input)
+        }
+        guard succeeded else {
+            return viewModel.state.errorMessage
+                ?? "保存里程碑失败，请检查网络后重试。"
+        }
+        self.editorPresentation = nil
+        return nil
     }
 
     private var layout: MilestoneTimelineLayoutResult {
@@ -101,8 +108,9 @@ struct MilestonesCanvasView: View {
             Spacer()
 
             Button {
-                editingMilestone = nil
-                showsEditor = true
+                editorPresentation = MilestoneEditorPresentation(
+                    milestone: nil
+                )
             } label: {
                 Label("新建里程碑", systemImage: "plus")
             }
@@ -624,20 +632,27 @@ private struct MilestoneDetailSheet: View {
     }
 }
 
+private struct MilestoneEditorPresentation: Identifiable {
+    let id = UUID()
+    let milestone: IssueMilestone?
+}
+
 private struct MilestoneEditorSheet: View {
     let milestone: IssueMilestone?
     let onCancel: () -> Void
-    let onSave: (MilestoneInput) -> Void
+    let onSave: @MainActor (MilestoneInput) async -> String?
     @State private var title: String
     @State private var description: String
     @State private var state: IssueState
     @State private var hasDueDate: Bool
     @State private var dueDate: Date
+    @State private var isSaving = false
+    @State private var errorMessage: String?
 
     init(
         milestone: IssueMilestone?,
         onCancel: @escaping () -> Void,
-        onSave: @escaping (MilestoneInput) -> Void
+        onSave: @escaping @MainActor (MilestoneInput) async -> String?
     ) {
         self.milestone = milestone
         self.onCancel = onCancel
@@ -663,6 +678,7 @@ private struct MilestoneEditorSheet: View {
                 .font(.system(size: 19, weight: .bold))
             TextField("里程碑名称", text: $title)
                 .textFieldStyle(.roundedBorder)
+                .disabled(isSaving)
             TextEditor(text: $description)
                 .font(.system(size: 12))
                 .padding(8)
@@ -671,6 +687,7 @@ private struct MilestoneEditorSheet: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(GitMateTheme.border)
                 }
+                .disabled(isSaving)
             HStack {
                 Text("状态")
                     .font(.system(size: 11, weight: .semibold))
@@ -679,41 +696,93 @@ private struct MilestoneEditorSheet: View {
                     Text("已关闭").tag(IssueState.closed)
                 }
                 .labelsHidden()
+                .disabled(isSaving)
                 Spacer()
             }
             Toggle("设置截止日期", isOn: $hasDueDate)
+                .disabled(isSaving)
             if hasDueDate {
                 DatePicker(
                     "截止日期",
                     selection: $dueDate,
                     displayedComponents: .date
                 )
+                .disabled(isSaving)
+            }
+            if let errorMessage {
+                Label(
+                    errorMessage,
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(GitMateTheme.danger)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(
+                    "workspace.milestones.editor.error"
+                )
             }
             HStack {
                 Spacer()
                 Button("取消", action: onCancel)
                     .buttonStyle(.bordered)
-                Button("保存") {
-                    onSave(
-                        MilestoneInput(
-                            title: title.trimmingCharacters(
-                                in: .whitespacesAndNewlines
-                            ),
-                            description:
-                                description.isEmpty ? nil : description,
-                            state: state,
-                            dueOn: hasDueDate ? dueDate : nil
-                        )
-                    )
+                    .disabled(isSaving)
+                Button {
+                    Task {
+                        await submit()
+                    }
+                } label: {
+                    if isSaving {
+                        HStack(spacing: 7) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("正在保存…")
+                        }
+                    } else {
+                        Text("保存")
+                    }
                 }
                 .buttonStyle(GitMateButtonStyle(role: .primary))
                 .disabled(
                     title.trimmingCharacters(in: .whitespacesAndNewlines)
                         .isEmpty
+                        || isSaving
+                )
+                .accessibilityIdentifier(
+                    "workspace.milestones.editor.save"
                 )
             }
         }
         .padding(22)
         .frame(width: 520)
+        .interactiveDismissDisabled(isSaving)
+    }
+
+    @MainActor
+    private func submit() async {
+        guard !isSaving else {
+            return
+        }
+        isSaving = true
+        errorMessage = nil
+        let trimmedTitle = title.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let trimmedDescription = description.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let error = await onSave(
+            MilestoneInput(
+                title: trimmedTitle,
+                description: trimmedDescription.isEmpty
+                    ? nil
+                    : trimmedDescription,
+                state: state,
+                dueOn: hasDueDate ? dueDate : nil
+            )
+        )
+        if let error {
+            errorMessage = error
+        }
+        isSaving = false
     }
 }
