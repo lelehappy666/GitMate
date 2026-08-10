@@ -201,9 +201,7 @@ private enum WorkspacePreviewData {
         id: "github.com:100",
         login: "lele",
         name: "Lele",
-        avatarURL: URL(
-            string: "https://avatars.githubusercontent.com/u/9919"
-        ),
+        avatarURL: nil,
         serverURL: URL(string: "https://github.com")!,
         kind: .githubDotCom,
         scopes: ["repo", "read:user", "workflow"]
@@ -227,27 +225,21 @@ private enum WorkspacePreviewData {
             databaseID: 100,
             login: "lele",
             name: "Lele",
-            avatarURL: URL(
-                string: "https://avatars.githubusercontent.com/u/9919"
-            ),
+            avatarURL: nil,
             webURL: URL(string: "https://github.com/lele")
         ),
         IssueUser(
             databaseID: 101,
             login: "yuhan",
             name: "Yuhan",
-            avatarURL: URL(
-                string: "https://avatars.githubusercontent.com/u/583231"
-            ),
+            avatarURL: nil,
             webURL: URL(string: "https://github.com/yuhan")
         ),
         IssueUser(
             databaseID: 102,
             login: "mingxu",
             name: "Mingxu",
-            avatarURL: URL(
-                string: "https://avatars.githubusercontent.com/u/69631"
-            ),
+            avatarURL: nil,
             webURL: URL(string: "https://github.com/mingxu")
         )
     ]
