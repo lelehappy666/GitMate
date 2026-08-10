@@ -2,6 +2,17 @@ import Foundation
 import GitMateCore
 
 let repositoryWorkspaceModelTests = [
+    TestCase("仓库工作区包含总览与介绍路由") {
+        let routes: [(RepositoryWorkspaceRoute, String, Int)] = [
+            (.overview, "overview", 12),
+            (.readme, "readme", 13)
+        ]
+
+        for (route, expectedID, expectedPage) in routes {
+            try expectEqual(route.id, expectedID, "仓库内容路由标识应保持稳定")
+            try expectEqual(route.pageNumber, expectedPage, "仓库内容页编号应保持稳定")
+        }
+    },
     TestCase("第 16–23 页路由编号保持稳定") {
         let routes: [(RepositoryWorkspaceRoute, Int)] = [
             (.branches, 16),

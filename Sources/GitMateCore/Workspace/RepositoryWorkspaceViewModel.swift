@@ -640,6 +640,8 @@ public final class RepositoryWorkspaceViewModel {
         }
 
         switch route {
+        case .overview, .readme:
+            return
         case .branches:
             let result = try await loadBranches(token: token)
             try ensureCurrent(route: route, identifier: identifier)
