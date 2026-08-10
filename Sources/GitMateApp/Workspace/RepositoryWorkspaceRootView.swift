@@ -9,12 +9,14 @@ struct RepositoryWorkspaceRootView: View {
     var onReturnToWorkspace: (() -> Void)? = nil
     var onOpenWorkspaceRoute: ((WorkspaceRoute) -> Void)? = nil
     var onResync: (() -> Void)? = nil
+    var onSettingsRequested: (() -> Void)? = nil
 
     init(
         runtime: RepositoryWorkspaceRuntime,
         onReturnToWorkspace: (() -> Void)? = nil,
         onOpenWorkspaceRoute: ((WorkspaceRoute) -> Void)? = nil,
-        onResync: (() -> Void)? = nil
+        onResync: (() -> Void)? = nil,
+        onSettingsRequested: (() -> Void)? = nil
     ) {
         viewModel = runtime.workspaceViewModel
         overviewViewModel = runtime.overviewViewModel
@@ -23,13 +25,15 @@ struct RepositoryWorkspaceRootView: View {
         self.onReturnToWorkspace = onReturnToWorkspace
         self.onOpenWorkspaceRoute = onOpenWorkspaceRoute
         self.onResync = onResync
+        self.onSettingsRequested = onSettingsRequested
     }
 
     var body: some View {
         HStack(spacing: 0) {
             RepositorySidebarView(
                 viewModel: viewModel,
-                onReturnToWorkspace: onReturnToWorkspace
+                onReturnToWorkspace: onReturnToWorkspace,
+                onSettingsRequested: onSettingsRequested
             )
                 .frame(width: GitMateTheme.workspaceSidebarWidth)
 

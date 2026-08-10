@@ -20,6 +20,8 @@ struct WorkspaceRootView: View {
     let onDownloadRepository:
         (Repository, RepositorySyncMode) -> Void
     let onOpenRepositoryTools: (Repository) -> Void
+    let repositoryManagementEnabled: Bool
+    let onSettingsRequested: () -> Void
 
     init(
         session: WorkspaceSession,
@@ -30,7 +32,9 @@ struct WorkspaceRootView: View {
         onDownloadRepository:
             @escaping (Repository, RepositorySyncMode) -> Void = { _, _ in },
         onOpenRepositoryTools:
-            @escaping (Repository) -> Void = { _ in }
+            @escaping (Repository) -> Void = { _ in },
+        repositoryManagementEnabled: Bool = false,
+        onSettingsRequested: @escaping () -> Void = {}
     ) {
         var initialSession = session
         let importedRepositories = (
@@ -94,6 +98,8 @@ struct WorkspaceRootView: View {
         self.onReauthorize = onReauthorize
         self.onDownloadRepository = onDownloadRepository
         self.onOpenRepositoryTools = onOpenRepositoryTools
+        self.repositoryManagementEnabled = repositoryManagementEnabled
+        self.onSettingsRequested = onSettingsRequested
     }
 
     var body: some View {
@@ -109,7 +115,9 @@ struct WorkspaceRootView: View {
                         return
                     }
                     onOpenRepositoryTools(repository)
-                }
+                },
+                repositoryManagementEnabled: repositoryManagementEnabled,
+                onSettingsRequested: onSettingsRequested
             )
         } detail: {
             if apiAuthorizationRequired {
