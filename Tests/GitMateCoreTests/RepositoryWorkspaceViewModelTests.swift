@@ -557,7 +557,14 @@ let repositoryWorkspaceViewModelTests = [
         let issues = WorkspaceIssuesAPIFake()
         issues.createError = .validationFailed(
             message: "Validation Failed",
-            fields: ["title"]
+            details: [
+                GitHubValidationErrorDetail(
+                    resource: "Issue",
+                    field: "title",
+                    code: "missing_field",
+                    message: nil
+                )
+            ]
         )
         let persistence = InMemoryWorkspacePersistenceStore()
         let (viewModel, _, _, _, store) = try makeWorkspaceViewModel(

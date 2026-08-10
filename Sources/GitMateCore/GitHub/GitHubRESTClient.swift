@@ -188,7 +188,7 @@ public final class GitHubRESTClient: @unchecked Sendable {
         case 422:
             return .validationFailed(
                 message: message ?? "GitHub 拒绝了请求数据。",
-                fields: payload?.errors?.compactMap(\.field) ?? []
+                details: payload?.errors ?? []
             )
         case 429:
             let resetAt = response.value(forHTTPHeaderField: "X-RateLimit-Reset")
@@ -253,12 +253,8 @@ public final class GitHubRESTClient: @unchecked Sendable {
 }
 
 private struct GitHubRESTErrorPayload: Decodable {
-    struct Detail: Decodable {
-        let field: String?
-    }
-
     let message: String
-    let errors: [Detail]?
+    let errors: [GitHubValidationErrorDetail]?
 
     static func message(from data: Data) -> String? {
         try? JSONDecoder().decode(Self.self, from: data).message

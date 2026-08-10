@@ -98,7 +98,12 @@ let githubRESTClientTests = [
                 {
                   "message": "Validation Failed",
                   "errors": [
-                    {"resource": "Issue", "field": "title", "code": "missing_field"}
+                    {
+                      "resource": "Milestone",
+                      "field": "due_on",
+                      "code": "invalid",
+                      "message": "must be in the future"
+                    }
                   ]
                 }
                 """
@@ -112,9 +117,27 @@ let githubRESTClientTests = [
                 token: "secret"
             )
             throw TestFailure(description: "422 不应被视为成功")
-        } catch let GitHubAPIError.validationFailed(message, fields) {
+        } catch let GitHubAPIError.validationFailed(message, details) {
             try expectEqual(message, "Validation Failed", "应保留验证错误摘要")
-            try expectEqual(fields, ["title"], "应提取出错字段")
+            try expectEqual(
+                details,
+                [
+                    GitHubValidationErrorDetail(
+                        resource: "Milestone",
+                        field: "due_on",
+                        code: "invalid",
+                        message: "must be in the future"
+                    )
+                ],
+                "应保留完整字段详情"
+            )
+            let localized = GitHubAPIError.validationFailed(
+                message: message,
+                details: details
+            ).localizedDescription
+            try expect(localized.contains("Milestone.due_on"), "应显示资源与字段")
+            try expect(localized.contains("invalid"), "应显示验证错误码")
+            try expect(localized.contains("must be in the future"), "应显示详情消息")
         }
     },
     TestCase("REST 客户端区分权限不足与速率限制") {
