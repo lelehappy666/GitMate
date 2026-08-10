@@ -468,6 +468,133 @@ let githubIssuesAPITests = [
                 && $0.url?.path == "/repos/GitMate/mac-client/issues/91/lock"
         }, "应解锁议题")
     },
+    TestCase("创建里程碑省略空字段而更新里程碑显式清空字段") {
+        let recorder = LockedRecorder<URLRequest>()
+        URLProtocolStub.handler = { request in
+            recorder.append(request)
+            return try stubResponse(
+                for: request,
+                body: """
+                {
+                  "id": 11,
+                  "number": 2,
+                  "title": "v2.5",
+                  "description": null,
+                  "state": "open",
+                  "open_issues": 0,
+                  "closed_issues": 0,
+                  "created_at": "2026-08-10T08:00:00Z",
+                  "updated_at": "2026-08-10T08:00:00Z",
+                  "html_url": "https://github.com/GitMate/mac-client/milestone/2"
+                }
+                """
+            )
+        }
+        let api = URLSessionGitHubIssuesAPI(
+            client: GitHubRESTClient(session: makeStubSession()),
+            repositoryFullName: "GitMate/mac-client"
+        )
+        let emptyInput = MilestoneInput(
+            title: "v2.5",
+            description: nil,
+            state: .open,
+            dueOn: nil
+        )
+
+        _ = try await api.createMilestone(emptyInput, token: "secret")
+        _ = try await api.updateMilestone(
+            number: 2,
+            input: emptyInput,
+            token: "secret"
+        )
+
+        let requests = recorder.snapshot
+        let createRequest = try requests.first(where: {
+            $0.httpMethod == "POST"
+        }) ?? {
+            throw TestFailure(description: "应发送创建里程碑请求")
+        }()
+        let updateRequest = try requests.first(where: {
+            $0.httpMethod == "PATCH"
+        }) ?? {
+            throw TestFailure(description: "应发送更新里程碑请求")
+        }()
+        let createData = try requestBodyData(createRequest) ?? {
+            throw TestFailure(description: "创建里程碑应包含负载")
+        }()
+        let updateData = try requestBodyData(updateRequest) ?? {
+            throw TestFailure(description: "更新里程碑应包含负载")
+        }()
+        let createBody = try JSONSerialization.jsonObject(
+            with: createData
+        ) as? [String: Any]
+        let updateBody = try JSONSerialization.jsonObject(
+            with: updateData
+        ) as? [String: Any]
+
+        try expect(createBody?["description"] == nil, "创建时不得发送空描述")
+        try expect(createBody?["due_on"] == nil, "创建时不得发送空截止日期")
+        try expect(updateBody?["description"] is NSNull, "更新时必须能清空描述")
+        try expect(updateBody?["due_on"] is NSNull, "更新时必须能清空截止日期")
+    },
+    TestCase("里程碑截止日期使用 UTC ISO 8601") {
+        let recorder = LockedRecorder<URLRequest>()
+        URLProtocolStub.handler = { request in
+            recorder.append(request)
+            return try stubResponse(
+                for: request,
+                body: """
+                {
+                  "id": 11,
+                  "number": 2,
+                  "title": "v2.5",
+                  "description": "稳定性",
+                  "state": "open",
+                  "open_issues": 0,
+                  "closed_issues": 0,
+                  "due_on": "2026-08-15T00:00:00Z",
+                  "created_at": "2026-08-10T08:00:00Z",
+                  "updated_at": "2026-08-10T08:00:00Z",
+                  "html_url": "https://github.com/GitMate/mac-client/milestone/2"
+                }
+                """
+            )
+        }
+        let api = URLSessionGitHubIssuesAPI(
+            client: GitHubRESTClient(session: makeStubSession()),
+            repositoryFullName: "GitMate/mac-client"
+        )
+        let dueOn = try ISO8601DateFormatter().date(
+            from: "2026-08-15T00:00:00Z"
+        ) ?? {
+            throw TestFailure(description: "测试日期应有效")
+        }()
+
+        _ = try await api.createMilestone(
+            MilestoneInput(
+                title: "v2.5",
+                description: "稳定性",
+                state: .open,
+                dueOn: dueOn
+            ),
+            token: "secret"
+        )
+
+        let request = try recorder.snapshot.first ?? {
+            throw TestFailure(description: "应发送创建里程碑请求")
+        }()
+        let data = try requestBodyData(request) ?? {
+            throw TestFailure(description: "创建里程碑应包含负载")
+        }()
+        let body = try JSONSerialization.jsonObject(
+            with: data
+        ) as? [String: Any]
+        try expectEqual(
+            body?["due_on"] as? String,
+            "2026-08-15T00:00:00Z",
+            "截止日期必须使用 UTC ISO 8601"
+        )
+    },
     TestCase("里程碑与标签 CRUD 使用精确资源路径") {
         let recorder = LockedRecorder<URLRequest>()
         URLProtocolStub.handler = { request in
