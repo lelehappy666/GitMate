@@ -3,23 +3,49 @@ import SwiftUI
 
 struct RepositoryWorkspaceRootView: View {
     @Bindable var viewModel: RepositoryWorkspaceViewModel
+    @Bindable var overviewViewModel: RepositoryOverviewViewModel
+    @Bindable var readmeViewModel: READMEViewModel
+    let imageAuthorization: READMEImageAuthorization
     var onReturnToWorkspace: (() -> Void)? = nil
+    var onOpenWorkspaceRoute: ((WorkspaceRoute) -> Void)? = nil
+    var onResync: (() -> Void)? = nil
+    var onSettingsRequested: (() -> Void)? = nil
+
+    init(
+        runtime: RepositoryWorkspaceRuntime,
+        onReturnToWorkspace: (() -> Void)? = nil,
+        onOpenWorkspaceRoute: ((WorkspaceRoute) -> Void)? = nil,
+        onResync: (() -> Void)? = nil,
+        onSettingsRequested: (() -> Void)? = nil
+    ) {
+        viewModel = runtime.workspaceViewModel
+        overviewViewModel = runtime.overviewViewModel
+        readmeViewModel = runtime.readmeViewModel
+        imageAuthorization = runtime.imageAuthorization
+        self.onReturnToWorkspace = onReturnToWorkspace
+        self.onOpenWorkspaceRoute = onOpenWorkspaceRoute
+        self.onResync = onResync
+        self.onSettingsRequested = onSettingsRequested
+    }
 
     var body: some View {
         HStack(spacing: 0) {
             RepositorySidebarView(
                 viewModel: viewModel,
-                onReturnToWorkspace: onReturnToWorkspace
+                onReturnToWorkspace: onReturnToWorkspace,
+                onSettingsRequested: onSettingsRequested
             )
                 .frame(width: GitMateTheme.workspaceSidebarWidth)
 
             VStack(spacing: 0) {
-                WorkspaceHeaderView(viewModel: viewModel)
-                statusBanner
+                if showsToolHeader {
+                    WorkspaceHeaderView(viewModel: viewModel)
+                    statusBanner
+                }
 
                 routeContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding(18)
+                    .padding(showsToolHeader ? 18 : 0)
             }
             .background(GitMateTheme.canvas)
         }
@@ -56,13 +82,39 @@ struct RepositoryWorkspaceRootView: View {
             )
         }
         .task(id: viewModel.state.route.id) {
+            guard showsToolHeader else {
+                return
+            }
             await viewModel.loadCurrentRoute()
+        }
+    }
+
+    private var showsToolHeader: Bool {
+        switch viewModel.state.route {
+        case .overview, .readme:
+            false
+        default:
+            true
         }
     }
 
     @ViewBuilder
     private var routeContent: some View {
         switch viewModel.state.route {
+        case .overview:
+            RepositoryOverviewView(
+                viewModel: overviewViewModel,
+                imageAuthorization: imageAuthorization,
+                onRoute: openOverviewRoute,
+                onResync: {
+                    onResync?()
+                }
+            )
+        case .readme:
+            READMEView(
+                viewModel: readmeViewModel,
+                imageAuthorization: imageAuthorization
+            )
         case .branches:
             BranchesView(viewModel: viewModel)
         case .tags:
@@ -79,6 +131,15 @@ struct RepositoryWorkspaceRootView: View {
             MilestonesCanvasView(viewModel: viewModel)
         case .issueLabels:
             IssueLabelsView(viewModel: viewModel)
+        }
+    }
+
+    private func openOverviewRoute(_ route: WorkspaceRoute) {
+        switch route {
+        case .readme:
+            viewModel.navigate(to: .readme)
+        default:
+            onOpenWorkspaceRoute?(route)
         }
     }
 

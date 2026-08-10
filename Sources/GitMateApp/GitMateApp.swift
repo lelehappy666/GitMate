@@ -6,10 +6,13 @@ import SwiftUI
 @MainActor
 struct GitMateApp: App {
     @State private var viewModel: OnboardingViewModel
+    @State private var experimentalFeatures: ExperimentalFeaturePreferences
     private let workspaceRuntime: WorkspaceRuntimeDependencies
     private let repositoryWorkspaceFactory:
         RepositoryWorkspaceRuntimeFactory?
     private let workspacePreview: WorkspaceRootView?
+    private let repositoryWorkspacePreview:
+        RepositoryWorkspaceRuntime?
 
     init() {
         let applicationSupport = FileManager.default.urls(
@@ -30,6 +33,13 @@ struct GitMateApp: App {
         let syncDestinationStore = UserDefaultsSyncDestinationStore()
 
         if let page = Self.previewPage {
+            _experimentalFeatures = State(
+                initialValue: ExperimentalFeaturePreferences(
+                    store: InMemoryExperimentalFeaturePreferenceStore(
+                        repositoryManagementEnabled: (16...23).contains(page)
+                    )
+                )
+            )
             _viewModel = State(
                 initialValue: OnboardingPreviewFactory.make(
                     page: min(page, 9)
@@ -41,7 +51,16 @@ struct GitMateApp: App {
                 credentialStore: InMemoryCredentialStore()
             )
             repositoryWorkspaceFactory = nil
-            workspacePreview = page >= 10
+            let usesRepositoryWorkspace = page == 12
+                || page == 13
+                || (16...23).contains(page)
+            repositoryWorkspacePreview = usesRepositoryWorkspace
+                ? RepositoryWorkspacePreviewFactory.make(
+                    page: page,
+                    state: Self.previewState
+                )
+                : nil
+            workspacePreview = page >= 10 && !usesRepositoryWorkspace
                 ? WorkspacePreviewFactory.make(
                     page: page,
                     state: Self.previewState
@@ -50,6 +69,11 @@ struct GitMateApp: App {
             return
         }
 
+        _experimentalFeatures = State(
+            initialValue: ExperimentalFeaturePreferences(
+                store: UserDefaultsExperimentalFeaturePreferenceStore()
+            )
+        )
         let api = URLSessionGitHubAPI()
         let credentialStore = KeychainCredentialStore()
         let workspaceCache = JSONWorkspaceCache(
@@ -87,10 +111,10 @@ struct GitMateApp: App {
             cache: workspaceCache
         )
         repositoryWorkspaceFactory = RepositoryWorkspaceRuntimeFactory(
-            credentialStore: credentialStore,
-            catalog: repositoryCatalog
+            workspaceRuntime: workspaceRuntime
         )
         workspacePreview = nil
+        repositoryWorkspacePreview = nil
     }
 
     private static var previewPage: Int? {
@@ -98,7 +122,7 @@ struct GitMateApp: App {
         guard let flagIndex = arguments.firstIndex(of: "--preview-page"),
               arguments.indices.contains(flagIndex + 1),
               let page = Int(arguments[flagIndex + 1]),
-              (1...15).contains(page) else {
+              (1...23).contains(page) else {
             return nil
         }
         return page
@@ -118,11 +142,16 @@ struct GitMateApp: App {
 
     var body: some Scene {
         WindowGroup {
-            if let workspacePreview {
+            if let repositoryWorkspacePreview {
+                RepositoryWorkspaceRootView(
+                    runtime: repositoryWorkspacePreview
+                )
+            } else if let workspacePreview {
                 workspacePreview
             } else {
                 GitMateRootView(
                     onboarding: viewModel,
+                    experimentalFeatures: experimentalFeatures,
                     runtime: workspaceRuntime,
                     repositoryWorkspaceFactory:
                         repositoryWorkspaceFactory

@@ -66,6 +66,11 @@ public final class RepositoryWorkspaceViewModel {
         state.errorMessage = nil
     }
 
+    public func cancelPageLoads() {
+        loadTask?.cancel()
+        loadMoreTask?.cancel()
+    }
+
     public func loadCurrentRoute() async {
         loadTask?.cancel()
         let route = state.route
@@ -98,7 +103,11 @@ public final class RepositoryWorkspaceViewModel {
             }
         }
         loadTask = task
-        await task.value
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
         if loadID == identifier {
             loadTask = nil
         }
@@ -153,7 +162,11 @@ public final class RepositoryWorkspaceViewModel {
         }
         loadMoreID = identifier
         loadMoreTask = task
-        await task.value
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
         if loadMoreID == identifier {
             loadMoreTask = nil
             loadMoreID = nil
@@ -396,21 +409,29 @@ public final class RepositoryWorkspaceViewModel {
         }
     }
 
-    public func createMilestone(_ input: MilestoneInput) async {
-        await performAction {
+    @discardableResult
+    public func createMilestone(_ input: MilestoneInput) async -> Bool {
+        do {
             let milestone = try await dependencies.issuesAPI.createMilestone(
                 input,
                 token: try accessToken()
             )
             state.milestones.append(milestone)
+            state.status = .ready
+            state.errorMessage = nil
+            return true
+        } catch {
+            handleMilestoneMutationError(error)
+            return false
         }
     }
 
+    @discardableResult
     public func updateMilestone(
         number: Int,
         input: MilestoneInput
-    ) async {
-        await performAction {
+    ) async -> Bool {
+        do {
             let milestone = try await dependencies.issuesAPI.updateMilestone(
                 number: number,
                 input: input,
@@ -421,6 +442,12 @@ public final class RepositoryWorkspaceViewModel {
             ) {
                 state.milestones[index] = milestone
             }
+            state.status = .ready
+            state.errorMessage = nil
+            return true
+        } catch {
+            handleMilestoneMutationError(error)
+            return false
         }
     }
 
@@ -640,6 +667,8 @@ public final class RepositoryWorkspaceViewModel {
         }
 
         switch route {
+        case .overview, .readme:
+            return
         case .branches:
             let result = try await loadBranches(token: token)
             try ensureCurrent(route: route, identifier: identifier)
@@ -855,6 +884,15 @@ public final class RepositoryWorkspaceViewModel {
             state.status = .failed
             state.errorMessage = error.localizedDescription
         }
+    }
+
+    private func handleMilestoneMutationError(_ error: Error) {
+        if case GitHubAPIError.forbidden = error {
+            state.status = .failed
+            state.errorMessage = "创建或编辑里程碑需要 GitHub Issues 或 Pull Requests 写权限，请更新令牌权限后重试。"
+            return
+        }
+        handle(error)
     }
 
     private static func merge(

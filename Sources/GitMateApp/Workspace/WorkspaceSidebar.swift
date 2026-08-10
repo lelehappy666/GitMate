@@ -8,6 +8,8 @@ struct WorkspaceSidebar: View {
     let account: GitHubAccount
     let onCommitGraphRequested: (Int64) -> Void
     let onOpenRepositoryTools: (Int64) -> Void
+    let repositoryManagementEnabled: Bool
+    let onSettingsRequested: () -> Void
     @State private var currentRepositoryID: Int64?
 
     init(
@@ -16,7 +18,9 @@ struct WorkspaceSidebar: View {
         selectionGate: RepositorySelectionGate,
         account: GitHubAccount,
         onCommitGraphRequested: @escaping (Int64) -> Void,
-        onOpenRepositoryTools: @escaping (Int64) -> Void = { _ in }
+        onOpenRepositoryTools: @escaping (Int64) -> Void = { _ in },
+        repositoryManagementEnabled: Bool = false,
+        onSettingsRequested: @escaping () -> Void = {}
     ) {
         _selection = selection
         self.repositories = repositories
@@ -24,6 +28,8 @@ struct WorkspaceSidebar: View {
         self.account = account
         self.onCommitGraphRequested = onCommitGraphRequested
         self.onOpenRepositoryTools = onOpenRepositoryTools
+        self.repositoryManagementEnabled = repositoryManagementEnabled
+        self.onSettingsRequested = onSettingsRequested
         _currentRepositoryID = State(
             initialValue: selection.wrappedValue.route.repositoryID
                 ?? repositories.first?.id
@@ -97,12 +103,17 @@ struct WorkspaceSidebar: View {
                         onCommitGraphRequested(currentRepositoryID)
                     }
                 )
-                actionButton(
-                    title: "分支、标签与议题",
-                    symbol: "arrow.triangle.branch"
-                ) {
-                    guard let currentRepositoryID else { return }
-                    onOpenRepositoryTools(currentRepositoryID)
+                if repositoryManagementEnabled {
+                    actionButton(
+                        title: "分支、标签与议题",
+                        symbol: "arrow.triangle.branch"
+                    ) {
+                        guard let currentRepositoryID else { return }
+                        onOpenRepositoryTools(currentRepositoryID)
+                    }
+                    .accessibilityIdentifier(
+                        "workspace.sidebar.repositoryManagement"
+                    )
                 }
             }
             .padding(.horizontal, 10)
@@ -115,9 +126,13 @@ struct WorkspaceSidebar: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 12)
 
-            Label("设置", systemImage: "gearshape")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(GitMateTheme.textSecondary)
+            Button(action: onSettingsRequested) {
+                Label("设置", systemImage: "gearshape")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(GitMateTheme.textSecondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("workspace.sidebar.settings")
                 .padding(.horizontal, 18)
                 .padding(.bottom, 16)
 

@@ -3,22 +3,39 @@ import SwiftUI
 
 struct GitMateRootView: View {
     @Bindable var onboarding: OnboardingViewModel
+    @Bindable var experimentalFeatures: ExperimentalFeaturePreferences
     @State private var workspaceRoute: WorkspaceRoute = .dashboard
     @State private var repositoryWorkspace:
-        RepositoryWorkspaceViewModel?
+        RepositoryWorkspaceRuntime?
     @State private var repositoryWorkspaceError: String?
+    @State private var isSettingsPresented = false
     let runtime: WorkspaceRuntimeDependencies
     let repositoryWorkspaceFactory:
         RepositoryWorkspaceRuntimeFactory?
+
+    private var repositoryManagementAccess: RepositoryManagementAccessPolicy {
+        RepositoryManagementAccessPolicy(
+            isEnabled: experimentalFeatures.repositoryManagementEnabled
+        )
+    }
 
     var body: some View {
         Group {
             if let repositoryWorkspace {
                 RepositoryWorkspaceRootView(
-                    viewModel: repositoryWorkspace,
+                    runtime: repositoryWorkspace,
                     onReturnToWorkspace: {
                         self.repositoryWorkspace = nil
-                    }
+                    },
+                    onOpenWorkspaceRoute: { route in
+                        workspaceRoute = route
+                        self.repositoryWorkspace = nil
+                    },
+                    onResync: {
+                        self.repositoryWorkspace = nil
+                        onboarding.prepareRepositoryResync()
+                    },
+                    onSettingsRequested: { isSettingsPresented = true }
                 )
             } else if onboarding.state.route == .complete,
                       let account = onboarding.state.account {
@@ -48,11 +65,29 @@ struct GitMateRootView: View {
                             account: account,
                             repository: repository
                         )
-                    }
+                    },
+                    repositoryManagementEnabled:
+                        experimentalFeatures.repositoryManagementEnabled,
+                    onSettingsRequested: { isSettingsPresented = true }
                 )
                 .id(account.id)
             } else {
                 OnboardingRootView(viewModel: onboarding)
+            }
+        }
+        .sheet(isPresented: $isSettingsPresented) {
+            GitMateSettingsView(
+                preferences: experimentalFeatures,
+                onClose: { isSettingsPresented = false }
+            )
+        }
+        .onChange(of: experimentalFeatures.repositoryManagementEnabled) {
+            _, _ in
+            if repositoryManagementAccess.shouldDismissWorkspace(
+                isPresented: repositoryWorkspace != nil
+            ) {
+                repositoryWorkspace?.workspaceViewModel.cancelPageLoads()
+                repositoryWorkspace = nil
             }
         }
         .alert(
@@ -76,6 +111,7 @@ struct GitMateRootView: View {
         account: GitHubAccount,
         repository: Repository
     ) {
+        guard repositoryManagementAccess.canOpenWorkspace else { return }
         guard let repositoryWorkspaceFactory else {
             repositoryWorkspaceError = "仓库工具尚未准备完成。"
             return

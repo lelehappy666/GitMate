@@ -4,6 +4,7 @@ import SwiftUI
 struct RepositorySidebarView: View {
     @Bindable var viewModel: RepositoryWorkspaceViewModel
     var onReturnToWorkspace: (() -> Void)? = nil
+    var onSettingsRequested: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -94,8 +95,18 @@ struct RepositorySidebarView: View {
 
     private var codeItems: [SidebarItem] {
         [
-            SidebarItem(title: "总览", icon: "house", route: nil),
-            SidebarItem(title: "介绍", icon: "doc.richtext", route: nil),
+            SidebarItem(
+                title: "总览",
+                icon: "house",
+                route: .overview,
+                accessibilityID: "workspace.sidebar.overview"
+            ),
+            SidebarItem(
+                title: "介绍",
+                icon: "doc.richtext",
+                route: .readme,
+                accessibilityID: "workspace.sidebar.readme"
+            ),
             SidebarItem(
                 title: "分支",
                 icon: "arrow.triangle.branch",
@@ -215,6 +226,20 @@ struct RepositorySidebarView: View {
     }
 
     private var settingsButton: some View {
+        Group {
+            if let onSettingsRequested {
+                Button(action: onSettingsRequested) {
+                    settingsLabel
+                }
+                .buttonStyle(.plain)
+            } else {
+                settingsLabel
+            }
+        }
+        .accessibilityIdentifier("repositoryWorkspace.sidebar.settings")
+    }
+
+    private var settingsLabel: some View {
         HStack(spacing: 10) {
             Image(systemName: "gearshape")
             Text("仓库设置")

@@ -33,6 +33,65 @@ public final class URLSessionGitHubIssuesAPI:
         }
     }
 
+    private struct CreateMilestoneBody: Encodable {
+        let title: String
+        let description: String?
+        let state: IssueState
+        let dueOn: Date?
+
+        private enum CodingKeys: String, CodingKey {
+            case title
+            case description
+            case state
+            case dueOn = "due_on"
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(title, forKey: .title)
+            try container.encode(state, forKey: .state)
+            try container.encodeIfPresent(
+                description,
+                forKey: .description
+            )
+            if let dueOn {
+                try container.encode(
+                    MilestoneDateEncoder.string(from: dueOn),
+                    forKey: .dueOn
+                )
+            }
+        }
+    }
+
+    private struct UpdateMilestoneBody: Encodable {
+        let title: String
+        let description: String?
+        let state: IssueState
+        let dueOn: Date?
+
+        private enum CodingKeys: String, CodingKey {
+            case title
+            case description
+            case state
+            case dueOn = "due_on"
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(title, forKey: .title)
+            try container.encode(description, forKey: .description)
+            try container.encode(state, forKey: .state)
+            if let dueOn {
+                try container.encode(
+                    MilestoneDateEncoder.string(from: dueOn),
+                    forKey: .dueOn
+                )
+            } else {
+                try container.encodeNil(forKey: .dueOn)
+            }
+        }
+    }
+
     private let client: GitHubRESTClient
     private let repositoryFullName: String
 
@@ -266,11 +325,17 @@ public final class URLSessionGitHubIssuesAPI:
         _ input: MilestoneInput,
         token: String
     ) async throws -> IssueMilestone {
+        let body = CreateMilestoneBody(
+            title: input.title,
+            description: input.description,
+            state: input.state,
+            dueOn: input.dueOn
+        )
         let payload: IssueMilestonePayload = try await client.send(
             try GitHubRequest(
                 method: .post,
                 path: "\(repositoryPath)/milestones",
-                encodableBody: input
+                encodableBody: body
             ),
             token: token
         )
@@ -282,11 +347,17 @@ public final class URLSessionGitHubIssuesAPI:
         input: MilestoneInput,
         token: String
     ) async throws -> IssueMilestone {
+        let body = UpdateMilestoneBody(
+            title: input.title,
+            description: input.description,
+            state: input.state,
+            dueOn: input.dueOn
+        )
         let payload: IssueMilestonePayload = try await client.send(
             try GitHubRequest(
                 method: .patch,
                 path: "\(repositoryPath)/milestones/\(number)",
-                encodableBody: input
+                encodableBody: body
             ),
             token: token
         )
@@ -489,5 +560,14 @@ public final class URLSessionGitHubIssuesAPI:
 
     private var repositoryPath: String {
         "/repos/\(repositoryFullName)"
+    }
+}
+
+private enum MilestoneDateEncoder {
+    static func string(from date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter.string(from: date)
     }
 }

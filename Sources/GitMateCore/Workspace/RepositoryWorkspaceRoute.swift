@@ -1,4 +1,6 @@
 public enum RepositoryWorkspaceRoute: Hashable, Codable, Sendable, Identifiable {
+    case overview
+    case readme
     case branches
     case tags
     case branchRules
@@ -10,6 +12,10 @@ public enum RepositoryWorkspaceRoute: Hashable, Codable, Sendable, Identifiable 
 
     public var id: String {
         switch self {
+        case .overview:
+            "overview"
+        case .readme:
+            "readme"
         case .branches:
             "branches"
         case .tags:
@@ -31,6 +37,10 @@ public enum RepositoryWorkspaceRoute: Hashable, Codable, Sendable, Identifiable 
 
     public var pageNumber: Int {
         switch self {
+        case .overview:
+            12
+        case .readme:
+            13
         case .branches:
             16
         case .tags:

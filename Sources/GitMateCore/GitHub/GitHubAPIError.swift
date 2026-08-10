@@ -1,5 +1,28 @@
 import Foundation
 
+public struct GitHubValidationErrorDetail:
+    Equatable,
+    Codable,
+    Sendable
+{
+    public let resource: String?
+    public let field: String?
+    public let code: String?
+    public let message: String?
+
+    public init(
+        resource: String?,
+        field: String?,
+        code: String?,
+        message: String?
+    ) {
+        self.resource = resource
+        self.field = field
+        self.code = code
+        self.message = message
+    }
+}
+
 public enum GitHubAPIError: Error, Equatable, Sendable {
     case invalidConfiguration(String)
     case invalidResponse
@@ -8,7 +31,10 @@ public enum GitHubAPIError: Error, Equatable, Sendable {
     case rateLimited(resetAt: Date)
     case detailedRateLimit(resetAt: Date?, message: String)
     case conflict(String)
-    case validationFailed(message: String, fields: [String])
+    case validationFailed(
+        message: String,
+        details: [GitHubValidationErrorDetail]
+    )
     case notFound(String)
     case decoding(String)
     case authorizationPending
@@ -38,10 +64,10 @@ extension GitHubAPIError: LocalizedError {
             } ?? message
         case let .conflict(message):
             "GitHub 资源冲突：\(message)"
-        case let .validationFailed(message, fields):
-            fields.isEmpty
+        case let .validationFailed(message, details):
+            details.isEmpty
                 ? message
-                : "\(message) 请检查：\(fields.joined(separator: "、"))。"
+                : "\(message) 请检查：\(details.map(Self.validationDetail).joined(separator: "；"))。"
         case let .notFound(message):
             "GitHub 资源不存在：\(message)"
         case let .decoding(message):
@@ -57,5 +83,23 @@ extension GitHubAPIError: LocalizedError {
         case .missingAccessToken:
             "GitHub 未返回访问令牌。"
         }
+    }
+
+    private static func validationDetail(
+        _ detail: GitHubValidationErrorDetail
+    ) -> String {
+        let location = [detail.resource, detail.field]
+            .compactMap { value in
+                value?.isEmpty == false ? value : nil
+            }
+            .joined(separator: ".")
+        let code = detail.code.flatMap { value in
+            value.isEmpty ? nil : "（\(value)）"
+        } ?? ""
+        let prefix = location.isEmpty ? "请求字段" : location
+        guard let message = detail.message, !message.isEmpty else {
+            return prefix + code
+        }
+        return prefix + code + "：" + message
     }
 }
