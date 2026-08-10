@@ -120,6 +120,7 @@ private final class WorkspaceIssuesAPIFake:
 {
     var createError: GitHubAPIError?
     var commentError: GitHubAPIError?
+    var milestoneError: GitHubAPIError?
     var firstIssuesPage = GitHubPage<GitHubIssue>(
         items: [],
         nextPageURL: nil
@@ -188,14 +189,16 @@ private final class WorkspaceIssuesAPIFake:
     func unlockIssue(number: Int, token: String) async throws {}
     func milestones(state: IssueState?, token: String) async throws -> [IssueMilestone] { [] }
     func createMilestone(_ input: MilestoneInput, token: String) async throws -> IssueMilestone {
-        IssueMilestone(id: 1, number: 1, title: input.title, state: input.state, openIssues: 0, closedIssues: 0)
+        if let milestoneError { throw milestoneError }
+        return IssueMilestone(id: 1, number: 1, title: input.title, state: input.state, openIssues: 0, closedIssues: 0)
     }
     func updateMilestone(
         number: Int,
         input: MilestoneInput,
         token: String
     ) async throws -> IssueMilestone {
-        IssueMilestone(id: 1, number: number, title: input.title, state: input.state, openIssues: 0, closedIssues: 0)
+        if let milestoneError { throw milestoneError }
+        return IssueMilestone(id: 1, number: number, title: input.title, state: input.state, openIssues: 0, closedIssues: 0)
     }
     func deleteMilestone(number: Int, token: String) async throws {}
     func labels(token: String) async throws -> [IssueLabel] { [] }
@@ -586,6 +589,87 @@ let repositoryWorkspaceViewModelTests = [
         try expectEqual(draft?.title, "网络恢复异常", "失败后必须保留标题")
         try expectEqual(draft?.labelNames, ["bug"], "失败后必须保留发布设置")
         try expect(viewModel.state.errorMessage != nil, "应显示发布错误")
+    },
+    TestCase("创建里程碑成功返回结果并追加到画布") { @MainActor in
+        let issues = WorkspaceIssuesAPIFake()
+        let (viewModel, _, _, _, _) = try makeWorkspaceViewModel(
+            issuesAPI: issues
+        )
+        let input = MilestoneInput(
+            title: "v2.5",
+            description: nil,
+            state: .open,
+            dueOn: nil
+        )
+
+        let succeeded = await viewModel.createMilestone(input)
+
+        try expect(succeeded, "成功创建应返回 true")
+        try expectEqual(
+            viewModel.state.milestones.map(\.title),
+            ["v2.5"],
+            "成功后应追加到里程碑画布"
+        )
+    },
+    TestCase("里程碑字段错误返回失败并保留详细原因") { @MainActor in
+        let issues = WorkspaceIssuesAPIFake()
+        issues.milestoneError = .validationFailed(
+            message: "Validation Failed",
+            details: [
+                GitHubValidationErrorDetail(
+                    resource: "Milestone",
+                    field: "due_on",
+                    code: "invalid",
+                    message: "must be in the future"
+                )
+            ]
+        )
+        let (viewModel, _, _, _, _) = try makeWorkspaceViewModel(
+            issuesAPI: issues
+        )
+
+        let succeeded = await viewModel.createMilestone(
+            MilestoneInput(
+                title: "v2.5",
+                description: "稳定性",
+                state: .open,
+                dueOn: .now
+            )
+        )
+
+        try expect(!succeeded, "422 应返回 false")
+        try expect(viewModel.state.milestones.isEmpty, "失败不得追加里程碑")
+        try expect(
+            viewModel.state.errorMessage?.contains("Milestone.due_on") == true,
+            "应显示 GitHub 返回的字段详情"
+        )
+    },
+    TestCase("里程碑权限不足提示所需写权限") { @MainActor in
+        let issues = WorkspaceIssuesAPIFake()
+        issues.milestoneError = .forbidden(
+            "Resource not accessible by personal access token"
+        )
+        let (viewModel, _, _, _, _) = try makeWorkspaceViewModel(
+            issuesAPI: issues
+        )
+
+        let succeeded = await viewModel.createMilestone(
+            MilestoneInput(
+                title: "v2.5",
+                description: nil,
+                state: .open,
+                dueOn: nil
+            )
+        )
+
+        try expect(!succeeded, "403 应返回 false")
+        try expect(viewModel.state.milestones.isEmpty, "权限不足不得追加里程碑")
+        try expect(
+            viewModel.state.errorMessage?.contains(
+                "Issues 或 Pull Requests 写权限"
+            ) == true,
+            "应说明创建里程碑所需的令牌权限"
+        )
     },
     TestCase("评论失败返回失败结果并保留重试依据") { @MainActor in
         let issues = WorkspaceIssuesAPIFake()
