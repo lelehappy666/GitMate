@@ -5,7 +5,7 @@ struct GitMateRootView: View {
     @Bindable var onboarding: OnboardingViewModel
     @State private var workspaceRoute: WorkspaceRoute = .dashboard
     @State private var repositoryWorkspace:
-        RepositoryWorkspaceViewModel?
+        RepositoryWorkspaceRuntime?
     @State private var repositoryWorkspaceError: String?
     let runtime: WorkspaceRuntimeDependencies
     let repositoryWorkspaceFactory:
@@ -15,9 +15,17 @@ struct GitMateRootView: View {
         Group {
             if let repositoryWorkspace {
                 RepositoryWorkspaceRootView(
-                    viewModel: repositoryWorkspace,
+                    runtime: repositoryWorkspace,
                     onReturnToWorkspace: {
                         self.repositoryWorkspace = nil
+                    },
+                    onOpenWorkspaceRoute: { route in
+                        workspaceRoute = route
+                        self.repositoryWorkspace = nil
+                    },
+                    onResync: {
+                        self.repositoryWorkspace = nil
+                        onboarding.prepareRepositoryResync()
                     }
                 )
             } else if onboarding.state.route == .complete,

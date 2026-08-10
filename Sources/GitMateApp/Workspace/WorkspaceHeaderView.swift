@@ -54,6 +54,10 @@ struct WorkspaceHeaderView: View {
 
     private var title: String {
         switch viewModel.state.route {
+        case .overview:
+            "总览"
+        case .readme:
+            "介绍"
         case .branches:
             "分支"
         case .tags:
@@ -75,6 +79,10 @@ struct WorkspaceHeaderView: View {
 
     private var subtitle: String {
         switch viewModel.state.route {
+        case .overview:
+            "仓库状态、最近活动与 README 摘要"
+        case .readme:
+            "安全渲染仓库 README 文档"
         case .branches:
             "统一查看本地、远端、跟踪关系与保护状态"
         case .tags:

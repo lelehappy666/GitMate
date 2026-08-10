@@ -4,13 +4,20 @@ import SwiftUI
 
 @MainActor
 struct RepositoryWorkspaceRuntimeFactory {
-    let credentialStore: any CredentialStore
-    let catalog: LocalRepositoryCatalog
+    let workspaceRuntime: WorkspaceRuntimeDependencies
 
     func make(
         account: GitHubAccount,
         repository: Repository
-    ) throws -> RepositoryWorkspaceViewModel {
+    ) throws -> RepositoryWorkspaceRuntime {
+        let token: String
+        switch workspaceRuntime.authorization(for: account) {
+        case let .ready(accessToken):
+            token = accessToken
+        case .reauthorizationRequired:
+            throw RepositoryWorkspaceError.missingAccessToken
+        }
+
         let apiBaseURL: URL
         switch account.kind {
         case .githubDotCom:
@@ -26,7 +33,7 @@ struct RepositoryWorkspaceRuntimeFactory {
             client: client,
             repositoryFullName: repository.fullName
         )
-        let localCandidate = catalog.localURL(for: repository)
+        let localCandidate = workspaceRuntime.catalog.localURL(for: repository)
         let gitDirectory = localCandidate.appending(
             path: ".git",
             directoryHint: .isDirectory
@@ -35,7 +42,7 @@ struct RepositoryWorkspaceRuntimeFactory {
             atPath: gitDirectory.path
         ) ? localCandidate : nil
 
-        return RepositoryWorkspaceViewModel(
+        let workspaceViewModel = RepositoryWorkspaceViewModel(
             context: RepositoryWorkspaceContext(
                 account: account,
                 repository: repository,
@@ -49,9 +56,29 @@ struct RepositoryWorkspaceRuntimeFactory {
                     repositoryFullName: repository.fullName
                 ),
                 issuesAPI: issuesAPI,
-                credentialStore: credentialStore,
+                credentialStore: workspaceRuntime.credentialStore,
                 persistenceStore: UserDefaultsWorkspacePersistenceStore(),
                 labelMergeService: LabelMergeService(api: issuesAPI)
+            )
+        )
+        let contentLoader = workspaceRuntime.contentService(for: account)
+        return RepositoryWorkspaceRuntime(
+            workspaceViewModel: workspaceViewModel,
+            overviewViewModel: RepositoryOverviewViewModel(
+                repository: repository,
+                account: account,
+                token: token,
+                loader: contentLoader
+            ),
+            readmeViewModel: READMEViewModel(
+                repository: repository,
+                account: account,
+                token: token,
+                loader: contentLoader
+            ),
+            imageAuthorization: READMEImageAuthorization(
+                account: account,
+                accessToken: token
             )
         )
     }
@@ -61,7 +88,7 @@ struct RepositoryWorkspaceRuntimeFactory {
 struct GitMateApplicationRootView: View {
     @Bindable var onboardingViewModel: OnboardingViewModel
     let workspaceFactory: RepositoryWorkspaceRuntimeFactory
-    @State private var workspaceViewModel: RepositoryWorkspaceViewModel? = nil
+    @State private var workspaceRuntime: RepositoryWorkspaceRuntime? = nil
     @State private var workspaceError: String? = nil
 
     init(
@@ -74,8 +101,8 @@ struct GitMateApplicationRootView: View {
 
     var body: some View {
         Group {
-            if let workspaceViewModel {
-                RepositoryWorkspaceRootView(viewModel: workspaceViewModel)
+            if let workspaceRuntime {
+                RepositoryWorkspaceRootView(runtime: workspaceRuntime)
             } else if let workspaceError {
                 workspaceLaunchError(workspaceError)
             } else {
@@ -94,7 +121,7 @@ struct GitMateApplicationRootView: View {
     }
 
     private func openInitialRepository() {
-        guard workspaceViewModel == nil else {
+        guard workspaceRuntime == nil else {
             return
         }
         guard let account = onboardingViewModel.state.account else {
@@ -117,7 +144,7 @@ struct GitMateApplicationRootView: View {
         }
 
         do {
-            workspaceViewModel = try workspaceFactory.make(
+            workspaceRuntime = try workspaceFactory.make(
                 account: account,
                 repository: repository
             )

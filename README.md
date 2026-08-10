@@ -91,14 +91,20 @@ swift run GitMate --preview-page 1
 swift run GitMate --preview-page 6
 swift run GitMate --preview-page 8
 swift run GitMate --preview-page 10
+swift run GitMate --preview-page 12
+swift run GitMate --preview-page 13
 swift run GitMate --preview-page 15
+swift run GitMate --preview-page 16
+swift run GitMate --preview-page 22
 swift run GitMate --preview-page 10 --preview-state offline
 swift run GitMate --preview-page 11 --preview-state error
 ```
 
-支持的页码为 `1...15`。第 01–09 页沿用首次同步预览；第 10–15 页显示
+支持的页码为 `1...23`。第 01–09 页沿用首次同步预览；第 10–15 页显示
 2 个本地仓库与 1 个云端仓库、真实格式头像地址、README 封面与回退封面、
-本地改动、PR、Actions 失败、文件树、提交列表和双父合并提交图。
+本地改动、PR、Actions 失败、文件树、提交列表和双父合并提交图。第 12、13、
+16–23 页使用统一仓库侧边栏，并以本地假数据展示总览、README、分支、标签、
+规则集、议题、里程碑与议题标签，不会访问真实 GitHub。
 `--preview-state` 支持
 `offline` 与 `error`，用于检查离线和面板错误状态；不传时为正常状态。
 

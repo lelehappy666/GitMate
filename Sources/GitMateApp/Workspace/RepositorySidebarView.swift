@@ -94,8 +94,18 @@ struct RepositorySidebarView: View {
 
     private var codeItems: [SidebarItem] {
         [
-            SidebarItem(title: "总览", icon: "house", route: nil),
-            SidebarItem(title: "介绍", icon: "doc.richtext", route: nil),
+            SidebarItem(
+                title: "总览",
+                icon: "house",
+                route: .overview,
+                accessibilityID: "workspace.sidebar.overview"
+            ),
+            SidebarItem(
+                title: "介绍",
+                icon: "doc.richtext",
+                route: .readme,
+                accessibilityID: "workspace.sidebar.readme"
+            ),
             SidebarItem(
                 title: "分支",
                 icon: "arrow.triangle.branch",
