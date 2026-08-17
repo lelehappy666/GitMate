@@ -63,6 +63,7 @@ struct GitMateCoreTestsMain {
             + commitGraphTraditionalContentViewportTests
             + commitGraphTraditionalSplitLayoutTests
             + commitGraphPathGeometryTests
+            + commitGraphOrganizationRouterTests
             + commitGraphTextFitterTests
             + commitGraphGroupingTests
             + commitGraphSceneProjectorTests

@@ -195,5 +195,29 @@ let commitGraphPathGeometryTests = [
                 "直角路径不得包含斜线"
             )
         }
+    },
+    TestCase("通道路径在曲线与直角样式间保持相同端点") {
+        let points = [
+            GraphPoint(x: 50, y: 300),
+            GraphPoint(x: 50, y: 240),
+            GraphPoint(x: 250, y: 240),
+            GraphPoint(x: 250, y: 100)
+        ]
+        let orthogonal = CommitGraphPathGeometry.orthogonal(points: points)
+        let rounded = CommitGraphPathGeometry.roundedCurve(
+            points: points,
+            radius: 18
+        )
+
+        guard case let .polyline(orthogonalPoints) = orthogonal else {
+            throw TestFailure(description: "直角通道必须返回折线")
+        }
+        try expectEqual(orthogonalPoints.first, points.first, "直角起点不得变化")
+        try expectEqual(orthogonalPoints.last, points.last, "直角终点不得变化")
+        try expectEqual(
+            CommitGraphPathGeometry.pathEndpoints(rounded),
+            [points.first!, points.last!],
+            "曲线切换只能改变路径生成方式"
+        )
     }
 ]

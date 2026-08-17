@@ -255,6 +255,12 @@ struct CommitGraphCanvas: View {
                 for point in points.dropFirst() {
                     path.addLine(to: screenPoint(point))
                 }
+            case let .roundedPolyline(points, radius):
+                addRoundedPolyline(
+                    points,
+                    radius: radius,
+                    to: &path
+                )
             }
 
             let color = edge.kind == .shallowBoundary
@@ -288,6 +294,49 @@ struct CommitGraphCanvas: View {
                     context: &context
                 )
             }
+        }
+    }
+
+    private func addRoundedPolyline(
+        _ points: [GraphPoint],
+        radius: Double,
+        to path: inout Path
+    ) {
+        guard let first = points.first else { return }
+        path.move(to: screenPoint(first))
+        guard points.count > 2 else {
+            for point in points.dropFirst() {
+                path.addLine(to: screenPoint(point))
+            }
+            return
+        }
+        for index in 1..<(points.count - 1) {
+            let previous = points[index - 1]
+            let corner = points[index]
+            let next = points[index + 1]
+            let incoming = hypot(corner.x - previous.x, corner.y - previous.y)
+            let outgoing = hypot(next.x - corner.x, next.y - corner.y)
+            let safeRadius = min(max(radius, 0), incoming / 2, outgoing / 2)
+            guard safeRadius > 0 else {
+                path.addLine(to: screenPoint(corner))
+                continue
+            }
+            let entry = GraphPoint(
+                x: corner.x + (previous.x - corner.x) * safeRadius / incoming,
+                y: corner.y + (previous.y - corner.y) * safeRadius / incoming
+            )
+            let exit = GraphPoint(
+                x: corner.x + (next.x - corner.x) * safeRadius / outgoing,
+                y: corner.y + (next.y - corner.y) * safeRadius / outgoing
+            )
+            path.addLine(to: screenPoint(entry))
+            path.addQuadCurve(
+                to: screenPoint(exit),
+                control: screenPoint(corner)
+            )
+        }
+        if let last = points.last {
+            path.addLine(to: screenPoint(last))
         }
     }
 

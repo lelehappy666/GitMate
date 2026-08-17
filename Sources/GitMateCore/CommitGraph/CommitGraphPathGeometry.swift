@@ -121,6 +121,37 @@ public enum CommitGraphPathGeometry {
         return .polyline(points: simplified(points))
     }
 
+    public static func orthogonal(
+        points: [GraphPoint]
+    ) -> CommitGraphGeneratedPath {
+        .polyline(points: simplified(points))
+    }
+
+    /// 以同一组直角通道点绘制圆角曲线。端点和通道保持不变，圆角只影响显示。
+    public static func roundedCurve(
+        points: [GraphPoint],
+        radius: Double = 18
+    ) -> CommitGraphGeneratedPath {
+        .roundedPolyline(
+            points: simplified(points),
+            radius: radius.isFinite ? max(radius, 0) : 0
+        )
+    }
+
+    public static func pathEndpoints(
+        _ path: CommitGraphGeneratedPath
+    ) -> [GraphPoint] {
+        switch path {
+        case let .curve(start, _, _, end):
+            return [start, end]
+        case let .polyline(points), let .roundedPolyline(points, _):
+            guard let first = points.first, let last = points.last else {
+                return []
+            }
+            return [first, last]
+        }
+    }
+
     public static func areCollinear(
         _ first: GraphPoint,
         _ second: GraphPoint,
@@ -143,7 +174,7 @@ public enum CommitGraphPathGeometry {
                 end: end,
                 t: 0.5
             )
-        case let .polyline(points):
+        case let .polyline(points), let .roundedPolyline(points, _):
             return polylineMidpoint(points)
         }
     }

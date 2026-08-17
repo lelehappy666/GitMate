@@ -169,12 +169,30 @@ public struct CommitGraphEdge: Identifiable, Equatable, Sendable {
     }
 }
 
+/// 默认组织树中一条边的稳定端口与路由通道。
+public struct CommitGraphRouteHint: Equatable, Sendable {
+    public let edgeID: String
+    public let ports: CommitGraphEdgePorts
+    public let waypoints: [GraphPoint]
+
+    public init(
+        edgeID: String,
+        ports: CommitGraphEdgePorts,
+        waypoints: [GraphPoint]
+    ) {
+        self.edgeID = edgeID
+        self.ports = ports
+        self.waypoints = waypoints
+    }
+}
+
 public struct CommitGraphLayoutResult: Equatable, Sendable {
     public let nodes: [CommitGraphNode]
     public let edges: [CommitGraphEdge]
     public let shallowBoundaryEndpoints: [CommitGraphShallowBoundaryEndpoint]
     public let contentWidth: Double
     public let contentHeight: Double
+    public let routeHintsByEdgeID: [String: CommitGraphRouteHint]
     let spatialIndex: CommitGraphSpatialIndex
 
     public init(
@@ -182,13 +200,15 @@ public struct CommitGraphLayoutResult: Equatable, Sendable {
         edges: [CommitGraphEdge] = [],
         shallowBoundaryEndpoints: [CommitGraphShallowBoundaryEndpoint] = [],
         contentWidth: Double = 1_040,
-        contentHeight: Double = 680
+        contentHeight: Double = 680,
+        routeHintsByEdgeID: [String: CommitGraphRouteHint] = [:]
     ) {
         self.nodes = nodes
         self.edges = edges
         self.shallowBoundaryEndpoints = shallowBoundaryEndpoints
         self.contentWidth = contentWidth
         self.contentHeight = contentHeight
+        self.routeHintsByEdgeID = routeHintsByEdgeID
         spatialIndex = CommitGraphSpatialIndex(
             nodes: nodes,
             edges: edges

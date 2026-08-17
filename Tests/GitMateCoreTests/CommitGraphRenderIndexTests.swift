@@ -2,6 +2,79 @@ import Foundation
 import GitMateCore
 
 let commitGraphRenderIndexTests = [
+    TestCase("默认组织树连线避开无关卡片且拖动保持固定端口") {
+        let ports = CommitGraphEdgePorts(
+            source: PortAnchor(side: .top, offset: 0.5),
+            target: PortAnchor(side: .bottom, offset: 0.5)
+        )
+        let source = renderVisibleNode(hash: "route-source", x: 100, y: 560)
+        let target = renderVisibleNode(hash: "route-target", x: 600, y: 100)
+        let obstacle = renderVisibleNode(hash: "route-obstacle", x: 350, y: 310)
+        let sourceRect = GraphRect(x: -12, y: 523, width: 224, height: 74)
+        let targetRect = GraphRect(x: 488, y: 63, width: 224, height: 74)
+        let obstacleRect = GraphRect(x: 238, y: 273, width: 224, height: 74)
+        let hint = CommitGraphRouteHint(
+            edgeID: "route-source->route-target#0",
+            ports: ports,
+            waypoints: CommitGraphOrganizationRouter().route(
+                sourceRect: sourceRect,
+                targetRect: targetRect,
+                sourceAnchor: ports.source,
+                targetAnchor: ports.target,
+                obstacles: [obstacleRect],
+                preferredChannel: 0
+            )
+        )
+        let edge = CommitGraphVisibleEdge(
+            id: hint.edgeID,
+            source: .node(source.id),
+            target: .node(target.id),
+            kind: .parent,
+            colorIndex: 0,
+            ports: ports,
+            aggregateKey: nil,
+            aggregateCount: 1,
+            originalEdgeIDs: [hint.edgeID],
+            routeHint: hint
+        )
+        var index = CommitGraphRenderIndex(
+            projection: CommitGraphSceneProjection(
+                nodes: [source, target, obstacle],
+                groups: [],
+                edges: [edge]
+            )
+        )
+
+        _ = index.moveNode(
+            hash: source.id,
+            to: GraphPoint(x: 120, y: 650)
+        )
+        let visible = index.query(
+            viewport: GraphViewport(),
+            screenSize: GraphSize(width: 900, height: 760),
+            padding: 0
+        )
+        guard let updated = visible.edges.first,
+              let updatedHint = updated.routeHint else {
+            throw TestFailure(description: "拖动后必须保留动态路由提示")
+        }
+        try expectEqual(updated.ports, ports, "拖动不得改变端点 side 和 offset")
+        try expectEqual(
+            updatedHint.waypoints.first,
+            GraphPoint(x: 120, y: 613),
+            "路由起点必须跟随拖动后的卡片"
+        )
+        let clearance = renderExpanded(obstacleRect, by: 28)
+        for segment in zip(
+            updatedHint.waypoints,
+            updatedHint.waypoints.dropFirst()
+        ) {
+            try expect(
+                !renderSegmentIntersects(segment.0, segment.1, clearance),
+                "拖动后的动态通道仍不得穿过无关卡片"
+            )
+        }
+    },
     TestCase("空间索引使用投影后的真实场景位置") {
         let original = renderIndexNode(
             hash: "moved-visible",
@@ -1110,6 +1183,33 @@ let commitGraphRenderIndexTests = [
         )
     }
 ]
+
+private func renderExpanded(_ rect: GraphRect, by padding: Double) -> GraphRect {
+    GraphRect(
+        x: rect.x - padding,
+        y: rect.y - padding,
+        width: rect.width + padding * 2,
+        height: rect.height + padding * 2
+    )
+}
+
+private func renderSegmentIntersects(
+    _ start: GraphPoint,
+    _ end: GraphPoint,
+    _ rect: GraphRect
+) -> Bool {
+    if start.x == end.x {
+        return start.x >= rect.minimumX && start.x <= rect.maximumX
+            && max(start.y, end.y) >= rect.minimumY
+            && min(start.y, end.y) <= rect.maximumY
+    }
+    if start.y == end.y {
+        return start.y >= rect.minimumY && start.y <= rect.maximumY
+            && max(start.x, end.x) >= rect.minimumX
+            && min(start.x, end.x) <= rect.maximumX
+    }
+    return true
+}
 
 private func renderVisibleNode(
     hash: String,

@@ -106,7 +106,7 @@ public struct CommitGraphRenderIndex: Sendable {
     private let shallowBoundaryEndpointIndexByID: [String: Int]
     private let shallowBoundaryIDsByChildHash: [String: [String]]
     private let shallowBoundaryIDsByGroupID: [UUID: [String]]
-    private let edges: [CommitGraphVisibleEdge]
+    private var edges: [CommitGraphVisibleEdge]
     private var lineStyle: CommitGraphLineStyle
     private let nodeIndexByHash: [String: Int]
     private let groupIndexByID: [UUID: Int]
@@ -242,6 +242,7 @@ public struct CommitGraphRenderIndex: Sendable {
             builtRegionGrid.replace(item: index, rect: region.rect)
         }
         regionGrid = builtRegionGrid
+
     }
 
     public func query(
@@ -307,6 +308,7 @@ public struct CommitGraphRenderIndex: Sendable {
                 aggregateCount: edge.aggregateCount,
                 originalEdgeIDs: edge.originalEdgeIDs,
                 path: geometry.generatedPath,
+                routeHint: edge.routeHint,
                 publicationState: edge.publicationState
             )
         }
@@ -440,6 +442,9 @@ public struct CommitGraphRenderIndex: Sendable {
         }
 
         let previousPosition = nodes[nodeIndex].position
+        let previousRect = CommitGraphSceneGeometry.nodeRect(
+            center: previousPosition
+        )
         nodes[nodeIndex] = CommitGraphVisibleNode(
             node: nodes[nodeIndex].node,
             position: position,
@@ -452,6 +457,11 @@ public struct CommitGraphRenderIndex: Sendable {
         var updatedGroupIDs: [UUID] = []
         var affectedEdgeIndices = Set(
             incidentEdgeIndices[.node(hash)] ?? []
+        )
+        affectedEdgeIndices.formUnion(
+            edgeIndicesIntersecting(
+                Self.union(previousRect, rect).expanded(by: 28)
+            )
         )
         affectedEdgeIndices.formUnion(
             moveShallowBoundaries(
@@ -481,6 +491,7 @@ public struct CommitGraphRenderIndex: Sendable {
             )
         }
         let updatedEdges = affectedEdgeIndices.sorted()
+        refreshRouteHints(updatedEdges)
         updateEdgeCandidates(updatedEdges)
 
         return CommitGraphRenderUpdate(
@@ -502,6 +513,7 @@ public struct CommitGraphRenderIndex: Sendable {
             return .empty
         }
         let group = groups[groupIndex]
+        let previousRect = group.rect
         let updated = Self.updatedGroup(
             group,
             origin: origin,
@@ -513,6 +525,11 @@ public struct CommitGraphRenderIndex: Sendable {
 
         var updatedNodeHashes: [String] = []
         var affectedEdgeIndices = Set(incidentEdgeIndices[.group(id)] ?? [])
+        affectedEdgeIndices.formUnion(
+            edgeIndicesIntersecting(
+                Self.union(previousRect, updated.rect).expanded(by: 28)
+            )
+        )
         affectedEdgeIndices.formUnion(
             moveShallowBoundaries(
                 ids: shallowBoundaryIDsByGroupID[id] ?? [],
@@ -542,6 +559,7 @@ public struct CommitGraphRenderIndex: Sendable {
             updatedNodeHashes.append(hash)
         }
         let updatedEdges = affectedEdgeIndices.sorted()
+        refreshRouteHints(updatedEdges)
         updateEdgeCandidates(updatedEdges)
         return CommitGraphRenderUpdate(
             updatedNodeHashes: updatedNodeHashes,
@@ -563,6 +581,93 @@ public struct CommitGraphRenderIndex: Sendable {
             edgeCandidates[edgeIndex] = candidate
             edgeGrid.replace(item: edgeIndex, cells: candidate.indexCells)
         }
+    }
+
+    private func edgeIndicesIntersecting(_ rect: GraphRect) -> Set<Int> {
+        Set(edgeGrid.candidates(in: rect).items.filter { edgeIndex in
+            guard edges.indices.contains(edgeIndex),
+                  let geometry = Self.geometry(
+                    for: edges[edgeIndex],
+                    endpointRects: endpointRects,
+                    lineStyle: lineStyle
+                  )
+            else { return false }
+            return geometry.intersects(rect)
+        })
+    }
+
+    private mutating func refreshRouteHints(_ indices: [Int]) {
+        let router = CommitGraphOrganizationRouter()
+        for edgeIndex in indices {
+            guard edges.indices.contains(edgeIndex) else { continue }
+            let edge = edges[edgeIndex]
+            guard let sourceRect = endpointRects[edge.source],
+                  let targetRect = endpointRects[edge.target]
+            else { continue }
+            let corridor = Self.union(sourceRect, targetRect).expanded(by: 120)
+            var obstacles: [GraphRect] = []
+            for nodeIndex in nodeGrid.candidates(in: corridor).items {
+                let node = nodes[nodeIndex]
+                let endpoint = CommitGraphEndpointID.node(node.id)
+                guard endpoint != edge.source, endpoint != edge.target else {
+                    continue
+                }
+                obstacles.append(
+                    CommitGraphSceneGeometry.nodeRect(center: node.position)
+                )
+            }
+            let endpointNodeHashes: Set<String> = [edge.source, edge.target]
+                .compactMap {
+                    if case let .node(hash) = $0 { return hash }
+                    return nil
+                }
+                .reduce(into: Set<String>()) { $0.insert($1) }
+            for groupIndex in groupGrid.candidates(in: corridor).items {
+                let group = groups[groupIndex]
+                let endpoint = CommitGraphEndpointID.group(group.id)
+                guard endpoint != edge.source,
+                      endpoint != edge.target,
+                      group.memberHashes.isDisjoint(with: endpointNodeHashes)
+                else { continue }
+                obstacles.append(group.rect)
+            }
+            guard edge.routeHint != nil || !obstacles.isEmpty else {
+                continue
+            }
+            let hint = CommitGraphRouteHint(
+                edgeID: edge.id,
+                ports: edge.ports,
+                waypoints: router.route(
+                    sourceRect: sourceRect,
+                    targetRect: targetRect,
+                    sourceAnchor: edge.ports.source,
+                    targetAnchor: edge.ports.target,
+                    obstacles: obstacles,
+                    preferredChannel: edgeIndex % 7
+                )
+            )
+            edges[edgeIndex] = Self.replacingRouteHint(edge, with: hint)
+        }
+    }
+
+    private static func replacingRouteHint(
+        _ edge: CommitGraphVisibleEdge,
+        with routeHint: CommitGraphRouteHint
+    ) -> CommitGraphVisibleEdge {
+        CommitGraphVisibleEdge(
+            id: edge.id,
+            source: edge.source,
+            target: edge.target,
+            kind: edge.kind,
+            colorIndex: edge.colorIndex,
+            ports: edge.ports,
+            aggregateKey: edge.aggregateKey,
+            aggregateCount: edge.aggregateCount,
+            originalEdgeIDs: edge.originalEdgeIDs,
+            path: edge.path,
+            routeHint: routeHint,
+            publicationState: edge.publicationState
+        )
     }
 
     private mutating func moveShallowBoundaries(
@@ -610,7 +715,8 @@ public struct CommitGraphRenderIndex: Sendable {
         return RenderEdgeCandidate(
             sourceRect: sourceRect,
             targetRect: targetRect,
-            ports: edge.ports
+            ports: edge.ports,
+            routeHint: edge.routeHint
         )
     }
 
@@ -652,21 +758,34 @@ public struct CommitGraphRenderIndex: Sendable {
             return nil
         }
         let path: CommitGraphGeneratedPath
-        switch lineStyle {
-        case .curve:
-            path = CommitGraphPathGeometry.curve(
-                startRect: sourceRect,
-                startAnchor: edge.ports.source,
-                endRect: targetRect,
-                endAnchor: edge.ports.target
-            )
-        case .orthogonal:
-            path = CommitGraphPathGeometry.orthogonal(
-                startRect: sourceRect,
-                startAnchor: edge.ports.source,
-                endRect: targetRect,
-                endAnchor: edge.ports.target
-            )
+        if let hint = edge.routeHint, hint.ports == edge.ports {
+            switch lineStyle {
+            case .curve:
+                path = CommitGraphPathGeometry.roundedCurve(
+                    points: hint.waypoints
+                )
+            case .orthogonal:
+                path = CommitGraphPathGeometry.orthogonal(
+                    points: hint.waypoints
+                )
+            }
+        } else {
+            switch lineStyle {
+            case .curve:
+                path = CommitGraphPathGeometry.curve(
+                    startRect: sourceRect,
+                    startAnchor: edge.ports.source,
+                    endRect: targetRect,
+                    endAnchor: edge.ports.target
+                )
+            case .orthogonal:
+                path = CommitGraphPathGeometry.orthogonal(
+                    startRect: sourceRect,
+                    startAnchor: edge.ports.source,
+                    endRect: targetRect,
+                    endAnchor: edge.ports.target
+                )
+            }
         }
         return RenderEdgeGeometry(
             endpointRects: [sourceRect, targetRect],
@@ -735,6 +854,19 @@ public struct CommitGraphRenderIndex: Sendable {
             height: abs(bottomRight.y - topLeft.y)
         )
     }
+
+    private static func union(_ first: GraphRect, _ second: GraphRect) -> GraphRect {
+        let minimumX = min(first.minimumX, second.minimumX)
+        let minimumY = min(first.minimumY, second.minimumY)
+        let maximumX = max(first.maximumX, second.maximumX)
+        let maximumY = max(first.maximumY, second.maximumY)
+        return GraphRect(
+            x: minimumX,
+            y: minimumY,
+            width: maximumX - minimumX,
+            height: maximumY - minimumY
+        )
+    }
 }
 
 private struct RenderEdgeCandidate: Sendable {
@@ -744,24 +876,40 @@ private struct RenderEdgeCandidate: Sendable {
     init(
         sourceRect: GraphRect,
         targetRect: GraphRect,
-        ports: CommitGraphEdgePorts
+        ports: CommitGraphEdgePorts,
+        routeHint: CommitGraphRouteHint? = nil
     ) {
-        let curve = RenderIndexedPath(
-            CommitGraphPathGeometry.curve(
-                startRect: sourceRect,
-                startAnchor: ports.source,
-                endRect: targetRect,
-                endAnchor: ports.target
+        let curve: RenderIndexedPath
+        let orthogonal: RenderIndexedPath
+        if let routeHint, routeHint.ports == ports {
+            curve = RenderIndexedPath(
+                CommitGraphPathGeometry.roundedCurve(
+                    points: routeHint.waypoints
+                )
             )
-        )
-        let orthogonal = RenderIndexedPath(
-            CommitGraphPathGeometry.orthogonal(
-                startRect: sourceRect,
-                startAnchor: ports.source,
-                endRect: targetRect,
-                endAnchor: ports.target
+            orthogonal = RenderIndexedPath(
+                CommitGraphPathGeometry.orthogonal(
+                    points: routeHint.waypoints
+                )
             )
-        )
+        } else {
+            curve = RenderIndexedPath(
+                CommitGraphPathGeometry.curve(
+                    startRect: sourceRect,
+                    startAnchor: ports.source,
+                    endRect: targetRect,
+                    endAnchor: ports.target
+                )
+            )
+            orthogonal = RenderIndexedPath(
+                CommitGraphPathGeometry.orthogonal(
+                    startRect: sourceRect,
+                    startAnchor: ports.source,
+                    endRect: targetRect,
+                    endAnchor: ports.target
+                )
+            )
+        }
         for scale in RenderSpatialGrid.adaptiveScales {
             var cells = Set<RenderGridCell>()
             guard Self.append(
@@ -883,7 +1031,7 @@ private enum RenderIndexedPath: Sendable {
                     end: end
                 )
             )
-        case let .polyline(points):
+        case let .polyline(points), let .roundedPolyline(points, _):
             self = .orthogonal(
                 zip(points, points.dropFirst()).map {
                     RenderSegment(start: $0.0, end: $0.1)
@@ -1778,6 +1926,15 @@ private struct RenderSpatialGrid: Sendable {
 }
 
 private extension GraphRect {
+    func expanded(by padding: Double) -> GraphRect {
+        GraphRect(
+            x: x - padding,
+            y: y - padding,
+            width: width + padding * 2,
+            height: height + padding * 2
+        )
+    }
+
     func intersects(_ other: GraphRect) -> Bool {
         maximumX >= other.minimumX
             && minimumX <= other.maximumX

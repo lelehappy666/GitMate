@@ -64,7 +64,8 @@ public struct CommitGraphLayout: Sendable {
             edges: organization.edges,
             shallowBoundaryEndpoints: organization.shallowBoundaryEndpoints,
             contentWidth: organization.contentWidth,
-            contentHeight: organization.contentHeight
+            contentHeight: organization.contentHeight,
+            routeHintsByEdgeID: organization.routeHintsByEdgeID
         )
     }
 

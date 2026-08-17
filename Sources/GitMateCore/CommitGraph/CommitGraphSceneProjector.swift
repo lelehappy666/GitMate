@@ -132,6 +132,12 @@ public enum CommitGraphSceneProjector {
 
             let source = CommitGraphEndpointID.node(edge.childHash)
             let target = CommitGraphEndpointID.node(edge.parentHash)
+            let defaultRouteHint = routeHint(
+                edge: edge,
+                layout: layout,
+                scene: scene,
+                membership: membership
+            )
             ordinaryEdges.append(
                 CommitGraphVisibleEdge(
                     id: edge.id,
@@ -140,6 +146,7 @@ public enum CommitGraphSceneProjector {
                     kind: edge.kind,
                     colorIndex: edge.colorIndex,
                     ports: scene.edgePorts[edge.id]
+                        ?? defaultRouteHint?.ports
                         ?? defaultPorts(
                             edge: edge,
                             layout: layout,
@@ -148,6 +155,7 @@ public enum CommitGraphSceneProjector {
                     aggregateKey: nil,
                     aggregateCount: 1,
                     originalEdgeIDs: [edge.id],
+                    routeHint: defaultRouteHint,
                     publicationState: publicationIndex.state(
                         for: edge.childHash
                     )
@@ -326,6 +334,21 @@ public enum CommitGraphSceneProjector {
             sourceRect: CommitGraphSceneGeometry.nodeRect(center: child),
             targetRect: CommitGraphSceneGeometry.nodeRect(center: parent)
         )
+    }
+
+    private static func routeHint(
+        edge: CommitGraphEdge,
+        layout: CommitGraphLayoutResult,
+        scene: CommitGraphSceneState,
+        membership: [String: UUID]
+    ) -> CommitGraphRouteHint? {
+        guard scene.nodePositions[edge.childHash] == nil,
+              scene.nodePositions[edge.parentHash] == nil,
+              membership[edge.childHash] == nil,
+              membership[edge.parentHash] == nil,
+              scene.edgePorts[edge.id] == nil
+        else { return nil }
+        return layout.routeHintsByEdgeID[edge.id]
     }
 
     private static func position(

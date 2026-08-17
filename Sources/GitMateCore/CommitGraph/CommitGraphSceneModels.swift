@@ -449,6 +449,7 @@ public enum CommitGraphGeneratedPath: Equatable, Sendable {
         end: GraphPoint
     )
     case polyline(points: [GraphPoint])
+    case roundedPolyline(points: [GraphPoint], radius: Double)
 }
 
 public enum CommitGraphEndpointID: Equatable, Hashable, Sendable {
@@ -536,6 +537,7 @@ public struct CommitGraphVisibleEdge: Equatable, Identifiable, Sendable {
     public let aggregateCount: Int
     public let originalEdgeIDs: [String]
     public let path: CommitGraphGeneratedPath?
+    public let routeHint: CommitGraphRouteHint?
     public let publicationState: CommitGraphPublicationState
 
     public init(
@@ -549,6 +551,7 @@ public struct CommitGraphVisibleEdge: Equatable, Identifiable, Sendable {
         aggregateCount: Int,
         originalEdgeIDs: [String],
         path: CommitGraphGeneratedPath? = nil,
+        routeHint: CommitGraphRouteHint? = nil,
         publicationState: CommitGraphPublicationState = .unclassified
     ) {
         self.id = id
@@ -561,6 +564,7 @@ public struct CommitGraphVisibleEdge: Equatable, Identifiable, Sendable {
         self.aggregateCount = aggregateCount
         self.originalEdgeIDs = originalEdgeIDs
         self.path = path
+        self.routeHint = routeHint
         self.publicationState = publicationState
     }
 }

@@ -170,6 +170,11 @@ public struct CommitGraphOrganizationTreeLayout: Sendable {
                     y: child.y - verticalSpacing * 0.65
                 )
             }
+        let routeHintsByEdgeID = makeRouteHints(
+            nodes: nodes,
+            edges: edges,
+            depthByHash: depthByHash
+        )
         let maximumDepth = depthByHash.values.max() ?? 0
         return CommitGraphLayoutResult(
             nodes: nodes,
@@ -179,8 +184,95 @@ public struct CommitGraphOrganizationTreeLayout: Sendable {
             contentHeight: max(
                 680,
                 164 + Double(maximumDepth) * verticalSpacing
-            )
+            ),
+            routeHintsByEdgeID: routeHintsByEdgeID
         )
+    }
+
+    private func makeRouteHints(
+        nodes: [CommitGraphNode],
+        edges: [CommitGraphEdge],
+        depthByHash: [String: Int]
+    ) -> [String: CommitGraphRouteHint] {
+        let nodesByHash = Dictionary(
+            nodes.map { ($0.hash, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let nodesByDepth = Dictionary(
+            grouping: nodes,
+            by: { depthByHash[$0.hash, default: 0] }
+        )
+        let router = CommitGraphOrganizationRouter()
+        var result: [String: CommitGraphRouteHint] = [:]
+        result.reserveCapacity(edges.count)
+
+        for (index, edge) in edges.enumerated() {
+            guard let child = nodesByHash[edge.childHash],
+                  let parent = nodesByHash[edge.parentHash]
+            else { continue }
+            let sourceRect = CommitGraphSceneGeometry.nodeRect(
+                center: GraphPoint(x: child.x, y: child.y)
+            )
+            let targetRect = CommitGraphSceneGeometry.nodeRect(
+                center: GraphPoint(x: parent.x, y: parent.y)
+            )
+            let ports = CommitGraphPortAllocator.ports(
+                sourceRect: sourceRect,
+                targetRect: targetRect
+            )
+            let firstDepth = min(
+                depthByHash[edge.childHash, default: 0],
+                depthByHash[edge.parentHash, default: 0]
+            )
+            let lastDepth = max(
+                depthByHash[edge.childHash, default: 0],
+                depthByHash[edge.parentHash, default: 0]
+            )
+            let corridor = GraphRect(
+                x: min(sourceRect.minimumX, targetRect.minimumX) - 56,
+                y: min(sourceRect.minimumY, targetRect.minimumY) - 56,
+                width: abs(sourceRect.midpointX - targetRect.midpointX)
+                    + CommitGraphSceneGeometry.nodeWidth + 112,
+                height: abs(sourceRect.midpointY - targetRect.midpointY)
+                    + CommitGraphSceneGeometry.nodeHeight + 112
+            )
+            var obstacles: [GraphRect] = []
+            if firstDepth <= lastDepth {
+                for depth in firstDepth...lastDepth {
+                    for node in nodesByDepth[depth, default: []]
+                        where node.hash != edge.childHash
+                            && node.hash != edge.parentHash {
+                        let rect = CommitGraphSceneGeometry.nodeRect(
+                            center: GraphPoint(x: node.x, y: node.y)
+                        )
+                        if intersects(rect, corridor) {
+                            obstacles.append(rect)
+                        }
+                    }
+                }
+            }
+            let waypoints = router.route(
+                sourceRect: sourceRect,
+                targetRect: targetRect,
+                sourceAnchor: ports.source,
+                targetAnchor: ports.target,
+                obstacles: obstacles,
+                preferredChannel: edge.kind == .merge ? index % 7 + 1 : 0
+            )
+            result[edge.id] = CommitGraphRouteHint(
+                edgeID: edge.id,
+                ports: ports,
+                waypoints: waypoints
+            )
+        }
+        return result
+    }
+
+    private func intersects(_ first: GraphRect, _ second: GraphRect) -> Bool {
+        first.maximumX >= second.minimumX
+            && first.minimumX <= second.maximumX
+            && first.maximumY >= second.minimumY
+            && first.minimumY <= second.maximumY
     }
 
     private func stableTreeOrdering(
