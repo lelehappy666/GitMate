@@ -462,10 +462,16 @@ public struct CommitGraphVisibleNode: Equatable, Identifiable, Sendable {
 
     public let node: CommitGraphNode
     public let position: GraphPoint
+    public let publicationState: CommitGraphPublicationState
 
-    public init(node: CommitGraphNode, position: GraphPoint) {
+    public init(
+        node: CommitGraphNode,
+        position: GraphPoint,
+        publicationState: CommitGraphPublicationState = .unclassified
+    ) {
         self.node = node
         self.position = position
+        self.publicationState = publicationState
     }
 }
 
@@ -530,6 +536,7 @@ public struct CommitGraphVisibleEdge: Equatable, Identifiable, Sendable {
     public let aggregateCount: Int
     public let originalEdgeIDs: [String]
     public let path: CommitGraphGeneratedPath?
+    public let publicationState: CommitGraphPublicationState
 
     public init(
         id: String,
@@ -541,7 +548,8 @@ public struct CommitGraphVisibleEdge: Equatable, Identifiable, Sendable {
         aggregateKey: CollapsedEdgeKey?,
         aggregateCount: Int,
         originalEdgeIDs: [String],
-        path: CommitGraphGeneratedPath? = nil
+        path: CommitGraphGeneratedPath? = nil,
+        publicationState: CommitGraphPublicationState = .unclassified
     ) {
         self.id = id
         self.source = source
@@ -553,6 +561,7 @@ public struct CommitGraphVisibleEdge: Equatable, Identifiable, Sendable {
         self.aggregateCount = aggregateCount
         self.originalEdgeIDs = originalEdgeIDs
         self.path = path
+        self.publicationState = publicationState
     }
 }
 

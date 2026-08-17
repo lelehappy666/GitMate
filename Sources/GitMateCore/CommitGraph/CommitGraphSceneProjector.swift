@@ -3,7 +3,8 @@ import Foundation
 public enum CommitGraphSceneProjector {
     public static func project(
         layout: CommitGraphLayoutResult,
-        scene: CommitGraphSceneState
+        scene: CommitGraphSceneState,
+        publicationIndex: CommitGraphTraditionalPublicationIndex = .empty
     ) -> CommitGraphSceneProjection {
         let membership = Dictionary(
             scene.groups.flatMap { group in
@@ -33,7 +34,11 @@ public enum CommitGraphSceneProjector {
                 position = scene.nodePositions[node.hash]
                     ?? GraphPoint(x: node.x, y: node.y)
             }
-            return CommitGraphVisibleNode(node: node, position: position)
+            return CommitGraphVisibleNode(
+                node: node,
+                position: position,
+                publicationState: publicationIndex.state(for: node.hash)
+            )
         }
 
         let visibleGroups = scene.groups.map { group in
@@ -102,6 +107,9 @@ public enum CommitGraphSceneProjector {
                 }
                 if var existing = aggregateEdges[aggregate.key] {
                     existing.originalEdgeIDs.append(edge.id)
+                    existing.publicationStates.append(
+                        publicationIndex.state(for: edge.childHash)
+                    )
                     if edge.kind == .merge {
                         existing.kind = .merge
                     }
@@ -113,7 +121,10 @@ public enum CommitGraphSceneProjector {
                         kind: edge.kind,
                         colorIndex: edge.colorIndex,
                         ports: aggregate.ports,
-                        originalEdgeIDs: [edge.id]
+                        originalEdgeIDs: [edge.id],
+                        publicationStates: [
+                            publicationIndex.state(for: edge.childHash)
+                        ]
                     )
                 }
                 continue
@@ -136,7 +147,10 @@ public enum CommitGraphSceneProjector {
                         ),
                     aggregateKey: nil,
                     aggregateCount: 1,
-                    originalEdgeIDs: [edge.id]
+                    originalEdgeIDs: [edge.id],
+                    publicationState: publicationIndex.state(
+                        for: edge.childHash
+                    )
                 )
             )
         }
@@ -180,7 +194,10 @@ public enum CommitGraphSceneProjector {
                     ports: ports,
                     aggregateKey: aggregateKey,
                     aggregateCount: 1,
-                    originalEdgeIDs: [endpoint.id]
+                    originalEdgeIDs: [endpoint.id],
+                    publicationState: publicationIndex.state(
+                        for: endpoint.endpoint.childHash
+                    )
                 )
             )
         }
@@ -197,7 +214,10 @@ public enum CommitGraphSceneProjector {
                     ports: accumulator.ports,
                     aggregateKey: key,
                     aggregateCount: accumulator.originalEdgeIDs.count,
-                    originalEdgeIDs: accumulator.originalEdgeIDs
+                    originalEdgeIDs: accumulator.originalEdgeIDs,
+                    publicationState: CommitGraphPublicationState.aggregated(
+                        accumulator.publicationStates
+                    )
                 )
             }
 
@@ -225,6 +245,7 @@ public enum CommitGraphSceneProjector {
         let colorIndex: Int
         let ports: CommitGraphEdgePorts
         var originalEdgeIDs: [String]
+        var publicationStates: [CommitGraphPublicationState]
     }
 
     private static func aggregateDescriptor(

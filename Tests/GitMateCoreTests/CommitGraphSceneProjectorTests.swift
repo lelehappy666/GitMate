@@ -2,6 +2,77 @@ import Foundation
 import GitMateCore
 
 let commitGraphSceneProjectorTests = [
+    TestCase("画布节点和普通边携带一致的本地云端发布状态") {
+        let layout = CommitGraphLayoutResult(
+            nodes: [
+                projectionNode(hash: "local", x: 100, y: 300),
+                projectionNode(hash: "cloud", x: 400, y: 300),
+                projectionNode(hash: "shared", x: 250, y: 100)
+            ],
+            edges: [
+                projectionEdge(child: "local", parent: "shared"),
+                projectionEdge(child: "cloud", parent: "shared")
+            ]
+        )
+        let publication = CommitGraphTraditionalPublicationIndex(
+            remoteReachableHashes: ["shared", "cloud"],
+            localReachableHashes: ["shared", "local"]
+        )
+
+        let projection = CommitGraphSceneProjector.project(
+            layout: layout,
+            scene: .defaultState(layout: layout),
+            publicationIndex: publication
+        )
+
+        try expectEqual(
+            projection.nodes.first { $0.id == "shared" }?.publicationState,
+            .synchronized,
+            "共享节点必须为实线状态"
+        )
+        try expectEqual(
+            projection.nodes.first { $0.id == "local" }?.publicationState,
+            .localOnly,
+            "本地独有节点必须为虚线状态"
+        )
+        try expectEqual(
+            projection.nodes.first { $0.id == "cloud" }?.publicationState,
+            .remoteOnly,
+            "云端独有节点必须为虚线并允许绘制 Cloud"
+        )
+        try expectEqual(
+            projection.edges.first { $0.id == "local->shared" }?
+                .publicationState,
+            .localOnly,
+            "边必须继承子提交发布状态"
+        )
+        try expectEqual(
+            projection.edges.first { $0.id == "cloud->shared" }?
+                .publicationState,
+            .remoteOnly,
+            "云端独有边必须保持云端状态"
+        )
+    },
+    TestCase("折叠分组聚合边只要包含未同步提交就保持虚线") {
+        let fixture = collapsedProjectionFixture()
+        let publication = CommitGraphTraditionalPublicationIndex(
+            remoteReachableHashes: ["member-a"],
+            localReachableHashes: ["member-a", "member-b"]
+        )
+
+        let projection = CommitGraphSceneProjector.project(
+            layout: fixture.layout,
+            scene: fixture.scene,
+            publicationIndex: publication
+        )
+        let aggregate = projection.edges.first { $0.aggregateCount == 2 }
+
+        try expectEqual(
+            aggregate?.publicationState,
+            .localOnly,
+            "聚合边包含本地独有子边时必须使用虚线"
+        )
+    },
     TestCase("折叠分组隐藏成员和组内连线") {
         let fixture = collapsedProjectionFixture()
         let projection = CommitGraphSceneProjector.project(

@@ -25,11 +25,11 @@ let commitGraphTraditionalPublicationTests = [
             )
         )
 
-        try expectEqual(index.state(for: "local-tip"), .localUnpushed, "远端不可达的本地提交必须标记未推送")
+        try expectEqual(index.state(for: "local-tip"), .localOnly, "远端不可达的本地提交必须标记本地独有")
         try expect(index.isDashed(childHash: "local-tip"), "本地未推送提交发出的父边必须使用虚线")
-        try expectEqual(index.state(for: "remote-tip"), .remoteKnown, "远端 tip 必须使用实线")
-        try expect(!index.isDashed(childHash: "remote-tip"), "远程已知提交发出的父边不得使用虚线")
-        try expectEqual(index.state(for: "root"), .remoteKnown, "远程 tip 的祖先同样属于远程已知")
+        try expectEqual(index.state(for: "remote-tip"), .synchronized, "两端共同可达的 tip 必须使用实线")
+        try expect(!index.isDashed(childHash: "remote-tip"), "两端一致提交发出的父边不得使用虚线")
+        try expectEqual(index.state(for: "root"), .synchronized, "两端共同祖先必须标记已同步")
     },
     TestCase("没有远程引用时全部本地可达提交均为未推送") {
         let index = CommitGraphTraditionalPublicationIndex.build(
@@ -48,10 +48,10 @@ let commitGraphTraditionalPublicationTests = [
             )
         )
 
-        try expectEqual(index.state(for: "tip"), .localUnpushed, "本地 tip 必须标记未推送")
-        try expectEqual(index.state(for: "root"), .localUnpushed, "本地 tip 的祖先也必须标记未推送")
+        try expectEqual(index.state(for: "tip"), .localOnly, "本地 tip 必须标记本地独有")
+        try expectEqual(index.state(for: "root"), .localOnly, "本地 tip 的祖先也必须标记本地独有")
     },
-    TestCase("仅远程分支可达提交保持远程实线") {
+    TestCase("仅远程分支可达提交使用云端虚线和Cloud标志") {
         let index = CommitGraphTraditionalPublicationIndex.build(
             snapshot: publicationSnapshot(
                 references: [
@@ -65,7 +65,9 @@ let commitGraphTraditionalPublicationTests = [
             )
         )
 
-        try expectEqual(index.state(for: "remote-only"), .remoteKnown, "仅远程提交不得误标未推送")
+        try expectEqual(index.state(for: "remote-only"), .remoteOnly, "仅远程提交必须标记云端独有")
+        try expect(index.isDashed(childHash: "remote-only"), "云端独有提交必须使用虚线")
+        try expect(index.showsCloud(hash: "remote-only"), "云端独有提交必须显示 Cloud")
     },
     TestCase("Merge提交所有父边继承子提交的发布状态") {
         let index = CommitGraphTraditionalPublicationIndex.build(
@@ -92,7 +94,7 @@ let commitGraphTraditionalPublicationTests = [
         )
 
         try expect(index.isDashed(childHash: "merge"), "本地未推送 Merge 发出的每一条父边都必须是虚线")
-        try expectEqual(index.state(for: "main-parent"), .remoteKnown, "父提交自身状态不应被 Merge 子提交覆盖")
+        try expectEqual(index.state(for: "main-parent"), .synchronized, "父提交自身状态不应被 Merge 子提交覆盖")
     },
     TestCase("无本地远程引用的提交不误标未推送") {
         let index = CommitGraphTraditionalPublicationIndex.build(

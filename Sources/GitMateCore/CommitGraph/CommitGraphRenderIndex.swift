@@ -306,7 +306,8 @@ public struct CommitGraphRenderIndex: Sendable {
                 aggregateKey: edge.aggregateKey,
                 aggregateCount: edge.aggregateCount,
                 originalEdgeIDs: edge.originalEdgeIDs,
-                path: geometry.generatedPath
+                path: geometry.generatedPath,
+                publicationState: edge.publicationState
             )
         }
 
@@ -441,7 +442,8 @@ public struct CommitGraphRenderIndex: Sendable {
         let previousPosition = nodes[nodeIndex].position
         nodes[nodeIndex] = CommitGraphVisibleNode(
             node: nodes[nodeIndex].node,
-            position: position
+            position: position,
+            publicationState: nodes[nodeIndex].publicationState
         )
         let rect = CommitGraphSceneGeometry.nodeRect(center: position)
         endpointRects[.node(hash)] = rect
@@ -528,7 +530,8 @@ public struct CommitGraphRenderIndex: Sendable {
             )
             nodes[nodeIndex] = CommitGraphVisibleNode(
                 node: nodes[nodeIndex].node,
-                position: newPosition
+                position: newPosition,
+                publicationState: nodes[nodeIndex].publicationState
             )
             let rect = CommitGraphSceneGeometry.nodeRect(center: newPosition)
             nodeGrid.replace(item: nodeIndex, rect: rect)

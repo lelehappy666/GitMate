@@ -1,14 +1,38 @@
 import Foundation
 
-public enum CommitGraphTraditionalPublicationState:
+public enum CommitGraphPublicationState:
     String,
     Equatable,
     Sendable
 {
-    case remoteKnown
-    case localUnpushed
+    case synchronized
+    case localOnly
+    case remoteOnly
     case unclassified
+
+    public static var remoteKnown: Self { .synchronized }
+    public static var localUnpushed: Self { .localOnly }
+
+    public var isDashed: Bool {
+        self == .localOnly || self == .remoteOnly
+    }
+
+    public var showsCloud: Bool { self == .remoteOnly }
+
+    public static func aggregated<S: Sequence>(
+        _ states: S
+    ) -> CommitGraphPublicationState where S.Element == Self {
+        let values = Array(states)
+        guard let first = values.first else { return .unclassified }
+        if values.allSatisfy({ $0 == first }) { return first }
+        return values.contains(where: \CommitGraphPublicationState.isDashed)
+            ? .localOnly
+            : .unclassified
+    }
 }
+
+public typealias CommitGraphTraditionalPublicationState =
+    CommitGraphPublicationState
 
 /// 传统提交图使用的不可变发布状态索引。
 ///
@@ -62,14 +86,23 @@ public struct CommitGraphTraditionalPublicationIndex:
 
     public func state(
         for hash: String
-    ) -> CommitGraphTraditionalPublicationState {
-        if remoteReachableHashes.contains(hash) { return .remoteKnown }
-        if localReachableHashes.contains(hash) { return .localUnpushed }
-        return .unclassified
+    ) -> CommitGraphPublicationState {
+        let local = localReachableHashes.contains(hash)
+        let remote = remoteReachableHashes.contains(hash)
+        switch (local, remote) {
+        case (true, true): return .synchronized
+        case (true, false): return .localOnly
+        case (false, true): return .remoteOnly
+        case (false, false): return .unclassified
+        }
     }
 
     public func isDashed(childHash: String) -> Bool {
-        state(for: childHash) == .localUnpushed
+        state(for: childHash).isDashed
+    }
+
+    public func showsCloud(hash: String) -> Bool {
+        state(for: hash).showsCloud
     }
 
     private static func reachableHashes(

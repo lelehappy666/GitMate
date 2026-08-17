@@ -282,7 +282,8 @@ public struct DefaultCommitGraphViewModelDeriver:
             try Task.checkCancellation()
             let provisionalProjection = CommitGraphSceneProjector.project(
                 layout: request.base.canvasLayout,
-                scene: reconciled
+                scene: reconciled,
+                publicationIndex: request.base.traditionalPublicationIndex
             )
             for edge in provisionalProjection.edges
                 where edge.aggregateKey == nil
@@ -292,7 +293,8 @@ public struct DefaultCommitGraphViewModelDeriver:
             try Task.checkCancellation()
             let projection = CommitGraphSceneProjector.project(
                 layout: request.base.canvasLayout,
-                scene: reconciled
+                scene: reconciled,
+                publicationIndex: request.base.traditionalPublicationIndex
             )
             try Task.checkCancellation()
             let renderIndex = CommitGraphRenderIndex(projection: projection)
@@ -2305,7 +2307,8 @@ public final class CommitGraphViewModel {
     private func refreshProjection(incrementingPathRevision: Bool) {
         projection = CommitGraphSceneProjector.project(
             layout: layout,
-            scene: scene
+            scene: scene,
+            publicationIndex: traditionalPublicationIndex
         )
         renderIndex = CommitGraphRenderIndex(projection: projection)
         rebuildBranchBundleProjection()
