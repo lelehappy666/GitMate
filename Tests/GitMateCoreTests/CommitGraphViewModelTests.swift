@@ -1815,6 +1815,42 @@ let commitGraphViewModelTests = [
             "平移和缩放只能查询现有投影，不得重建完整分支目录"
         )
     },
+    TestCase("完整派生一次生成组织树坐标和全部固定通道路由") {
+        let snapshot = branchProjectionViewModelSnapshot()
+        let base = try await DefaultCommitGraphViewModelDeriver()
+            .deriveGitBase(CommitGraphGitDerivationRequest(snapshot: snapshot))
+
+        try expectEqual(
+            base.canvasLayout.nodes.count,
+            snapshot.commitsNewestFirst.count,
+            "后台派生不得遗漏本地或远程分支提交"
+        )
+        try expectEqual(
+            base.canvasLayout.routeHintsByEdgeID.count,
+            base.canvasLayout.edges.count,
+            "组织树每条已知父边都必须在同一代派生固定通道"
+        )
+        try expectEqual(
+            base.defaultPositions.count,
+            base.canvasLayout.nodes.count,
+            "默认坐标必须与组织树布局来自同一代结果"
+        )
+        let derived = try await DefaultCommitGraphViewModelDeriver()
+            .deriveScene(
+                CommitGraphSceneDerivationRequest(
+                    snapshot: snapshot,
+                    previousSnapshot: nil,
+                    scene: CommitGraphSceneState(),
+                    base: base
+                )
+            )
+        try expectEqual(
+            derived.projection.edges.filter { $0.kind != .shallowBoundary }
+                .compactMap(\.routeHint).count,
+            base.canvasLayout.edges.count,
+            "最终场景必须继续使用同代固定通道而不是退回直穿卡片"
+        )
+    },
     TestCase("搜索束内提交自动展开并允许重新折叠") { @MainActor in
         let snapshot = branchProjectionViewModelSnapshot()
         let viewModel = CommitGraphViewModel(

@@ -1377,12 +1377,9 @@ public final class CommitGraphViewModel {
     }
 
     public func resetLayout() {
-        let updatedLayout = graphLayout.layout(
-            page: CommitGraphPage(
-                commits: commits,
-                nextCursor: nextCursor
-            )
-        )
+        // 当前完整快照派生的布局包含全部本地/远程引用和稳定路由。
+        // 重置只恢复其默认坐标，不再用分页提交重新推断一份不完整拓扑。
+        let updatedLayout = layout
         let defaults = CommitGraphSceneState.defaultState(
             layout: updatedLayout
         )

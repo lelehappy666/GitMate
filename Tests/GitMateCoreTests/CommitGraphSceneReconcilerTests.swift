@@ -44,8 +44,8 @@ let commitGraphSceneReconcilerTests = [
     TestCase("旧画布算法场景自动迁移到树枝布局且保留分组状态") {
         let groupID = UUID(uuidString: "ABABABAB-ABAB-ABAB-ABAB-ABABABABABAB")!
         let scene = CommitGraphSceneState(
-            schemaVersion: 2,
-            layoutAlgorithmVersion: 1,
+            schemaVersion: 5,
+            layoutAlgorithmVersion: 3,
             nodePositions: ["main": GraphPoint(x: 100, y: 100)],
             groups: [CommitGraphGroup(
                 id: groupID,
@@ -63,7 +63,14 @@ let commitGraphSceneReconcilerTests = [
                 title: "v2",
                 colorHex: "#2F80ED",
                 rect: GraphRect(x: 1, y: 2, width: 3, height: 4)
-            )]
+            )],
+            edgePorts: [
+                "main->left#0": CommitGraphEdgePorts(
+                    source: PortAnchor(side: .left, offset: 0.23),
+                    target: PortAnchor(side: .right, offset: 0.71)
+                )
+            ],
+            manuallyPositionedHashes: ["main"]
         )
         let defaults = [
             "main": GraphPoint(x: 600, y: 100),
@@ -73,8 +80,16 @@ let commitGraphSceneReconcilerTests = [
 
         let reconciled = CommitGraphSceneReconciler.reconcile(
             scene: scene,
-            oldSnapshot: reconcileSnapshot(hashes: ["main", "left", "right"]),
-            newSnapshot: reconcileSnapshot(hashes: ["main", "left", "right"]),
+            oldSnapshot: reconcileSnapshot(commits: [
+                reconcileCommit(hash: "main", parents: ["left"]),
+                reconcileCommit(hash: "left"),
+                reconcileCommit(hash: "right")
+            ]),
+            newSnapshot: reconcileSnapshot(commits: [
+                reconcileCommit(hash: "main", parents: ["left"]),
+                reconcileCommit(hash: "left"),
+                reconcileCommit(hash: "right")
+            ]),
             defaultPositions: defaults
         )
 
@@ -83,19 +98,32 @@ let commitGraphSceneReconcilerTests = [
             CommitGraphSceneState.currentLayoutAlgorithmVersion,
             "迁移后必须记录树枝布局版本，避免每次刷新重排"
         )
-        try expectEqual(reconciled.nodePositions["main"], defaults["main"], "普通节点必须采用新布局")
+        try expectEqual(reconciled.layoutAlgorithmVersion, 4, "组织树布局必须使用算法版本四")
+        try expectEqual(
+            reconciled.nodePositions["main"],
+            GraphPoint(x: 100, y: 100),
+            "手动节点不得因组织树升级移动"
+        )
         try expectEqual(reconciled.groups.first?.isCollapsed, true, "折叠状态必须保留")
         try expectEqual(reconciled.groups.first?.title, "保留的分组", "分组名称必须保留")
         try expectEqual(reconciled.regions, scene.regions, "版本区域必须保留")
         try expectEqual(
-            reconciled.groups.first?.absolutePosition(for: "left"),
-            defaults["left"],
-            "组内成员也必须迁移到树枝位置"
+            reconciled.groups.first?.origin,
+            GraphPoint(x: 10, y: 20),
+            "已有 Group 原点不得因自动布局升级移动"
         )
         try expectEqual(
-            reconciled.groups.first?.absolutePosition(for: "right"),
-            defaults["right"],
-            "分组只能有一份位置真值"
+            reconciled.groups.first?.relativePositions,
+            [
+                "left": GraphPoint(x: 10, y: 10),
+                "right": GraphPoint(x: 20, y: 20)
+            ],
+            "Group 成员相对坐标必须保持唯一真值"
+        )
+        try expectEqual(
+            reconciled.edgePorts["main->left#0"],
+            scene.edgePorts["main->left#0"],
+            "布局升级不得重新分配已保存端口"
         )
     },
     TestCase("刷新对账保留场景并安全解散不足两个成员的分组") {

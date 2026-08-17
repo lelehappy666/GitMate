@@ -169,7 +169,7 @@ public struct CollapsedEdgeKey: Codable, Equatable, Hashable, Sendable {
 
 public struct CommitGraphSceneState: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 6
-    public static let currentLayoutAlgorithmVersion = 3
+    public static let currentLayoutAlgorithmVersion = 4
 
     public var schemaVersion: Int
     public var layoutAlgorithmVersion: Int

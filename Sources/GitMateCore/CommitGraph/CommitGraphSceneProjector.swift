@@ -342,13 +342,37 @@ public enum CommitGraphSceneProjector {
         scene: CommitGraphSceneState,
         membership: [String: UUID]
     ) -> CommitGraphRouteHint? {
-        guard scene.nodePositions[edge.childHash] == nil,
-              scene.nodePositions[edge.parentHash] == nil,
-              membership[edge.childHash] == nil,
+        guard membership[edge.childHash] == nil,
               membership[edge.parentHash] == nil,
-              scene.edgePorts[edge.id] == nil
+              usesDefaultPosition(
+                hash: edge.childHash,
+                layout: layout,
+                scene: scene
+              ),
+              usesDefaultPosition(
+                hash: edge.parentHash,
+                layout: layout,
+                scene: scene
+              ),
+              let hint = layout.routeHintsByEdgeID[edge.id]
         else { return nil }
-        return layout.routeHintsByEdgeID[edge.id]
+        if let savedPorts = scene.edgePorts[edge.id],
+           savedPorts != hint.ports {
+            return nil
+        }
+        return hint
+    }
+
+    private static func usesDefaultPosition(
+        hash: String,
+        layout: CommitGraphLayoutResult,
+        scene: CommitGraphSceneState
+    ) -> Bool {
+        guard !scene.manuallyPositionedHashes.contains(hash),
+              let node = layout.node(hash: hash)
+        else { return false }
+        let expected = GraphPoint(x: node.x, y: node.y)
+        return (scene.nodePositions[hash] ?? expected) == expected
     }
 
     private static func position(
