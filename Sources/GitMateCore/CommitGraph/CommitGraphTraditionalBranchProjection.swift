@@ -107,6 +107,9 @@ public struct CommitGraphTraditionalBranchProjection:
 
     public var hiddenLocalCount: Int { hiddenLocalBranches.count }
     public var hiddenRemoteCount: Int { hiddenRemoteBranches.count }
+    public var logicalBranchCount: Int {
+        slots.lazy.filter { !$0.isPlaceholder }.count
+    }
 
     public init(
         capacity: Int,
@@ -150,11 +153,7 @@ public enum CommitGraphTraditionalBranchProjector {
     ) -> CommitGraphTraditionalBranchProjection {
         guard !input.catalog.branches.isEmpty else { return .empty }
 
-        let ancestry = AncestryIndex(topology: input.topology)
-        let groups = orderedLogicalGroups(
-            catalog: input.catalog,
-            ancestry: ancestry
-        )
+        let groups = orderedLogicalGroups(catalog: input.catalog)
 
         var representatives: [CommitGraphBranchDescriptor] = []
         var slots: [CommitGraphTraditionalBranchSlot] = []
@@ -293,8 +292,7 @@ public enum CommitGraphTraditionalBranchProjector {
     }
 
     private static func orderedLogicalGroups(
-        catalog: CommitGraphBranchCatalog,
-        ancestry: AncestryIndex
+        catalog: CommitGraphBranchCatalog
     ) -> [LogicalGroup] {
         var grouped: [String: [CommitGraphBranchDescriptor]] = [:]
         for branch in catalog.branches {
@@ -303,11 +301,7 @@ public enum CommitGraphTraditionalBranchProjector {
         let families = grouped.map { identity, branches in
             LogicalFamily(
                 identity: identity,
-                groups: linearGroups(
-                    identity: identity,
-                    branches: branches,
-                    ancestry: ancestry
-                )
+                groups: logicalGroups(identity: identity, branches: branches)
             )
         }
         return families
@@ -345,34 +339,19 @@ public enum CommitGraphTraditionalBranchProjector {
         )
     }
 
-    private static func linearGroups(
+    private static func logicalGroups(
         identity: String,
-        branches: [CommitGraphBranchDescriptor],
-        ancestry: AncestryIndex
+        branches: [CommitGraphBranchDescriptor]
     ) -> [LogicalGroup] {
-        var clusters: [[CommitGraphBranchDescriptor]] = []
-        for branch in branches.sorted(by: stableBranchOrdering) {
-            if let index = clusters.firstIndex(where: { cluster in
-                cluster.allSatisfy {
-                    ancestry.areLinearlyRelated(
-                        first: $0.tipHash,
-                        second: branch.tipHash
-                    )
-                }
-            }) {
-                clusters[index].append(branch)
-            } else {
-                clusters.append([branch])
-            }
-        }
-        return clusters.map { cluster in
-            let branchIDs = cluster.map(\.id).sorted().joined(separator: "+")
-            return LogicalGroup(
+        let ordered = branches.sorted(by: stableBranchOrdering)
+        let branchIDs = ordered.map(\.id).joined(separator: "+")
+        return [
+            LogicalGroup(
                 identity: identity,
                 stableIdentity: "\(identity):\(branchIDs)",
-                branches: cluster
+                branches: ordered
             )
-        }
+        ]
     }
 
     private static func stableBranchOrdering(
@@ -436,37 +415,4 @@ public enum CommitGraphTraditionalBranchProjector {
             && branch.displayName.hasPrefix("origin/")
     }
 
-    private struct AncestryIndex {
-        let parentsByHash: [String: [String]]
-
-        init(topology: CommitGraphLaneTopology) {
-            parentsByHash = Dictionary(
-                topology.rowsNewestFirst.map {
-                    ($0.commit.fullHash, $0.commit.parentHashes)
-                },
-                uniquingKeysWith: { first, _ in first }
-            )
-        }
-
-        func areLinearlyRelated(first: String, second: String) -> Bool {
-            first == second
-                || isAncestor(first, of: second)
-                || isAncestor(second, of: first)
-        }
-
-        private func isAncestor(_ ancestor: String, of descendant: String) -> Bool {
-            guard parentsByHash[ancestor] != nil,
-                  parentsByHash[descendant] != nil
-            else { return false }
-            var visited = Set<String>()
-            var stack = [descendant]
-            while let hash = stack.popLast(), visited.insert(hash).inserted {
-                for parent in parentsByHash[hash] ?? [] {
-                    if parent == ancestor { return true }
-                    if parentsByHash[parent] != nil { stack.append(parent) }
-                }
-            }
-            return false
-        }
-    }
 }

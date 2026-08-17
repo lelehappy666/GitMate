@@ -67,6 +67,7 @@ public struct CommitGraphBranchDescriptor:
 public struct CommitGraphBranchCatalog: Equatable, Sendable {
     public let branches: [CommitGraphBranchDescriptor]
     public let headBranchID: String?
+    public let directReferenceCount: Int
 
     private let branchIndexByID: [String: Int]
     private let primaryBranchIDByHash: [String: String]
@@ -76,10 +77,17 @@ public struct CommitGraphBranchCatalog: Equatable, Sendable {
         branches: [CommitGraphBranchDescriptor],
         headBranchID: String?,
         primaryBranchIDByHash: [String: String],
+        directReferenceCount: Int? = nil,
         relatedBranchIDsByBranchID: [String: Set<String>] = [:]
     ) {
         self.branches = branches
         self.headBranchID = headBranchID
+        self.directReferenceCount = max(
+            directReferenceCount ?? branches.filter {
+                $0.source == .local || $0.source == .remote
+            }.count,
+            0
+        )
         self.primaryBranchIDByHash = primaryBranchIDByHash
         self.relatedBranchIDsByBranchID = relatedBranchIDsByBranchID
         branchIndexByID = Dictionary(
@@ -112,6 +120,7 @@ public struct CommitGraphBranchCatalog: Equatable, Sendable {
                 branches: [],
                 headBranchID: nil,
                 primaryBranchIDByHash: [:],
+                directReferenceCount: 0,
                 relatedBranchIDsByBranchID: [:]
             )
         }
@@ -128,7 +137,10 @@ public struct CommitGraphBranchCatalog: Equatable, Sendable {
 
         var drafts: [BranchDraft] = []
         var draftIDs = Set<String>()
-        for reference in fingerprint.references.sorted(by: { $0.name < $1.name }) {
+        let directReferences = fingerprint.references.filter {
+            $0.symbolicTarget == nil
+        }
+        for reference in directReferences.sorted(by: { $0.name < $1.name }) {
             guard let row = rowsByHash[reference.targetHash] else { continue }
             let source: CommitGraphBranchSource = reference.kind == .localBranch
                 ? .local
@@ -263,6 +275,7 @@ public struct CommitGraphBranchCatalog: Equatable, Sendable {
             branches: descriptors,
             headBranchID: headBranchID,
             primaryBranchIDByHash: primaryByHash,
+            directReferenceCount: directReferences.count,
             relatedBranchIDsByBranchID: related
         )
     }

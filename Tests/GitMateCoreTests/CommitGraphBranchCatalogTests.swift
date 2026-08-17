@@ -102,8 +102,59 @@ let commitGraphBranchCatalogTests = [
                 .contains("new-tip") == false,
             "分支成员不得使用整条可回收拓扑泳道"
         )
+    },
+    TestCase("符号远程引用不计入分支和直接引用") {
+        let snapshot = branchCatalogSnapshotWithSymbolicRemoteHead()
+        let topology = CommitGraphLaneTopology.build(snapshot: snapshot)
+
+        let catalog = CommitGraphBranchCatalog.build(
+            topology: topology,
+            fingerprint: snapshot.fingerprint
+        )
+
+        try expectEqual(catalog.directReferenceCount, 2, "符号引用必须排除")
+        try expect(
+            !catalog.branches.contains { $0.displayName == "origin/HEAD" },
+            "符号引用不得成为可见分支"
+        )
     }
 ]
+
+private func branchCatalogSnapshotWithSymbolicRemoteHead()
+    -> CommitGraphSnapshot
+{
+    let commits = [branchCatalogCommit(hash: "main-tip")]
+    return CommitGraphSnapshot(
+        repositoryPath: "/repo",
+        fingerprint: CommitGraphReferenceFingerprint(
+            references: [
+                CommitGraphReference(
+                    name: "refs/heads/main",
+                    targetHash: "main-tip",
+                    kind: .localBranch
+                ),
+                CommitGraphReference(
+                    name: "refs/remotes/origin/main",
+                    targetHash: "main-tip",
+                    kind: .remoteBranch
+                ),
+                CommitGraphReference(
+                    name: "refs/remotes/origin/HEAD",
+                    targetHash: "main-tip",
+                    kind: .remoteBranch,
+                    symbolicTarget: "refs/remotes/origin/main"
+                )
+            ],
+            headName: "main",
+            headHash: "main-tip",
+            isShallow: false
+        ),
+        commitsNewestFirst: commits,
+        expectedCommitCount: commits.count,
+        shallowBoundaryParentHashes: [],
+        generatedAt: Date(timeIntervalSince1970: 1)
+    )
+}
 
 private func branchCatalogSnapshot() -> CommitGraphSnapshot {
     let commits = [

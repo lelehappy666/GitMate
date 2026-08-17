@@ -160,7 +160,7 @@ let commitGraphTraditionalBranchProjectionTests = [
             "任一远端标签都必须回到同一逻辑泳道"
         )
     },
-    TestCase("同名本地远程真正分叉时拆为相邻泳道") {
+    TestCase("同名本地远程真正分叉时仍合并为一个逻辑泳道") {
         let projection = CommitGraphTraditionalBranchProjector.project(
             CommitGraphTraditionalBranchProjectionInput(
                 catalog: projectionCatalog(
@@ -193,15 +193,15 @@ let commitGraphTraditionalBranchProjectionTests = [
         )
         try expectEqual(
             projection.displayLane(for: "remote:origin/main"),
-            1,
-            "已经分叉的远程 main 必须使用相邻独立泳道"
+            0,
+            "已经分叉的远程 main 仍必须与本地 main 合并"
         )
-        guard let localLane = projection.displayLane(for: "local:feature/a"),
-              let remoteLane = projection.displayLane(for: "remote:origin/feature/a")
-        else {
-            throw TestFailure(description: "本地与远程 feature 必须存在")
-        }
-        try expectEqual(abs(localLane - remoteLane), 1, "分叉的同名引用必须相邻")
+        try expectEqual(
+            projection.displayLane(for: "local:feature/a"),
+            projection.displayLane(for: "remote:origin/feature/a"),
+            "分叉的同名 feature 引用也必须使用同一逻辑泳道"
+        )
+        try expectEqual(projection.logicalBranchCount, 2, "只能统计两个逻辑分支")
     },
     TestCase("所有本地远程独有分支均进入投影且无聚合槽") {
         var branches = [
