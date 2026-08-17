@@ -351,7 +351,11 @@ public struct DefaultCommitGraphViewModelDeriver:
                 shallowBoundaryHashes: Set(
                     layout.shallowBoundaryEndpoints.map(\.childHash)
                 ),
-                expandedBundleIDs: expandedBundleIDs
+                expandedBundleIDs: expandedBundleIDs,
+                alwaysExpandedBranchIDs:
+                    CommitGraphBranchBundlePolicy.alwaysExpandedBranchIDs(
+                        in: catalog
+                    )
             )
         )
     }
@@ -381,6 +385,19 @@ private enum CommitGraphScenePersistenceState: Sendable {
     case restoring
     case writable
     case readOnlyFutureSchema
+}
+
+private enum CommitGraphBranchBundlePolicy {
+    static func alwaysExpandedBranchIDs(
+        in catalog: CommitGraphBranchCatalog
+    ) -> Set<String> {
+        Set(catalog.branches.compactMap { branch in
+            let normalized = branch.displayName.lowercased()
+            let isMain = normalized == "main"
+                || normalized.hasSuffix("/main")
+            return branch.isHead || isMain ? branch.id : nil
+        })
+    }
 }
 
 private struct CommitGraphHistoryBinCacheKey: Hashable {
@@ -449,7 +466,11 @@ private enum CommitGraphBranchBundleProjectionDeriver {
                 shallowBoundaryHashes: Set(
                     layout.shallowBoundaryEndpoints.map(\.childHash)
                 ),
-                expandedBundleIDs: expandedBundleIDs
+                expandedBundleIDs: expandedBundleIDs,
+                alwaysExpandedBranchIDs:
+                    CommitGraphBranchBundlePolicy.alwaysExpandedBranchIDs(
+                        in: catalog
+                    )
             )
         )
     }
@@ -523,7 +544,9 @@ public final class CommitGraphViewModel {
         CommitGraphTraditionalSegmentProjection.empty
     public private(set) var traditionalPublicationIndex =
         CommitGraphTraditionalPublicationIndex.empty
-    public private(set) var expandedBranchBundleIDs: Set<String> = []
+    public var expandedBranchBundleIDs: Set<String> {
+        scene.expandedBranchBundleIDs
+    }
     public private(set) var branchProjectionRevision: UInt64 = 0
 
     @ObservationIgnored
@@ -887,7 +910,9 @@ public final class CommitGraphViewModel {
     public func selectForNavigation(hash: String) {
         guard layout.node(hash: hash) != nil else { return }
         if let bundle = branchBundleProjection.bundle(containing: hash) {
-            expandedBranchBundleIDs.insert(bundle.id)
+            scene.expandedBranchBundleIDs.insert(bundle.id)
+            recordSceneMutation()
+            scheduleSceneSave()
         }
         selectedHash = hash
         selectedHashes = [hash]
@@ -928,14 +953,16 @@ public final class CommitGraphViewModel {
     }
 
     public func toggleBranchBundle(id: String) {
-        if expandedBranchBundleIDs.contains(id) {
-            expandedBranchBundleIDs.remove(id)
+        if scene.expandedBranchBundleIDs.contains(id) {
+            scene.expandedBranchBundleIDs.remove(id)
         } else {
             guard branchBundleProjection.bundles.contains(where: {
                 $0.id == id
             }) else { return }
-            expandedBranchBundleIDs.insert(id)
+            scene.expandedBranchBundleIDs.insert(id)
         }
+        recordSceneMutation()
+        scheduleSceneSave()
         rebuildBranchBundleProjection()
     }
 
@@ -1941,7 +1968,7 @@ public final class CommitGraphViewModel {
                 forcedVisibleHashes: selectedHashes.union(
                     selectedHash.map { [$0] } ?? []
                 ),
-                expandedBundleIDs: expandedBranchBundleIDs
+                expandedBundleIDs: scene.expandedBranchBundleIDs
             )
             let deriver = deriver
             let task = Task {
@@ -2335,7 +2362,7 @@ public final class CommitGraphViewModel {
         let catalog = branchCatalog
         let selectedHashes = selectedHashes
         let selectedHash = selectedHash
-        let expandedBundleIDs = expandedBranchBundleIDs
+        let expandedBundleIDs = scene.expandedBranchBundleIDs
         if layout.nodes.count
             <= CommitGraphBranchBundleProjectionDeriver.synchronousNodeLimit {
             installBranchBundleProjection(
@@ -2388,8 +2415,8 @@ public final class CommitGraphViewModel {
         branchBundleProjection = rebuilt
         let availableBundleIDs = Set(
             branchBundleProjection.bundles.map(\.id)
-        ).union(expandedBranchBundleIDs)
-        expandedBranchBundleIDs.formIntersection(availableBundleIDs)
+        ).union(scene.expandedBranchBundleIDs)
+        scene.expandedBranchBundleIDs.formIntersection(availableBundleIDs)
         branchProjectionRevision &+= 1
         branchBundleRebuildTask = nil
     }

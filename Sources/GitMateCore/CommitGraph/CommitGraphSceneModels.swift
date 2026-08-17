@@ -168,7 +168,7 @@ public struct CollapsedEdgeKey: Codable, Equatable, Hashable, Sendable {
 }
 
 public struct CommitGraphSceneState: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 5
+    public static let currentSchemaVersion = 6
     public static let currentLayoutAlgorithmVersion = 3
 
     public var schemaVersion: Int
@@ -185,6 +185,7 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
     public var pinnedTraditionalBranchIDs: Set<String>
     public var lastTraditionalBranchID: String?
     public var traditionalDividerWidth: Double?
+    public var expandedBranchBundleIDs: Set<String>
 
     public init(
         schemaVersion: Int = currentSchemaVersion,
@@ -200,7 +201,8 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
         manuallyPositionedHashes: Set<String> = [],
         pinnedTraditionalBranchIDs: Set<String> = [],
         lastTraditionalBranchID: String? = nil,
-        traditionalDividerWidth: Double? = nil
+        traditionalDividerWidth: Double? = nil,
+        expandedBranchBundleIDs: Set<String> = []
     ) {
         self.schemaVersion = schemaVersion
         self.layoutAlgorithmVersion = layoutAlgorithmVersion
@@ -216,6 +218,7 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
         self.pinnedTraditionalBranchIDs = pinnedTraditionalBranchIDs
         self.lastTraditionalBranchID = lastTraditionalBranchID
         self.traditionalDividerWidth = traditionalDividerWidth
+        self.expandedBranchBundleIDs = expandedBranchBundleIDs
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -233,6 +236,7 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
         case pinnedTraditionalBranchIDs
         case lastTraditionalBranchID
         case traditionalDividerWidth
+        case expandedBranchBundleIDs
     }
 
     private struct CodableViewport: Codable {
@@ -323,6 +327,10 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
             Double.self,
             forKey: .traditionalDividerWidth
         )
+        expandedBranchBundleIDs = try container.decodeIfPresent(
+            Set<String>.self,
+            forKey: .expandedBranchBundleIDs
+        ) ?? []
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -358,6 +366,10 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
         try container.encodeIfPresent(
             traditionalDividerWidth,
             forKey: .traditionalDividerWidth
+        )
+        try container.encode(
+            expandedBranchBundleIDs,
+            forKey: .expandedBranchBundleIDs
         )
     }
 

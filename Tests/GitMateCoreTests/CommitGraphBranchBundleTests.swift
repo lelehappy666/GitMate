@@ -14,24 +14,25 @@ let commitGraphBranchBundleTests = [
                 groupBoundaryHashes: [],
                 regionBoundaryHashes: [],
                 shallowBoundaryHashes: [],
-                expandedBundleIDs: []
+                expandedBundleIDs: [],
+                alwaysExpandedBranchIDs: []
             )
         )
 
         try expectEqual(projection.bundles.count, 1, "线性普通段只生成一个束")
         try expectEqual(
             projection.bundles[0].memberHashes,
-            ["c1", "c2", "c3"],
+            (1...13).map { "c\($0)" },
             "分支束成员必须保持最早到最新的连续顺序"
         )
         try expectEqual(
-            projection.bundle(containing: "c2")?.id,
+            projection.bundle(containing: "c7")?.id,
             projection.bundles[0].id,
             "必须能用提交哈希定位所属分支束"
         )
         try expectEqual(
             projection.hiddenInternalEdgeIDs.count,
-            2,
+            12,
             "束内真实边必须从概览绘制中隐藏"
         )
     },
@@ -44,10 +45,11 @@ let commitGraphBranchBundleTests = [
                 layout: fixture.layout,
                 edges: fixture.layout.edges,
                 forcedVisibleHashes: ["root", "head"],
-                groupBoundaryHashes: ["c1"],
-                regionBoundaryHashes: ["c2"],
-                shallowBoundaryHashes: ["c3"],
-                expandedBundleIDs: []
+                groupBoundaryHashes: Set((1...5).map { "c\($0)" }),
+                regionBoundaryHashes: Set((6...9).map { "c\($0)" }),
+                shallowBoundaryHashes: Set((10...13).map { "c\($0)" }),
+                expandedBundleIDs: [],
+                alwaysExpandedBranchIDs: []
             )
         )
 
@@ -69,7 +71,8 @@ let commitGraphBranchBundleTests = [
                 groupBoundaryHashes: [],
                 regionBoundaryHashes: [],
                 shallowBoundaryHashes: [],
-                expandedBundleIDs: []
+                expandedBundleIDs: [],
+                alwaysExpandedBranchIDs: []
             )
         )
         let bundle = try requiredBranchBundle(collapsed.bundles.first)
@@ -83,11 +86,12 @@ let commitGraphBranchBundleTests = [
                 groupBoundaryHashes: [],
                 regionBoundaryHashes: [],
                 shallowBoundaryHashes: [],
-                expandedBundleIDs: [bundle.id]
+                expandedBundleIDs: [bundle.id],
+                alwaysExpandedBranchIDs: []
             )
         )
 
-        try expectEqual(expanded.bundle(containing: "c2"), nil, "展开后必须恢复成员")
+        try expectEqual(expanded.bundle(containing: "c7"), nil, "展开后必须恢复成员")
         try expectEqual(expanded.hiddenMemberHashes, [], "展开后不得继续隐藏提交")
         try expectEqual(
             collapsed.visibleBundles(in: bundle.rect).map(\.id),
@@ -101,6 +105,45 @@ let commitGraphBranchBundleTests = [
             [],
             "远离分支束的视口不得返回候选"
         )
+    },
+    TestCase("十二个连续提交不生成分支摘要") {
+        let fixture = branchBundleFixture(intermediateCount: 12)
+        let projection = CommitGraphBranchBundleBuilder.build(
+            input: CommitGraphBranchBundleInput(
+                catalog: fixture.catalog,
+                layout: fixture.layout,
+                edges: fixture.layout.edges,
+                forcedVisibleHashes: ["root", "head"],
+                groupBoundaryHashes: [],
+                regionBoundaryHashes: [],
+                shallowBoundaryHashes: [],
+                expandedBundleIDs: [],
+                alwaysExpandedBranchIDs: []
+            )
+        )
+
+        try expectEqual(projection.bundles, [], "少于十三条不得过早折叠")
+    },
+    TestCase("当前与主分支始终保持展开") {
+        let fixture = branchBundleFixture()
+        let branchID = try requiredBranchBundle(
+            fixture.catalog.branches.first?.id
+        )
+        let projection = CommitGraphBranchBundleBuilder.build(
+            input: CommitGraphBranchBundleInput(
+                catalog: fixture.catalog,
+                layout: fixture.layout,
+                edges: fixture.layout.edges,
+                forcedVisibleHashes: ["root", "head"],
+                groupBoundaryHashes: [],
+                regionBoundaryHashes: [],
+                shallowBoundaryHashes: [],
+                expandedBundleIDs: [],
+                alwaysExpandedBranchIDs: [branchID]
+            )
+        )
+
+        try expectEqual(projection.bundles, [], "始终展开分支不得生成摘要")
     }
 ]
 
@@ -109,14 +152,25 @@ private struct BranchBundleFixture {
     let layout: CommitGraphLayoutResult
 }
 
-private func branchBundleFixture() -> BranchBundleFixture {
-    let commits = [
-        branchBundleCommit(hash: "head", parents: ["c3"], time: 5),
-        branchBundleCommit(hash: "c3", parents: ["c2"], time: 4),
-        branchBundleCommit(hash: "c2", parents: ["c1"], time: 3),
-        branchBundleCommit(hash: "c1", parents: ["root"], time: 2),
-        branchBundleCommit(hash: "root", time: 1)
-    ]
+private func branchBundleFixture(
+    intermediateCount: Int = 13
+) -> BranchBundleFixture {
+    let safeCount = max(intermediateCount, 1)
+    var commits = [branchBundleCommit(
+        hash: "head",
+        parents: ["c\(safeCount)"],
+        time: TimeInterval(safeCount + 2)
+    )]
+    for index in stride(from: safeCount, through: 1, by: -1) {
+        commits.append(
+            branchBundleCommit(
+                hash: "c\(index)",
+                parents: [index == 1 ? "root" : "c\(index - 1)"],
+                time: TimeInterval(index + 1)
+            )
+        )
+    }
+    commits.append(branchBundleCommit(hash: "root", time: 1))
     let snapshot = CommitGraphSnapshot(
         repositoryPath: "/repo",
         fingerprint: CommitGraphReferenceFingerprint(

@@ -110,7 +110,8 @@ public enum CommitGraphSceneReconciler {
                 .subtracting(claimedHashes),
             pinnedTraditionalBranchIDs: scene.pinnedTraditionalBranchIDs,
             lastTraditionalBranchID: scene.lastTraditionalBranchID,
-            traditionalDividerWidth: scene.traditionalDividerWidth
+            traditionalDividerWidth: scene.traditionalDividerWidth,
+            expandedBranchBundleIDs: scene.expandedBranchBundleIDs
         )
     }
 
@@ -175,7 +176,8 @@ public enum CommitGraphSceneReconciler {
             manuallyPositionedHashes: survivingManualHashes,
             pinnedTraditionalBranchIDs: scene.pinnedTraditionalBranchIDs,
             lastTraditionalBranchID: scene.lastTraditionalBranchID,
-            traditionalDividerWidth: scene.traditionalDividerWidth
+            traditionalDividerWidth: scene.traditionalDividerWidth,
+            expandedBranchBundleIDs: scene.expandedBranchBundleIDs
         )
     }
 

@@ -344,7 +344,6 @@ struct CommitGraphCanvas: View {
         context: inout GraphicsContext,
         size: CGSize
     ) {
-        guard levelOfDetail == .overview else { return }
         for bundle in branchBundles {
             let rect = screenRect(bundle.rect)
             guard isVisible(rect, in: size, padding: 80) else { continue }
@@ -382,8 +381,17 @@ struct CommitGraphCanvas: View {
                 )
             )
 
-            let cardWidth = max(138 * viewport.scale, 90)
-            let cardHeight = max(40 * viewport.scale, 30)
+            let logicalCardSize: (width: Double, height: Double)
+            switch levelOfDetail {
+            case .overview:
+                logicalCardSize = (126, 32)
+            case .compact:
+                logicalCardSize = (160, 42)
+            case .full:
+                logicalCardSize = (190, 52)
+            }
+            let cardWidth = max(logicalCardSize.width * viewport.scale, 90)
+            let cardHeight = max(logicalCardSize.height * viewport.scale, 30)
             let cardCenterY = min(
                 max(rect.midY, cardHeight / 2 + 12),
                 max(Double(size.height) - cardHeight / 2 - 12, cardHeight / 2)
@@ -404,36 +412,55 @@ struct CommitGraphCanvas: View {
                 with: .color(color.opacity(0.9)),
                 lineWidth: max(1.4 * viewport.scale, 1)
             )
-            drawFittedText(
-                bundle.branchName,
-                in: CGRect(
-                    x: cardRect.minX + 10 * viewport.scale,
-                    y: cardRect.minY + 3 * viewport.scale,
-                    width: cardRect.width - 20 * viewport.scale,
-                    height: cardRect.height * 0.5
-                ),
-                font: .systemFont(
-                    ofSize: max(11 * viewport.scale, 8),
-                    weight: .bold
-                ),
-                color: NSColor.labelColor,
-                context: &context
-            )
-            drawFittedText(
-                "\(bundle.commitCount) 个提交 · \(bundleTimeRange(bundle))",
-                in: CGRect(
-                    x: cardRect.minX + 10 * viewport.scale,
-                    y: cardRect.midY,
-                    width: cardRect.width - 20 * viewport.scale,
-                    height: cardRect.height * 0.42
-                ),
-                font: .systemFont(
-                    ofSize: max(9 * viewport.scale, 7),
-                    weight: .medium
-                ),
-                color: NSColor.secondaryLabelColor,
-                context: &context
-            )
+            if levelOfDetail == .overview {
+                drawFittedText(
+                    "\(bundle.branchName) · \(bundle.commitCount)",
+                    in: cardRect.insetBy(
+                        dx: 9 * viewport.scale,
+                        dy: 3 * viewport.scale
+                    ),
+                    font: .systemFont(
+                        ofSize: max(9.5 * viewport.scale, 7.5),
+                        weight: .bold
+                    ),
+                    color: NSColor.labelColor,
+                    context: &context
+                )
+            } else {
+                drawFittedText(
+                    bundle.branchName,
+                    in: CGRect(
+                        x: cardRect.minX + 10 * viewport.scale,
+                        y: cardRect.minY + 3 * viewport.scale,
+                        width: cardRect.width - 20 * viewport.scale,
+                        height: cardRect.height * 0.5
+                    ),
+                    font: .systemFont(
+                        ofSize: max(11 * viewport.scale, 8),
+                        weight: .bold
+                    ),
+                    color: NSColor.labelColor,
+                    context: &context
+                )
+                let detail = levelOfDetail == .full
+                    ? "\(bundle.commitCount) 个提交 · \(bundleTimeRange(bundle))"
+                    : "\(bundle.commitCount) 个提交"
+                drawFittedText(
+                    detail,
+                    in: CGRect(
+                        x: cardRect.minX + 10 * viewport.scale,
+                        y: cardRect.midY,
+                        width: cardRect.width - 20 * viewport.scale,
+                        height: cardRect.height * 0.42
+                    ),
+                    font: .systemFont(
+                        ofSize: max(9 * viewport.scale, 7),
+                        weight: .medium
+                    ),
+                    color: NSColor.secondaryLabelColor,
+                    context: &context
+                )
+            }
         }
     }
 

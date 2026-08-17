@@ -522,15 +522,13 @@ struct CommitGraphView: View {
                 screenSize: screenSize,
                 viewport: viewModel.viewport
             )
-            let visibleBundles = levelOfDetail == .overview
-                ? viewModel.visibleBranchBundles(in: bundleViewport)
-                : []
-            let hiddenBundleHashes = levelOfDetail == .overview
-                ? viewModel.branchBundleProjection.hiddenMemberHashes
-                : []
-            let hiddenBundleEdges = levelOfDetail == .overview
-                ? viewModel.branchBundleProjection.hiddenInternalEdgeIDs
-                : []
+            let visibleBundles = viewModel.visibleBranchBundles(
+                in: bundleViewport
+            )
+            let hiddenBundleHashes = viewModel.branchBundleProjection
+                .hiddenMemberHashes
+            let hiddenBundleEdges = viewModel.branchBundleProjection
+                .hiddenInternalEdgeIDs
             let navigatorHeight = min(geometry.size.height * 0.64, 480)
             let markerBins = viewModel.historyMarkerBins(
                 pixelHeight: max(Double(navigatorHeight) - 76, 1)
@@ -559,7 +557,6 @@ struct CommitGraphView: View {
                         viewModel.hitTest(canvasPoint: point)
                     },
                     hitTestBranchBundle: { point in
-                        guard levelOfDetail == .overview else { return nil }
                         return viewModel.branchBundle(at: point)?.id
                     },
                     onViewportChanges: { changes in

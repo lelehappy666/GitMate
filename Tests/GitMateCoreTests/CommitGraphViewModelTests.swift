@@ -1797,7 +1797,7 @@ let commitGraphViewModelTests = [
             "刷新安装时必须同时建立稳定居中主干"
         )
         try expect(
-            viewModel.branchBundleProjection.bundle(containing: "hash-c")
+            viewModel.branchBundleProjection.bundle(containing: "hash-f07")
                 != nil,
             "线性普通提交必须进入概览分支束"
         )
@@ -1829,25 +1829,33 @@ let commitGraphViewModelTests = [
         )
         await viewModel.refresh(source: .toolbar)
         let bundleID = try required(
-            viewModel.branchBundleProjection.bundle(containing: "hash-c")?.id,
+            viewModel.branchBundleProjection.bundle(containing: "hash-f07")?.id,
             "搜索前必须存在包含目标提交的分支束"
         )
 
-        try expect(viewModel.navigateToFirstMatch("hash-c"), "必须命中束内提交")
-        try expectEqual(viewModel.selectedHash, "hash-c", "搜索必须选中真实提交")
+        try expect(viewModel.navigateToFirstMatch("hash-f07"), "必须命中束内提交")
+        try expectEqual(viewModel.selectedHash, "hash-f07", "搜索必须选中真实提交")
         try expectEqual(
-            viewModel.branchBundleProjection.bundle(containing: "hash-c"),
+            viewModel.branchBundleProjection.bundle(containing: "hash-f07"),
             nil,
             "搜索命中后必须临时展开分支束"
+        )
+        try expect(
+            viewModel.scene.expandedBranchBundleIDs.contains(bundleID),
+            "展开状态必须立即写入仓库场景"
         )
 
         viewModel.dismissDetail()
         viewModel.clearCanvasSelection()
         viewModel.toggleBranchBundle(id: bundleID)
         try expect(
-            viewModel.branchBundleProjection.bundle(containing: "hash-c")
+            viewModel.branchBundleProjection.bundle(containing: "hash-f07")
                 != nil,
             "再次切换必须恢复自动聚合"
+        )
+        try expect(
+            !viewModel.scene.expandedBranchBundleIDs.contains(bundleID),
+            "重新折叠后必须移除持久化展开状态"
         )
     },
     TestCase("版本区域和手动移动立即使相关分支束失效") { @MainActor in
@@ -1864,7 +1872,7 @@ let commitGraphViewModelTests = [
         )
         await viewModel.refresh(source: .toolbar)
         let position = try required(
-            viewModel.scene.nodePositions["hash-c"],
+            viewModel.scene.nodePositions["hash-f07"],
             "测试提交必须具有场景位置"
         )
         let regionID = viewModel.createRegion(
@@ -1878,23 +1886,23 @@ let commitGraphViewModelTests = [
             )
         )
         try expectEqual(
-            viewModel.branchBundleProjection.bundle(containing: "hash-c"),
+            viewModel.branchBundleProjection.bundle(containing: "hash-f07"),
             nil,
             "区域内提交必须立即恢复独立节点"
         )
 
         viewModel.deleteRegion(id: regionID)
         try expect(
-            viewModel.branchBundleProjection.bundle(containing: "hash-c")
+            viewModel.branchBundleProjection.bundle(containing: "hash-f07")
                 != nil,
             "删除区域后普通连续提交可以重新聚合"
         )
         viewModel.moveNode(
-            hash: "hash-c",
+            hash: "hash-f07",
             by: GraphPoint(x: 20, y: 12)
         )
         try expectEqual(
-            viewModel.branchBundleProjection.bundle(containing: "hash-c"),
+            viewModel.branchBundleProjection.bundle(containing: "hash-f07"),
             nil,
             "手动移动后必须立即成为强制可见锚点"
         )
@@ -1933,14 +1941,14 @@ let commitGraphViewModelTests = [
         )
 
         viewModel.moveNode(
-            hash: "hash-c",
+            hash: "hash-f07",
             by: GraphPoint(x: 42, y: -18)
         )
-        let manualPosition = viewModel.scene.nodePositions["hash-c"]
+        let manualPosition = viewModel.scene.nodePositions["hash-f07"]
         viewModel.resetLayout()
 
         try expectEqual(
-            viewModel.scene.nodePositions["hash-c"],
+            viewModel.scene.nodePositions["hash-f07"],
             manualPosition,
             "自动布局不得覆盖用户手动移动的普通节点"
         )
@@ -2035,7 +2043,7 @@ let commitGraphViewModelTests = [
             "无效 pointer 值不得污染仓库场景"
         )
         try expectEqual(
-            viewModel.traditionalPublicationIndex.state(for: "hash-e"),
+            viewModel.traditionalPublicationIndex.state(for: "hash-main"),
             .localUnpushed,
             "没有远程引用的本地提交必须在 ViewModel 中可直接查询为未推送"
         )
@@ -2043,16 +2051,48 @@ let commitGraphViewModelTests = [
 ]
 
 private func branchProjectionViewModelSnapshot() -> CommitGraphSnapshot {
-    let commits = [
-        commitGraphCommit(hash: "hash-e", parents: ["hash-d"]),
-        commitGraphCommit(hash: "hash-d", parents: ["hash-c"]),
-        commitGraphCommit(hash: "hash-c", parents: ["hash-b"]),
-        commitGraphCommit(hash: "hash-b", parents: ["hash-a"]),
-        commitGraphCommit(hash: "hash-a")
-    ]
-    return commitGraphSnapshot(
-        commits: commits,
-        headHash: "hash-e"
+    var commits = [commitGraphCommit(
+        hash: "hash-main",
+        parents: ["hash-root"],
+        decorations: ["HEAD -> main"]
+    )]
+    for index in stride(from: 15, through: 1, by: -1) {
+        commits.append(
+            commitGraphCommit(
+                hash: String(format: "hash-f%02d", index),
+                parents: [
+                    index == 1
+                        ? "hash-root"
+                        : String(format: "hash-f%02d", index - 1)
+                ],
+                decorations: index == 15 ? ["feature/long"] : []
+            )
+        )
+    }
+    commits.append(commitGraphCommit(hash: "hash-root", decorations: []))
+    return CommitGraphSnapshot(
+        repositoryPath: commitGraphRepositoryURL.standardizedFileURL.path,
+        fingerprint: CommitGraphReferenceFingerprint(
+            references: [
+                CommitGraphReference(
+                    name: "refs/heads/main",
+                    targetHash: "hash-main",
+                    kind: .localBranch
+                ),
+                CommitGraphReference(
+                    name: "refs/heads/feature/long",
+                    targetHash: "hash-f15",
+                    kind: .localBranch
+                )
+            ],
+            headName: "main",
+            headHash: "hash-main",
+            isShallow: false
+        ),
+        commitsNewestFirst: commits,
+        expectedCommitCount: commits.count,
+        shallowBoundaryParentHashes: [],
+        generatedAt: Date(timeIntervalSince1970: 1_000)
     )
 }
 

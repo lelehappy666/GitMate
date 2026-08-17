@@ -289,10 +289,11 @@ let commitGraphSceneStoreTests = [
             "区域标题、颜色和画布范围必须完整恢复"
         )
     },
-    TestCase("schema五完整保存传统分割线宽度") {
+    TestCase("schema六完整保存传统分割线与分支摘要展开状态") {
         let scene = CommitGraphSceneState(
             viewMode: .traditional,
-            traditionalDividerWidth: 368
+            traditionalDividerWidth: 368,
+            expandedBranchBundleIDs: ["feature|first|last"]
         )
 
         let encoded = try JSONEncoder().encode(scene)
@@ -301,11 +302,16 @@ let commitGraphSceneStoreTests = [
             from: encoded
         )
 
-        try expectEqual(decoded.schemaVersion, 5, "新场景必须写入 schema 五")
+        try expectEqual(decoded.schemaVersion, 6, "新场景必须写入 schema 六")
         try expectEqual(
             decoded.traditionalDividerWidth,
             368,
             "传统分割线宽度必须按仓库场景完整恢复"
+        )
+        try expectEqual(
+            decoded.expandedBranchBundleIDs,
+            ["feature|first|last"],
+            "用户展开的分支摘要必须按仓库恢复"
         )
     },
     TestCase("schema四迁移后分割线宽度为空并使用界面默认值") {
@@ -333,11 +339,31 @@ let commitGraphSceneStoreTests = [
             from: data
         )
 
-        try expectEqual(decoded.schemaVersion, 5, "schema 四必须迁移到当前版本")
+        try expectEqual(decoded.schemaVersion, 6, "schema 四必须迁移到当前版本")
         try expectEqual(
             decoded.traditionalDividerWidth,
             nil,
             "旧仓库不得虚构一个持久化分割线宽度"
+        )
+        try expectEqual(
+            decoded.expandedBranchBundleIDs,
+            [],
+            "旧场景迁移后摘要展开集合必须为空"
+        )
+    },
+    TestCase("schema五迁移到六并补全分支摘要状态") {
+        let original = CommitGraphSceneState(schemaVersion: 5)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(
+            CommitGraphSceneState.self,
+            from: data
+        )
+
+        try expectEqual(decoded.schemaVersion, 6, "schema 五必须迁移到六")
+        try expectEqual(
+            decoded.expandedBranchBundleIDs,
+            [],
+            "schema 五不得虚构展开过的分支摘要"
         )
     }
 ]

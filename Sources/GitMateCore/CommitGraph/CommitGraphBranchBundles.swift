@@ -46,6 +46,7 @@ public struct CommitGraphBranchBundleInput: Sendable {
     public let regionBoundaryHashes: Set<String>
     public let shallowBoundaryHashes: Set<String>
     public let expandedBundleIDs: Set<String>
+    public let alwaysExpandedBranchIDs: Set<String>
 
     public init(
         catalog: CommitGraphBranchCatalog,
@@ -55,7 +56,8 @@ public struct CommitGraphBranchBundleInput: Sendable {
         groupBoundaryHashes: Set<String>,
         regionBoundaryHashes: Set<String>,
         shallowBoundaryHashes: Set<String>,
-        expandedBundleIDs: Set<String>
+        expandedBundleIDs: Set<String>,
+        alwaysExpandedBranchIDs: Set<String> = []
     ) {
         self.catalog = catalog
         self.layout = layout
@@ -65,6 +67,7 @@ public struct CommitGraphBranchBundleInput: Sendable {
         self.regionBoundaryHashes = regionBoundaryHashes
         self.shallowBoundaryHashes = shallowBoundaryHashes
         self.expandedBundleIDs = expandedBundleIDs
+        self.alwaysExpandedBranchIDs = alwaysExpandedBranchIDs
     }
 }
 
@@ -138,6 +141,8 @@ public struct CommitGraphBranchBundleProjection: Equatable, Sendable {
 }
 
 public enum CommitGraphBranchBundleBuilder {
+    public static let minimumCollapsedCommitCount = 13
+
     public static func build(
         input: CommitGraphBranchBundleInput
     ) -> CommitGraphBranchBundleProjection {
@@ -193,13 +198,16 @@ public enum CommitGraphBranchBundleBuilder {
         var bundles: [CommitGraphBranchBundle] = []
         for branchID in nodesByBranch.keys.sorted() {
             guard let branch = input.catalog.branch(id: branchID) else { continue }
+            guard !input.alwaysExpandedBranchIDs.contains(branchID) else {
+                continue
+            }
             let nodes = (nodesByBranch[branchID] ?? [])
                 .map(\.1)
                 .sorted { $0.row < $1.row }
             var segment: [CommitGraphNode] = []
 
             func flush() {
-                guard segment.count >= 2,
+                guard segment.count >= minimumCollapsedCommitCount,
                       let first = segment.first,
                       let last = segment.last
                 else {
