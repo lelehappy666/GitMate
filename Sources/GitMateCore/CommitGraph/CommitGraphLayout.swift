@@ -5,8 +5,8 @@ public struct CommitGraphLayout: Sendable {
     public let verticalSpacing: Double
 
     public init(
-        horizontalSpacing: Double = 250,
-        verticalSpacing: Double = 126
+        horizontalSpacing: Double = 500,
+        verticalSpacing: Double = 252
     ) {
         self.horizontalSpacing = horizontalSpacing
         self.verticalSpacing = verticalSpacing
@@ -23,9 +23,11 @@ public struct CommitGraphLayout: Sendable {
     public func layout(
         topology: CommitGraphLaneTopology
     ) -> CommitGraphLayoutResult {
-        return layout(
+        CommitGraphOrganizationTreeLayout(
+            horizontalSpacing: horizontalSpacing,
+            verticalSpacing: verticalSpacing
+        ).layout(
             topology: topology,
-            orderedRows: Array(topology.rowsNewestFirst.reversed()),
             preserving: nil
         )
     }
@@ -45,102 +47,25 @@ public struct CommitGraphLayout: Sendable {
             generatedAt: Date(timeIntervalSince1970: 0)
         )
         let topology = CommitGraphLaneTopology.build(snapshot: snapshot)
-        return layout(
+        let organization = CommitGraphOrganizationTreeLayout(
+            horizontalSpacing: horizontalSpacing,
+            verticalSpacing: verticalSpacing
+        ).layout(
             topology: topology,
-            orderedRows: pageOrder.compactMap {
-                topology.row(hash: $0.fullHash)
-            },
             preserving: previous
         )
-    }
-
-    private func layout(
-        topology: CommitGraphLaneTopology,
-        orderedRows: [CommitGraphLaneRow],
-        preserving previous: CommitGraphLayoutResult?
-    ) -> CommitGraphLayoutResult {
-        let frozenColumns = Dictionary(
-            uniqueKeysWithValues: (previous?.nodes ?? []).map {
-                ($0.hash, $0.column)
-            }
-        )
-        let columns = orderedRows.map { laneRow in
-            frozenColumns[laneRow.commit.fullHash] ?? laneRow.lane
-        }
-        let branchSlots = columns.map(treeBranchSlot)
-        let minimumSlot = min(branchSlots.min() ?? 0, 0)
-        let maximumSlot = max(branchSlots.max() ?? 0, 0)
-        let naturalWidth = 300
-            + Double(maximumSlot - minimumSlot) * horizontalSpacing
-        let contentWidth = max(1_040, naturalWidth)
-        let horizontalCentering = (contentWidth - naturalWidth) / 2
-        let trunkX = 150
-            + Double(-minimumSlot) * horizontalSpacing
-            + horizontalCentering
-
-        let nodes = orderedRows.enumerated().map { rowIndex, laneRow in
-            let commit = laneRow.commit
-            let column = frozenColumns[commit.fullHash] ?? laneRow.lane
-            let branchSlot = treeBranchSlot(column)
-            return CommitGraphNode(
-                hash: commit.fullHash,
-                shortHash: commit.shortHash,
-                subject: commit.subject,
-                authorName: commit.authorName,
-                authorEmail: commit.authorEmail,
-                authoredAt: commit.authoredAt,
-                decorations: commit.decorations,
-                column: column,
-                row: rowIndex,
-                colorIndex: laneRow.colorIndex,
-                x: trunkX + Double(branchSlot) * horizontalSpacing,
-                y: 82 + Double(rowIndex) * verticalSpacing
-            )
-        }
-        let edges = topology.rowsNewestFirst.flatMap { row in
-            row.connections.map { connection in
-                CommitGraphEdge(
-                    id: connection.id,
-                    childHash: connection.childHash,
-                    parentHash: connection.parentHash,
-                    kind: connection.kind,
-                    colorIndex: connection.colorIndex
-                )
-            }
-        }
         let nodesByHash = Dictionary(
-            uniqueKeysWithValues: nodes.map { ($0.hash, $0) }
+            organization.nodes.map { ($0.hash, $0) },
+            uniquingKeysWith: { first, _ in first }
         )
-        let shallowBoundaryEndpoints = topology.shallowBoundaryRelations
-            .compactMap { relation -> CommitGraphShallowBoundaryEndpoint? in
-                guard let child = nodesByHash[relation.childHash] else {
-                    return nil
-                }
-                return CommitGraphShallowBoundaryEndpoint(
-                    relation: relation,
-                    x: trunkX + Double(treeBranchSlot(relation.targetLane))
-                        * horizontalSpacing,
-                    y: child.y - verticalSpacing * 0.65
-                )
-            }
+        let orderedNodes = pageOrder.compactMap { nodesByHash[$0.fullHash] }
         return CommitGraphLayoutResult(
-            nodes: nodes,
-            edges: edges,
-            shallowBoundaryEndpoints: shallowBoundaryEndpoints,
-            contentWidth: contentWidth,
-            contentHeight: max(
-                680,
-                164 + Double(max(nodes.count - 1, 0)) * verticalSpacing
-            )
+            nodes: orderedNodes,
+            edges: organization.edges,
+            shallowBoundaryEndpoints: organization.shallowBoundaryEndpoints,
+            contentWidth: organization.contentWidth,
+            contentHeight: organization.contentHeight
         )
-    }
-
-    /// 主分支固定为 0 号树干，其他泳道依次向左、向右展开。
-    /// 只改变画布坐标，不改变共享拓扑中的稳定泳道编号。
-    private func treeBranchSlot(_ column: Int) -> Int {
-        guard column > 0 else { return 0 }
-        let distance = (column + 1) / 2
-        return column.isMultiple(of: 2) ? distance : -distance
     }
 
     private func canonicalNewestFirst(_ commits: [GitCommit]) -> [GitCommit] {
