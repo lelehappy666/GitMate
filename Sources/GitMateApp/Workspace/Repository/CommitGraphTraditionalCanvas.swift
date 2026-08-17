@@ -307,10 +307,29 @@ struct CommitGraphTraditionalCanvas: View {
                     width: max(Double(size.width) - laneWidth - 1, 0),
                     height: rowRect.height
                 )
-                layer.clip(to: Path(
-                    roundedRect: clippedRect.insetBy(dx: 5, dy: 4),
+                let cardRect = clippedRect.insetBy(dx: 5, dy: 4)
+                let card = Path(
+                    roundedRect: cardRect,
                     cornerRadius: 8
-                ))
+                )
+                let state = publicationIndex.state(
+                    for: row.commit.fullHash
+                )
+                let cardColor = CommitGraphPalette.color(
+                    segmentProjection.colorIndex(
+                        for: row.commit.fullHash
+                    ) ?? row.colorIndex
+                )
+                layer.fill(card, with: .color(.white))
+                layer.stroke(
+                    card,
+                    with: .color(cardColor.opacity(0.5)),
+                    style: StrokeStyle(
+                        lineWidth: 1,
+                        dash: state.isDashed ? [6, 4] : []
+                    )
+                )
+                layer.clip(to: card)
 
                 let avatarX = laneWidth + 18
                 let textX = avatarX
@@ -398,12 +417,21 @@ struct CommitGraphTraditionalCanvas: View {
         for row: CommitGraphTraditionalRow
     ) -> [Badge] {
         var result: [Badge] = []
-        if publicationIndex.state(for: row.commit.fullHash)
-            == .localUnpushed {
+        let publicationState = publicationIndex.state(
+            for: row.commit.fullHash
+        )
+        if publicationState == .localOnly {
             result.append(
                 Badge(
                     text: "未推送",
                     color: GitMateTheme.warning
+                )
+            )
+        } else if publicationState == .remoteOnly {
+            result.append(
+                Badge(
+                    text: "☁ 云端",
+                    color: GitMateTheme.accent
                 )
             )
         }

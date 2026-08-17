@@ -195,7 +195,36 @@ struct CommitGraphView: View {
     }
 
     private var graphToolbar: some View {
-        HStack(spacing: 10) {
+        ViewThatFits(in: .horizontal) {
+            graphToolbarContent(
+                searchWidth: 230,
+                pickerWidth: 188,
+                showsSearch: true,
+                showsCommitCount: true
+            )
+            graphToolbarContent(
+                searchWidth: 150,
+                pickerWidth: 164,
+                showsSearch: true,
+                showsCommitCount: false
+            )
+            graphToolbarContent(
+                searchWidth: 0,
+                pickerWidth: 154,
+                showsSearch: false,
+                showsCommitCount: false
+            )
+        }
+    }
+
+    private func graphToolbarContent(
+        searchWidth: CGFloat,
+        pickerWidth: CGFloat,
+        showsSearch: Bool,
+        showsCommitCount: Bool
+    ) -> some View {
+        HStack(spacing: 8) {
+            if showsSearch {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(GitMateTheme.textSecondary)
@@ -213,7 +242,7 @@ struct CommitGraphView: View {
                 }
             }
             .padding(.horizontal, 10)
-            .frame(width: 230, height: 30)
+            .frame(width: searchWidth, height: 30)
             .background(GitMateTheme.panel)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
@@ -221,6 +250,7 @@ struct CommitGraphView: View {
                     .stroke(GitMateTheme.border, lineWidth: 1)
             }
             .accessibilityIdentifier("workspace.commitGraph.search")
+            }
 
             Picker(
                 "布局",
@@ -235,7 +265,7 @@ struct CommitGraphView: View {
                 Text("画布布局").tag(CommitGraphViewMode.canvas)
             }
             .pickerStyle(.segmented)
-            .frame(width: 188)
+            .frame(width: pickerWidth)
             .accessibilityIdentifier("workspace.commitGraph.viewMode")
 
             integrityBadge
@@ -248,21 +278,31 @@ struct CommitGraphView: View {
                 }
             } label: {
                 if viewModel.refreshState.isRefreshing {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(width: 14, height: 14)
+                    HStack(spacing: 5) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 12, height: 12)
+                        Text("刷新中")
+                            .lineLimit(1)
+                    }
                 } else {
                     Label("刷新", systemImage: "arrow.clockwise")
                 }
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
+            .font(.system(size: 11, weight: .semibold))
+            .frame(width: 74, height: 30)
             .disabled(viewModel.refreshState.isRefreshing)
             .accessibilityIdentifier("workspace.commitGraph.refresh")
 
+            if showsCommitCount {
             Text("\(viewModel.traditionalLayout.rows.count) 个提交")
                 .font(.system(size: 11.5, weight: .semibold))
                 .foregroundStyle(GitMateTheme.textSecondary)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+            }
         }
     }
 
@@ -445,22 +485,25 @@ struct CommitGraphView: View {
 
     @ViewBuilder
     private var integrityBadge: some View {
-        if let report = viewModel.integrityReport {
-            switch report.status {
-            case .valid:
-                Label("关系完整", systemImage: "checkmark.shield.fill")
-                    .foregroundStyle(GitMateTheme.success)
-            case .warning:
-                Label("浅克隆边界", systemImage: "exclamationmark.shield.fill")
-                    .foregroundStyle(GitMateTheme.warning)
-            case .invalid:
-                Label("关系异常", systemImage: "xmark.shield.fill")
-                    .foregroundStyle(GitMateTheme.danger)
+        Group {
+            if let report = viewModel.integrityReport {
+                switch report.status {
+                case .valid:
+                    Label("关系完整", systemImage: "checkmark.shield.fill")
+                        .foregroundStyle(GitMateTheme.success)
+                case .warning:
+                    Label("浅克隆边界", systemImage: "exclamationmark.shield.fill")
+                        .foregroundStyle(GitMateTheme.warning)
+                case .invalid:
+                    Label("关系异常", systemImage: "xmark.shield.fill")
+                        .foregroundStyle(GitMateTheme.danger)
+                }
+            } else {
+                Label("等待校验", systemImage: "shield")
+                    .foregroundStyle(GitMateTheme.textSecondary)
             }
-        } else {
-            Label("等待校验", systemImage: "shield")
-                .foregroundStyle(GitMateTheme.textSecondary)
         }
+        .modifier(CommitGraphStatusBadgeModifier())
     }
 
     private var graphCanvas: some View {
@@ -820,26 +863,29 @@ struct CommitGraphView: View {
 
     @ViewBuilder
     private var refreshStateBadge: some View {
-        switch viewModel.refreshState {
-        case .idle:
-            Label("未刷新", systemImage: "clock")
-                .foregroundStyle(GitMateTheme.textSecondary)
-        case let .refreshing(usingCachedSnapshot):
-            Label(
-                usingCachedSnapshot ? "刷新中·已显示缓存" : "刷新中",
-                systemImage: "arrow.triangle.2.circlepath"
-            )
-            .foregroundStyle(GitMateTheme.accent)
-        case .current:
-            Label("已是最新", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(GitMateTheme.success)
-        case .stale:
-            Label("显示上次结果", systemImage: "clock.badge.exclamationmark")
-                .foregroundStyle(GitMateTheme.warning)
-        case .failed:
-            Label("刷新失败", systemImage: "xmark.octagon.fill")
-                .foregroundStyle(GitMateTheme.danger)
+        Group {
+            switch viewModel.refreshState {
+            case .idle:
+                Label("未刷新", systemImage: "clock")
+                    .foregroundStyle(GitMateTheme.textSecondary)
+            case let .refreshing(usingCachedSnapshot):
+                Label(
+                    usingCachedSnapshot ? "刷新中·已显示缓存" : "刷新中",
+                    systemImage: "arrow.triangle.2.circlepath"
+                )
+                .foregroundStyle(GitMateTheme.accent)
+            case .current:
+                Label("已是最新", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(GitMateTheme.success)
+            case .stale:
+                Label("显示上次结果", systemImage: "clock.badge.exclamationmark")
+                    .foregroundStyle(GitMateTheme.warning)
+            case .failed:
+                Label("刷新失败", systemImage: "xmark.octagon.fill")
+                    .foregroundStyle(GitMateTheme.danger)
+            }
         }
+        .modifier(CommitGraphStatusBadgeModifier())
     }
 
     private func performSearch() {
@@ -1167,5 +1213,21 @@ struct CommitGraphView: View {
             && point.x - width / 2 <= screenSize.width + padding
             && point.y + height / 2 >= -padding
             && point.y - height / 2 <= screenSize.height + padding
+    }
+}
+
+private struct CommitGraphStatusBadgeModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .font(.system(size: 11, weight: .semibold))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 9)
+            .frame(height: 28)
+            .background(GitMateTheme.panel)
+            .clipShape(Capsule())
+            .overlay {
+                Capsule().stroke(GitMateTheme.border, lineWidth: 1)
+            }
     }
 }

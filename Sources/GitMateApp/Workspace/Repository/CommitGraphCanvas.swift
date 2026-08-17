@@ -273,8 +273,8 @@ struct CommitGraphCanvas: View {
                     ),
                     lineCap: .round,
                     lineJoin: .round,
-                    dash: edge.kind == .merge
-                        ? [7 * viewport.scale, 4 * viewport.scale]
+                    dash: edge.publicationState.isDashed
+                        ? [7 * viewport.scale, 5 * viewport.scale]
                         : (edge.kind == .shallowBoundary
                             ? [5 * viewport.scale, 4 * viewport.scale]
                             : [])
@@ -504,6 +504,7 @@ struct CommitGraphCanvas: View {
             drawNode(
                 visibleNode.node,
                 rect: rect,
+                publicationState: visibleNode.publicationState,
                 isSelected: selectedHashes.contains(visibleNode.node.hash)
                     || visibleNode.node.hash == selectedHash,
                 isRelated: highlightedNodeHashes.contains(
@@ -517,6 +518,7 @@ struct CommitGraphCanvas: View {
     private func drawNode(
         _ node: CommitGraphNode,
         rect: CGRect,
+        publicationState: CommitGraphPublicationState,
         isSelected: Bool,
         isRelated: Bool,
         context: inout GraphicsContext
@@ -550,9 +552,16 @@ struct CommitGraphCanvas: View {
                     ? GitMateTheme.accent
                     : (isRelated ? branchColor : branchColor.opacity(0.88))
             ),
-            lineWidth: max(
-                (isSelected ? 2.7 : (isRelated ? 2 : 1.35)) * scale,
-                1
+            style: StrokeStyle(
+                lineWidth: max(
+                    (isSelected ? 2.7 : (isRelated ? 2 : 1.35)) * scale,
+                    1
+                ),
+                lineCap: .round,
+                lineJoin: .round,
+                dash: publicationState.isDashed
+                    ? [7 * scale, 5 * scale]
+                    : []
             )
         )
 
@@ -578,11 +587,12 @@ struct CommitGraphCanvas: View {
             anchor: .center
         )
 
+        let cloudWidth = publicationState.showsCloud ? 25 * scale : 0
         let subjectRect = CGRect(
             x: avatarRect.maxX + 10 * scale,
             y: rect.minY + 7 * scale,
             width: max(
-                rect.maxX - avatarRect.maxX - 20 * scale,
+                rect.maxX - avatarRect.maxX - 20 * scale - cloudWidth,
                 1
             ),
             height: 25 * scale
@@ -597,6 +607,18 @@ struct CommitGraphCanvas: View {
             color: NSColor.labelColor,
             context: &clipped
         )
+        if publicationState.showsCloud {
+            var cloud = clipped.resolve(Image(systemName: "icloud.fill"))
+            cloud.shading = .color(GitMateTheme.accent)
+            clipped.draw(
+                cloud,
+                at: CGPoint(
+                    x: rect.maxX - 13 * scale,
+                    y: subjectRect.midY
+                ),
+                anchor: .center
+            )
+        }
 
         let decoration = levelOfDetail == .full
             ? node.decorations.first

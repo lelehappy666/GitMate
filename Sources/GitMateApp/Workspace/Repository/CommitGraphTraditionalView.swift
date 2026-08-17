@@ -219,11 +219,13 @@ struct CommitGraphTraditionalView: View {
                 .foregroundStyle(GitMateTheme.textPrimary)
             Divider().frame(height: 20)
             Label(
-                "\(branchProjection.slots.filter { !$0.isPlaceholder }.count) 条逻辑分支 · \(branchCatalog.branches.count) 个引用",
+                "\(branchProjection.logicalBranchCount) 条逻辑分支 · \(branchCatalog.directReferenceCount) 个引用",
                 systemImage: "arrow.triangle.branch"
             )
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(GitMateTheme.textPrimary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
@@ -290,6 +292,8 @@ struct CommitGraphTraditionalView: View {
                 }
             }
             .font(.system(size: 9.5, weight: .semibold))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundStyle(GitMateTheme.textPrimary)
             .padding(.horizontal, 9)
             .frame(height: 27)
