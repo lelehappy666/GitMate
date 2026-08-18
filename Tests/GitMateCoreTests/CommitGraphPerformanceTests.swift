@@ -78,9 +78,19 @@ let commitGraphPerformanceTests = [
             "画布布局必须保持最早提交在上"
         )
         try expectEqual(
+            canvasLayout.nodes.count,
+            50_000,
+            "组织树不得丢失提交"
+        )
+        try expectEqual(
             canvasLayout.edges.count,
             relationshipCount,
             "画布布局不得丢失 Merge 或父边"
+        )
+        try expectEqual(
+            canvasLayout.routeHintsByEdgeID.count,
+            relationshipCount,
+            "组织树必须为每条父边生成稳定固定通道路由"
         )
 
         var renderIndex: CommitGraphRenderIndex?
@@ -185,7 +195,16 @@ let commitGraphPerformanceTests = [
         guard let topology else {
             throw TestFailure(description: "三百分支共享拓扑未生成")
         }
-        let layout = CommitGraphLayout().layout(topology: topology)
+        var layout: CommitGraphLayoutResult?
+        let organizationDuration = clock.measure {
+            layout = CommitGraphLayout().layout(topology: topology)
+        }
+        guard let layout else {
+            throw TestFailure(description: "三百分支组织树未生成")
+        }
+        let relationshipCount = topology.rowsNewestFirst.reduce(0) {
+            $0 + $1.connections.count
+        }
 
         var catalog: CommitGraphBranchCatalog?
         let catalogDuration = clock.measure {
@@ -261,7 +280,48 @@ let commitGraphPerformanceTests = [
                 height: 1_000
             )
         )
+        let scene = CommitGraphSceneState.defaultState(layout: layout)
+        let projection = CommitGraphSceneProjector.project(
+            layout: layout,
+            scene: scene,
+            publicationIndex: publicationIndex
+        )
+        let renderIndex = CommitGraphRenderIndex(projection: projection)
+        guard let middleNode = layout.node(hash: "commit-25000") else {
+            throw TestFailure(description: "三百分支组织树缺少中间提交")
+        }
+        let organizationViewport = GraphViewport(
+            offsetX: 600 - middleNode.x,
+            offsetY: 400 - middleNode.y,
+            scale: 1
+        )
+        var organizationQuery: CommitGraphRenderQueryResult?
+        let organizationQueryDuration = clock.measure {
+            organizationQuery = renderIndex.queryWithDiagnostics(
+                viewport: organizationViewport,
+                screenSize: GraphSize(width: 1_200, height: 800),
+                padding: 1_200
+            )
+        }
+        guard let organizationQuery else {
+            throw TestFailure(description: "三百分支组织树局部查询未生成")
+        }
 
+        try expectEqual(
+            layout.nodes.count,
+            50_000,
+            "三百分支组织树不得丢失提交"
+        )
+        try expectEqual(
+            layout.edges.count,
+            relationshipCount,
+            "三百分支组织树不得丢失父边"
+        )
+        try expectEqual(
+            layout.routeHintsByEdgeID.count,
+            relationshipCount,
+            "三百分支组织树必须为每条父边生成稳定路由"
+        )
         try expectEqual(
             catalog.branches.count,
             300,
@@ -306,16 +366,28 @@ let commitGraphPerformanceTests = [
             localBundles.count < 500,
             "分支束局部查询不得返回全历史"
         )
+        try expect(
+            organizationQuery.diagnostics.nodeCandidates < 300,
+            "组织树局部视口不得遍历全部提交节点"
+        )
+        try expect(
+            organizationQuery.diagnostics.generatedEdgeGeometries < 200,
+            "组织树局部视口不得生成全部连线路径"
+        )
 
         print(
             "  性能记录：50000 提交、300 分支；"
                 + "拓扑 \(topologyDuration)，"
+                + "组织树 \(organizationDuration)，"
                 + "分支目录 \(catalogDuration)，"
                 + "分支束 \(bundleDuration)；"
                 + "区段投影 \(segmentDuration)；"
                 + "发布索引 \(publicationDuration)；"
+                + "组织树查询 \(organizationQueryDuration)；"
                 + "传统槽位 \(traditional.slots.count)，"
-                + "局部分支束 \(localBundles.count)"
+                + "局部分支束 \(localBundles.count)，"
+                + "组织树节点候选 \(organizationQuery.diagnostics.nodeCandidates)，"
+                + "组织树路径 \(organizationQuery.diagnostics.generatedEdgeGeometries)"
         )
     }
 ]
