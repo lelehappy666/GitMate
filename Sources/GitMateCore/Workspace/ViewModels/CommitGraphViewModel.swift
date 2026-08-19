@@ -1387,23 +1387,30 @@ public final class CommitGraphViewModel {
             scene.groups.flatMap(\.memberHashes)
         )
         var updatedScene = scene
-        let manuallyPositioned = updatedScene.nodePositions.filter {
-            updatedScene.manuallyPositionedHashes.contains($0.key)
-        }
         updatedScene.nodePositions = defaults.nodePositions.filter {
             !groupedHashes.contains($0.key)
         }
-        updatedScene.nodePositions.merge(
-            manuallyPositioned,
-            uniquingKeysWith: { _, manual in manual }
-        )
+        updatedScene.manuallyPositionedHashes.removeAll()
         updatedScene.edgePorts = defaults.edgePorts
+        let horizontalCenter = defaults.nodePositions.values.map(\.x).min()
+            .flatMap { minimumX in
+                defaults.nodePositions.values.map(\.x).max().map {
+                    minimumX + ($0 - minimumX) / 2
+                }
+            }
+        if let horizontalCenter,
+           horizontalCenter.isFinite,
+           updatedScene.canvasViewport.scale.isFinite {
+            updatedScene.canvasViewport.offsetX = 520
+                - horizontalCenter * updatedScene.canvasViewport.scale
+        }
 
         layout = updatedLayout
         scene = CommitGraphGrouping.rebuildingBoundaryPorts(
             layout: updatedLayout,
             scene: updatedScene
         )
+        viewport = scene.canvasViewport
         selectedHashes.formIntersection(
             Set(updatedLayout.nodes.map(\.hash))
         )

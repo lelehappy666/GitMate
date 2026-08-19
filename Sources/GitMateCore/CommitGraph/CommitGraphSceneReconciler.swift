@@ -124,16 +124,21 @@ public enum CommitGraphSceneReconciler {
         else { return scene }
 
         let groupedHashes = Set(scene.groups.flatMap(\.memberHashes))
-        var migratedNodePositions = defaultPositions.filter {
+        let migratedNodePositions = defaultPositions.filter {
             !groupedHashes.contains($0.key)
         }
-        let survivingManualHashes = scene.manuallyPositionedHashes
-            .intersection(Set(defaultPositions.keys))
-            .subtracting(groupedHashes)
-        for hash in survivingManualHashes {
-            if let manualPosition = scene.nodePositions[hash] {
-                migratedNodePositions[hash] = manualPosition
+        let horizontalCenter = defaultPositions.values.map(\.x).min().flatMap {
+            minimumX in
+            defaultPositions.values.map(\.x).max().map {
+                minimumX + ($0 - minimumX) / 2
             }
+        }
+        var migratedViewport = scene.canvasViewport
+        if let horizontalCenter,
+           horizontalCenter.isFinite,
+           migratedViewport.scale.isFinite {
+            migratedViewport.offsetX = 520
+                - horizontalCenter * migratedViewport.scale
         }
 
         return CommitGraphSceneState(
@@ -143,12 +148,14 @@ public enum CommitGraphSceneReconciler {
             nodePositions: migratedNodePositions,
             groups: scene.groups,
             regions: scene.regions,
-            edgePorts: scene.edgePorts,
+            // 新的主干固定布局改变了普通节点的方向关系；旧端口不能继续
+            // 覆盖新布局派生的稳定端口和无碰撞通道。
+            edgePorts: [:],
             boundaryPorts: scene.boundaryPorts,
             lineStyle: scene.lineStyle,
             viewMode: scene.viewMode,
-            canvasViewport: scene.canvasViewport,
-            manuallyPositionedHashes: survivingManualHashes,
+            canvasViewport: migratedViewport,
+            manuallyPositionedHashes: [],
             pinnedTraditionalBranchIDs: scene.pinnedTraditionalBranchIDs,
             lastTraditionalBranchID: scene.lastTraditionalBranchID,
             traditionalDividerWidth: scene.traditionalDividerWidth,

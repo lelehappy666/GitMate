@@ -325,15 +325,23 @@ public struct CommitGraphLaneTopology: Equatable, Sendable {
         fallback: String
     ) -> String {
         let references = fingerprint.references
-        let prioritizedNames = [
-            "refs/remotes/origin/HEAD",
+        let mainBranchNames = [
             "refs/heads/main",
             "refs/remotes/origin/main",
             "refs/heads/master",
             "refs/remotes/origin/master"
         ]
+        // 本地 main/master 是画布主干的唯一优先来源。远程默认分支可能
+        // 尚未同步到本地最新提交，不能让 origin/HEAD 把主干截断在旧位置。
+        for name in mainBranchNames {
+            if let reference = references.first(where: {
+                $0.name == name && knownHashes.contains($0.targetHash)
+            }) {
+                return reference.targetHash
+            }
+        }
         if let originHead = references.first(where: {
-            $0.name == prioritizedNames[0]
+            $0.name == "refs/remotes/origin/HEAD"
                 && knownHashes.contains($0.targetHash)
         }) {
             return originHead.targetHash
@@ -341,13 +349,6 @@ public struct CommitGraphLaneTopology: Equatable, Sendable {
         if let headHash = fingerprint.headHash,
            knownHashes.contains(headHash) {
             return headHash
-        }
-        for name in prioritizedNames.dropFirst() {
-            if let reference = references.first(where: {
-                $0.name == name && knownHashes.contains($0.targetHash)
-            }) {
-                return reference.targetHash
-            }
         }
         if let namedMainOrMaster = references
             .filter({
@@ -372,14 +373,30 @@ public struct CommitGraphLaneTopology: Equatable, Sendable {
         fingerprint: CommitGraphReferenceFingerprint,
         targetHash: String
     ) -> String {
+        let mainBranchNames = [
+            "refs/heads/main",
+            "refs/remotes/origin/main",
+            "refs/heads/master",
+            "refs/remotes/origin/master"
+        ]
+        for name in mainBranchNames {
+            if fingerprint.references.contains(where: {
+                $0.name == name && $0.targetHash == targetHash
+            }) {
+                return name
+            }
+        }
+        if fingerprint.headHash == targetHash,
+           let headName = fingerprint.headName {
+            return headName.hasPrefix("refs/")
+                ? headName
+                : "refs/heads/\(headName)"
+        }
         if let originHead = fingerprint.references.first(where: {
             $0.name == "refs/remotes/origin/HEAD"
                 && $0.targetHash == targetHash
         }) {
             return originHead.name
-        }
-        if let headName = fingerprint.headName {
-            return "refs/heads/\(headName)"
         }
         return fingerprint.references
             .filter { $0.targetHash == targetHash }

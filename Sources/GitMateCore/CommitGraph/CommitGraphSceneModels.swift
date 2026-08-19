@@ -169,7 +169,7 @@ public struct CollapsedEdgeKey: Codable, Equatable, Hashable, Sendable {
 
 public struct CommitGraphSceneState: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 6
-    public static let currentLayoutAlgorithmVersion = 4
+    public static let currentLayoutAlgorithmVersion = 5
 
     public var schemaVersion: Int
     public var layoutAlgorithmVersion: Int
@@ -376,11 +376,23 @@ public struct CommitGraphSceneState: Codable, Equatable, Sendable {
     public static func defaultState(
         layout: CommitGraphLayoutResult
     ) -> CommitGraphSceneState {
+        let positions = Dictionary(
+            uniqueKeysWithValues: layout.nodes.map {
+                ($0.hash, GraphPoint(x: $0.x, y: $0.y))
+            }
+        )
+        let horizontalCenter = positions.values.map(\.x).min().flatMap {
+            minimumX in
+            positions.values.map(\.x).max().map {
+                minimumX + ($0 - minimumX) / 2
+            }
+        } ?? layout.contentWidth / 2
         var state = CommitGraphSceneState(
-            nodePositions: Dictionary(
-                uniqueKeysWithValues: layout.nodes.map {
-                    ($0.hash, GraphPoint(x: $0.x, y: $0.y))
-                }
+            nodePositions: positions,
+            canvasViewport: GraphViewport(
+                offsetX: 520 - horizontalCenter,
+                offsetY: 0,
+                scale: 1
             )
         )
         for edge in layout.edges {
