@@ -17,6 +17,7 @@ struct CommitGraphView: View {
     var currentUserLogin: String?
     var currentUserName: String?
     var currentUserAvatarURL: URL?
+    var canvasLayoutEnabled = false
     @State private var showsCreateGroup = false
     @State private var newGroupTitle = ""
     @State private var marqueePurpose =
@@ -40,7 +41,7 @@ struct CommitGraphView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if viewModel.scene.viewMode == .canvas {
+            if activeViewMode == .canvas {
                 canvasActionBar
                 Divider()
             }
@@ -168,6 +169,27 @@ struct CommitGraphView: View {
         } message: {
             Text(groupNoticeMessage ?? "")
         }
+        .onAppear(perform: enforceCanvasAccess)
+        .onChange(of: canvasLayoutEnabled) { _, _ in
+            enforceCanvasAccess()
+        }
+        .onChange(of: viewModel.scene.viewMode) { _, _ in
+            enforceCanvasAccess()
+        }
+    }
+
+    private var canvasAccessPolicy: CommitGraphCanvasAccessPolicy {
+        CommitGraphCanvasAccessPolicy(isEnabled: canvasLayoutEnabled)
+    }
+
+    private var activeViewMode: CommitGraphViewMode {
+        canvasAccessPolicy.resolve(viewModel.scene.viewMode)
+    }
+
+    private func enforceCanvasAccess() {
+        let resolvedMode = activeViewMode
+        guard resolvedMode != viewModel.scene.viewMode else { return }
+        viewModel.setViewMode(resolvedMode)
     }
 
     private var header: some View {
@@ -177,7 +199,7 @@ struct CommitGraphView: View {
                     .font(.system(size: 23, weight: .bold))
                     .foregroundStyle(GitMateTheme.textPrimary)
                 Text(
-                    viewModel.scene.viewMode == .traditional
+                    activeViewMode == .traditional
                         ? "GitKraken 式泳道视图，最新提交在上"
                         : "在无限画布中查看分支、合并和提交详情"
                 )
@@ -252,21 +274,23 @@ struct CommitGraphView: View {
             .accessibilityIdentifier("workspace.commitGraph.search")
             }
 
-            Picker(
-                "布局",
-                selection: Binding(
-                    get: { viewModel.scene.viewMode },
-                    set: { mode in
-                        viewModel.setViewMode(mode)
-                    }
-                )
-            ) {
-                Text("传统布局").tag(CommitGraphViewMode.traditional)
-                Text("画布布局").tag(CommitGraphViewMode.canvas)
+            if canvasAccessPolicy.showsLayoutPicker {
+                Picker(
+                    "布局",
+                    selection: Binding(
+                        get: { activeViewMode },
+                        set: { mode in
+                            viewModel.setViewMode(mode)
+                        }
+                    )
+                ) {
+                    Text("传统布局").tag(CommitGraphViewMode.traditional)
+                    Text("画布布局").tag(CommitGraphViewMode.canvas)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: pickerWidth)
+                .accessibilityIdentifier("workspace.commitGraph.viewMode")
             }
-            .pickerStyle(.segmented)
-            .frame(width: pickerWidth)
-            .accessibilityIdentifier("workspace.commitGraph.viewMode")
 
             integrityBadge
 
@@ -439,7 +463,7 @@ struct CommitGraphView: View {
 
     @ViewBuilder
     private var graphContent: some View {
-        if viewModel.scene.viewMode == .traditional {
+        if activeViewMode == .traditional {
             CommitGraphTraditionalView(
                 layout: viewModel.traditionalLayout,
                 branchCatalog: viewModel.branchCatalog,
@@ -688,7 +712,7 @@ struct CommitGraphView: View {
             }
             .onChange(of: viewModel.focusedHash) { _, hash in
                 guard let hash,
-                      viewModel.scene.viewMode == .canvas
+                      activeViewMode == .canvas
                 else { return }
                 viewModel.focusCommit(hash: hash, in: screenSize)
                 viewModel.consumeFocusedHash(hash)
@@ -890,7 +914,7 @@ struct CommitGraphView: View {
             groupNoticeMessage = "没有找到匹配的提交。"
             return
         }
-        guard viewModel.scene.viewMode == .canvas,
+        guard activeViewMode == .canvas,
               let hash = viewModel.focusedHash
         else { return }
         viewModel.focusCommit(hash: hash, in: canvasSize)

@@ -74,7 +74,8 @@ enum WorkspacePreviewFactory {
                     name: .workspacePreviewRequestedReauthorization,
                     object: nil
                 )
-            }
+            },
+            commitGraphCanvasEnabled: page == 15
         )
     }
 

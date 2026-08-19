@@ -98,11 +98,15 @@ let commitGraphSceneReconcilerTests = [
             CommitGraphSceneState.currentLayoutAlgorithmVersion,
             "迁移后必须记录树枝布局版本，避免每次刷新重排"
         )
-        try expectEqual(reconciled.layoutAlgorithmVersion, 4, "组织树布局必须使用算法版本四")
         try expectEqual(
             reconciled.nodePositions["main"],
-            GraphPoint(x: 100, y: 100),
-            "手动节点不得因组织树升级移动"
+            defaults["main"],
+            "组织树升级必须清除旧手动位置并采用新版主干坐标"
+        )
+        try expectEqual(
+            reconciled.manuallyPositionedHashes,
+            [],
+            "布局算法升级后旧手动位置标记必须清除"
         )
         try expectEqual(reconciled.groups.first?.isCollapsed, true, "折叠状态必须保留")
         try expectEqual(reconciled.groups.first?.title, "保留的分组", "分组名称必须保留")
@@ -122,8 +126,8 @@ let commitGraphSceneReconcilerTests = [
         )
         try expectEqual(
             reconciled.edgePorts["main->left#0"],
-            scene.edgePorts["main->left#0"],
-            "布局升级不得重新分配已保存端口"
+            nil,
+            "新版组织树必须重建普通边端口"
         )
     },
     TestCase("刷新对账保留场景并安全解散不足两个成员的分组") {

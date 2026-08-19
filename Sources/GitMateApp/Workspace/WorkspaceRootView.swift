@@ -21,6 +21,7 @@ struct WorkspaceRootView: View {
         (Repository, RepositorySyncMode) -> Void
     let onOpenRepositoryTools: (Repository) -> Void
     let repositoryManagementEnabled: Bool
+    let commitGraphCanvasEnabled: Bool
     let onSettingsRequested: () -> Void
 
     init(
@@ -34,6 +35,7 @@ struct WorkspaceRootView: View {
         onOpenRepositoryTools:
             @escaping (Repository) -> Void = { _ in },
         repositoryManagementEnabled: Bool = false,
+        commitGraphCanvasEnabled: Bool = false,
         onSettingsRequested: @escaping () -> Void = {}
     ) {
         var initialSession = session
@@ -99,6 +101,7 @@ struct WorkspaceRootView: View {
         self.onDownloadRepository = onDownloadRepository
         self.onOpenRepositoryTools = onOpenRepositoryTools
         self.repositoryManagementEnabled = repositoryManagementEnabled
+        self.commitGraphCanvasEnabled = commitGraphCanvasEnabled
         self.onSettingsRequested = onSettingsRequested
     }
 
@@ -234,7 +237,8 @@ struct WorkspaceRootView: View {
                     refreshCoordinator: runtime.commitGraphRefreshCoordinator,
                     refreshRevision: commitGraphRefreshTrigger.revision(
                         repositoryID: repository.id
-                    )
+                    ),
+                    canvasLayoutEnabled: commitGraphCanvasEnabled
                 )
                 .id("commit-graph-\(repositoryID)")
             } else {
@@ -904,7 +908,8 @@ private struct CommitGraphPageContainer: View {
         currentUserAvatarURL: URL?,
         sceneStore: any CommitGraphSceneStoring,
         refreshCoordinator: CommitGraphRefreshCoordinator,
-        refreshRevision: Int
+        refreshRevision: Int,
+        canvasLayoutEnabled: Bool
     ) {
         _viewModel = State(
             initialValue: CommitGraphViewModel(
@@ -919,19 +924,22 @@ private struct CommitGraphPageContainer: View {
         self.currentUserName = currentUserName
         self.currentUserAvatarURL = currentUserAvatarURL
         self.refreshRevision = refreshRevision
+        self.canvasLayoutEnabled = canvasLayoutEnabled
     }
 
     let currentUserLogin: String
     let currentUserName: String?
     let currentUserAvatarURL: URL?
     let refreshRevision: Int
+    let canvasLayoutEnabled: Bool
 
     var body: some View {
         CommitGraphView(
             viewModel: viewModel,
             currentUserLogin: currentUserLogin,
             currentUserName: currentUserName,
-            currentUserAvatarURL: currentUserAvatarURL
+            currentUserAvatarURL: currentUserAvatarURL,
+            canvasLayoutEnabled: canvasLayoutEnabled
         )
             .onAppear {
                 guard presentationLeaseID == nil else { return }

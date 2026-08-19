@@ -1943,7 +1943,7 @@ let commitGraphViewModelTests = [
             "手动移动后必须立即成为强制可见锚点"
         )
     },
-    TestCase("传统分支选择固定和手动节点保护写入场景") { @MainActor in
+    TestCase("传统分支选择固定且自动布局恢复组织树坐标") { @MainActor in
         let snapshot = branchProjectionViewModelSnapshot()
         let viewModel = CommitGraphViewModel(
             reader: StaticCommitGraphReader(),
@@ -1976,17 +1976,22 @@ let commitGraphViewModelTests = [
             "固定 HEAD 必须继续出现在传统上下文泳道"
         )
 
+        let automaticPosition = viewModel.scene.nodePositions["hash-f07"]
         viewModel.moveNode(
             hash: "hash-f07",
             by: GraphPoint(x: 42, y: -18)
         )
-        let manualPosition = viewModel.scene.nodePositions["hash-f07"]
         viewModel.resetLayout()
 
         try expectEqual(
             viewModel.scene.nodePositions["hash-f07"],
-            manualPosition,
-            "自动布局不得覆盖用户手动移动的普通节点"
+            automaticPosition,
+            "自动布局必须清除旧手动位置并恢复组织树坐标"
+        )
+        try expect(
+            viewModel.scene.manuallyPositionedHashes.contains("hash-f07")
+                == false,
+            "恢复自动布局后不得继续保留手动位置标记"
         )
     },
     TestCase("完整刷新原子安装主干专属传统区段投影") { @MainActor in

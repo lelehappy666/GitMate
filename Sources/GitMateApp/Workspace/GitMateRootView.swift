@@ -68,6 +68,8 @@ struct GitMateRootView: View {
                     },
                     repositoryManagementEnabled:
                         experimentalFeatures.repositoryManagementEnabled,
+                    commitGraphCanvasEnabled:
+                        experimentalFeatures.commitGraphCanvasEnabled,
                     onSettingsRequested: { isSettingsPresented = true }
                 )
                 .id(account.id)
