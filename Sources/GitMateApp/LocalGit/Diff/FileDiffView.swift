@@ -61,6 +61,7 @@ struct FileDiffView: View {
                 Text("并排").tag(DiffLayout.sideBySide)
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .frame(width: 106)
 
             Toggle(
